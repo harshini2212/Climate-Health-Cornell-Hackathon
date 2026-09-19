@@ -54,7 +54,11 @@ def test_no_test_reads_a_contract_table_out_of_data() -> None:
     was never there. Frames come from `tests/tables.py`; `data/reference/` stays fair game,
     because it is committed input rather than anything a make target regenerates.
     """
-    banned = re.compile(r"schema\.TABLES\[[^\]]+\]\.path|schema\.DATA\b")
+    # A contract table is `data/<name>.parquet` at the top level, or TABLES[...].path.
+    # `data/reference/` and `data/raw/` are committed or upstream input -- no make target
+    # regenerates them into a contract table -- so reading those is stable and allowed.
+    banned = re.compile(r"""schema\.TABLES\[[^\]]+\]\.path"""
+                        r"""|schema\.DATA\s*/\s*["'][^"'/]+\.parquet["']""")
     offenders = sorted(p.name for p in (ROOT / "tests").glob("*.py")
                        if banned.search(p.read_text(encoding="utf-8")))
     assert not offenders, (
