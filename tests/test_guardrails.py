@@ -187,7 +187,7 @@ def test_every_message_carries_all_mandatory_elements() -> None:
 def test_no_message_contains_an_unapproved_phone_or_shortener() -> None:
     messages = _mod("leeward.outreach.messages")
     allowed = {"833-388-7233", "988", "911"}
-    src = Path(inspect.getfile(messages)).read_text()
+    src = Path(inspect.getfile(messages)).read_text(encoding="utf-8")
     for phone in re.findall(r"\b\d{3}-\d{3}-\d{4}\b", src):
         assert phone in allowed, f"unapproved phone number in messages.py: {phone}"
     for bad in ("bit.ly", "tinyurl", "t.co/", "goo.gl"):
@@ -215,7 +215,7 @@ def test_partner_export_excludes_rather_than_redacts() -> None:
 def test_fairness_audit_is_never_suppressed() -> None:
     """A failing audit is displayed. Code that swallows it is the one thing we will not ship."""
     fairness = _mod("leeward.eval.fairness")
-    src = Path(inspect.getfile(fairness)).read_text()
+    src = Path(inspect.getfile(fairness)).read_text(encoding="utf-8")
     for pattern in (r"except\s*:\s*\n\s*pass", r"except Exception:\s*\n\s*pass"):
         assert not re.search(pattern, src), "fairness.py swallows an exception"
     assert "flagged" in src, "fairness.py must mark groups whose relative FNR gap exceeds 20 pct"
@@ -234,7 +234,7 @@ def test_demo_path_makes_no_network_calls() -> None:
     for path in (ROOT / "leeward").rglob("*.py"):
         if "ingest" in path.parts:      # ingest is allowed to fetch; the demo never calls it
             continue
-        src = path.read_text()
+        src = path.read_text(encoding="utf-8")
         for pattern in (r"\brequests\.(get|post)\b", r"\burllib\.request\b", r"\bhttpx\.(get|post)\b"):
             if re.search(pattern, src):
                 offenders.append(f"{path.relative_to(ROOT)}: {pattern}")
@@ -247,7 +247,7 @@ def test_no_real_patient_data_paths() -> None:
     """The one hard rule in CLAUDE.md. Cheap to check, catastrophic to miss."""
     banned = re.compile(r"\b(vistA_prod|phi_|real_patient|mpi_|ssn|social_security)\b", re.I)
     for path in (ROOT / "leeward").rglob("*.py"):
-        hit = banned.search(path.read_text())
+        hit = banned.search(path.read_text(encoding="utf-8"))
         assert not hit, f"{path.relative_to(ROOT)} references {hit.group(0)!r}"
 
 
@@ -255,7 +255,7 @@ def test_seeds_are_fixed_everywhere_that_randomises() -> None:
     """The same click must produce the same number in rehearsal and on stage."""
     offenders = []
     for path in list((ROOT / "leeward").rglob("*.py")) + list((ROOT / "scripts").rglob("*.py")):
-        src = path.read_text()
+        src = path.read_text(encoding="utf-8")
         if re.search(r"np\.random\.default_rng\(\s*\)", src):
             offenders.append(f"{path.relative_to(ROOT)}: default_rng() with no seed")
         if re.search(r"\brandom\.(random|choice|randint|shuffle)\(", src) and "seed" not in src:

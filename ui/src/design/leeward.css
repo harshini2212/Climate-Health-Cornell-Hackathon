@@ -1,0 +1,24 @@
+/* Leeward-specific pieces on top of the template: the map canvas, the slider, tooltips. */
+
+.mapcard { padding: 0; overflow: hidden; }
+.mapcanvas { position: relative; height: 68vh; min-height: 420px; background: #eef0f2; }
+.maplegend { position: absolute; left: 14px; bottom: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; box-shadow: var(--sh1); font-size: 12px; min-width: 180px; z-index: 2; }
+.maplegend .ramp { display: flex; height: 8px; border-radius: 4px; overflow: hidden; border: 1px solid var(--line); margin: 6px 0 3px; }
+.maplegend .ramp span { flex: 1; }
+.maplegend .ends { display: flex; justify-content: space-between; color: var(--faint); font-size: 11px; }
+.tooltip { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; font-size: 12px; box-shadow: var(--sh2); font-family: var(--sans); }
+.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; margin: 5px 0; }
+.swatch { width: 12px; height: 12px; border-radius: 3px; flex: none; }
+.swatch.pin { border-radius: 50% 50% 50% 0; transform: rotate(-45deg); }
+.facrow { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line2); font-size: 13px; }
+.facrow:last-child { border-bottom: none; }
+.facrow .nm { color: var(--ink2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.facrow.down .nm { color: var(--ink); font-weight: 600; }
+
+.slider { display: flex; flex-direction: column; gap: 6px; }
+.slider .top { display: flex; justify-content: space-between; align-items: baseline; }
+.slider .value { font-size: 25px; font-weight: 700; letter-spacing: -.6px; }
+.slider .ticks { display: flex; justify-content: space-between; font-size: 11px; color: var(--faint); }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.hero-num { font-size: 44px; font-weight: 700; letter-spacing: -1.5px; line-height: 1; color: #c2410c; }
+.src.api .live { background: var(--green); } .src.fixture .live { background: var(--amber); box-shadow: 0 0 0 3px #fdf3e3; }
