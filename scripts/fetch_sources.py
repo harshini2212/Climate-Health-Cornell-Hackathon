@@ -620,6 +620,23 @@ def fetch_synthea_sample():
             "fetched_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
+@source("synthea_med_profiles", "derived: data/raw/synthea_sample_fhir.zip",
+        "One row per Synthea bundle: that patient's active RxNorm codes, sex, and age at "
+        "their last recorded event. Distilled from the 30 MB FHIR sample so the cohort can "
+        "give every synthetic veteran a real medication list -- co-prescribing intact -- "
+        "without committing the bundles or reading data/raw/ at demo time.")
+def fetch_synthea_med_profiles():
+    from leeward.cohort.medications import profiles_from_fhir
+
+    src = RAW / "synthea_sample_fhir.zip"
+    if not src.exists():
+        raise SystemExit("run the 'synthea_sample' fetcher first (--heavy): it is the source")
+    df = profiles_from_fhir(src)
+    with_meds = df.filter(pl.col("rxcuis").list.len() > 0).height
+    print(f"    {with_meds} of {df.height} bundles carry at least one active medication")
+    return write(df, "synthea_med_profiles", "derived: synthea_sample_fhir.zip")
+
+
 def _nyc_zctas() -> set[str]:
     """Every ZCTA that makes up an NYC MODZCTA, plus the MODZCTA codes themselves."""
     p = REF / "nyc_modzcta.parquet"

@@ -268,9 +268,11 @@ med_controlled           opioid / benzo / stimulant      -> retail refill route 
 days_supply_remaining    synthetic, 30-day window / 90-day mail
 ```
 
-Measured on the Synthea FHIR sample, so you know what to expect: **77%** of patients on
-active meds carry at least one heat-impairing drug, **16%** carry the CDC-named pair, 10%
-a controlled substance, 9% cold-chain, 5% at ACB ≥ 3. The five most-prescribed drugs are
+Measured on the Synthea FHIR sample, so you know what to expect: of the 77 patients on
+active meds, **77%** carry at least one crosswalk drug of any hazard, **65%** a
+heat-impairing one, **16%** the CDC-named pair, 10% a controlled substance, 9% cold-chain,
+12% at ACB ≥ 3. (This paragraph used to say 77% heat and 5% ACB; both were wrong, and
+`tests/test_medications.py` now re-derives every figure from the bundles.) The five most-prescribed drugs are
 insulin, hydrochlorothiazide, lisinopril, metformin and amlodipine — so these terms fire on
 the ordinary patient, not an exotic one.
 

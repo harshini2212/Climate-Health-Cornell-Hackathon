@@ -22,11 +22,12 @@ What no public source publishes per person or per ZIP is drawn from the named co
 the ASSUMPTIONS block, and every column those feed carries a `_synthetic` flag.
 
 This is the *parametric* cohort. The VA Synthea release is a 4 GB CSV (data/README.md), so
-until a Synthea reader lands, the health columns Synthea would supply are drawn here and
-the medication columns are left empty: `leeward/cohort/medications.py` fills them from
-RxNorm codes. `race` and `ethnicity` are null. Nothing in `data/reference/` gives a
-veteran's race, and inventing one would give the fairness audit a stratum that means
-nothing.
+until a Synthea reader lands, the health columns Synthea would supply are drawn here. The
+medication columns are not drawn at all: `leeward/cohort/medications.py` gives each veteran
+a real active-medication list from Synthea's public sample and derives every flag from the
+VA drug class and CDC mechanism it maps to. `race` and `ethnicity` are null. Nothing in
+`data/reference/` gives a veteran's race, and inventing one would give the fairness audit a
+stratum that means nothing.
 
 Facility: the nearest VA care site *in the veteran's own borough* by haversine. Straight
 lines cross water in New York, and would send half of Staten Island to Brooklyn. Dialysis
@@ -43,6 +44,7 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
+from leeward.cohort import medications
 from leeward.schema import REFERENCE
 
 N_DEFAULT = 10_000
@@ -132,10 +134,6 @@ HOME_AC_AT_HVI_1, HOME_AC_PER_HVI_BAND, HOME_AC_LOW_ASSETS = 0.95, 0.04, 0.10
 #: NYC's moderate-rain stormwater scenario.
 FLOOR_P = {"basement": 0.06, "ground": 0.25, "upper": 0.69}
 BASEMENT_FLOOD_MULTIPLIER, FLOOD_PRONE_FRAC = 2.0, 0.15
-
-#: ~80% of VA outpatient prescriptions go by mail (docs/sources.md, CMOP). Mail fills are
-#: 90 days, window fills 30, and the phase is uniform (SPEC).
-MAIL_ORDER_RATE, MAIL_FILL_DAYS, WINDOW_FILL_DAYS = 0.80, 90, 30
 
 CONSENT = {"consent_partner_check": 0.60, "consent_ride": 0.70, "consent_housing": 0.50}
 
@@ -390,11 +388,6 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         MISSED_APPTS_BASE + MISSED_APPTS_TRANSPORT * places["transport_barrier"]
         + MISSED_APPTS_DEPRESSION * places["depression"])
 
-    # Pharmacy logistics. The medication list itself comes from medications.py.
-    mail = bern("mail_order", MAIL_ORDER_RATE)
-    fill = np.where(mail, MAIL_FILL_DAYS, WINDOW_FILL_DAYS)
-    days_left = np.floor(uniform("supply_phase") * (fill + 1))
-
     r = _stream(seed, "names")
     first_m, first_f = r.integers(len(FIRST_M), size=n), r.integers(len(FIRST_F), size=n)
     last = r.integers(len(LAST), size=n)
@@ -425,18 +418,6 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         "er_visits_12m": i32(np.clip(er, 0, 100)),
         "missed_refills_12m": i32(np.clip(missed_refills, 0, 100)),
         "missed_appts_12m": i32(np.clip(missed_appts, 0, 100)),
-        "med_rxcuis": pl.Series([[] for _ in range(n)], dtype=pl.List(pl.Utf8)),
-        "va_drug_classes": pl.Series([[] for _ in range(n)], dtype=pl.List(pl.Utf8)),
-        "n_active_meds": i32(np.zeros(n)),
-        "med_thermoreg_score": np.zeros(n),
-        "acb_score": i32(np.zeros(n)),
-        "med_combo_raas_diuretic": np.zeros(n, dtype=bool),
-        "med_renal_triple": np.zeros(n, dtype=bool),
-        "med_cold_chain": np.zeros(n, dtype=bool),
-        "med_controlled": np.zeros(n, dtype=bool),
-        "med_narrow_ti": np.zeros(n, dtype=bool),
-        "mail_order_pharmacy": mail,
-        "days_supply_remaining": i32(days_left),
         "deployment_era": era,
         "burn_pit_years": np.clip(burn, 0, 20).round(2),
         "ptsd_severity": i32(severity),
@@ -456,9 +437,14 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         "hvi": i32(hvi),
         **{name: bern(name, p) for name, p in CONSENT.items()},
     })
-    flags = [pl.lit(True).alias(f"{c.name}_synthetic")
-             for c in schema.TABLES["cohort"].columns if c.synthetic]
-    return df.with_columns(flags)
+    # Prescriptions, the mechanisms they carry, and pharmacy logistics (medications.py).
+    df = medications.attach(df, seed)
+
+    contract = schema.TABLES["cohort"].columns
+    flags = [pl.lit(True).alias(f"{c.name}_synthetic") for c in contract if c.synthetic]
+    order = [name for c in contract
+             for name in ((c.name, f"{c.name}_synthetic") if c.synthetic else (c.name,))]
+    return df.with_columns(flags).select(order)
 
 
 # --------------------------------------------------------------------------- #
@@ -490,6 +476,11 @@ def main(argv: list[str] | None = None) -> int:
           f"{df['ckd_dialysis'].sum()} · OTP {df['on_methadone_otp'].sum()} "
           f"({df.filter(pl.col('on_methadone_otp') & (pl.col('facility_id') == '630')).height}"
           f" at station 630)")
+    print(f"  meds: {df['n_active_meds'].mean():.1f} active each · heat-impairing "
+          f"{share(pl.col('med_thermoreg_score') > 0)} · CDC pair "
+          f"{share(pl.col('med_combo_raas_diuretic'))} · cold chain "
+          f"{share(pl.col('med_cold_chain'))} · controlled "
+          f"{share(pl.col('med_controlled'))} -> {df['med_controlled'].sum()} for the pharmacist")
     return 0
 
 
