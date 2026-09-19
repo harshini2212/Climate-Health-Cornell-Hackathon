@@ -365,7 +365,7 @@ requiring keys are in [`docs/sources.md`](docs/sources.md). Headline numbers:
 | Ida: 3.15 in/hr rain against 1.75 in/hr sewer capacity; 11 basement deaths | NYC Health, flooding and health |
 | Manhattan VA evacuated 28 Oct 2012; OTP closed 5 months; ~100 veterans needed guest-dosing | Griffin et al. 2018; Lukowsky et al. 2019 |
 | **Station 630 is in evacuation zone 1** | Computed here: VHA facility registry × NYC hurricane evacuation zones |
-| **134,711 NYC veterans, 53.3% aged 65+** | Computed here: ACS 2023 5-year B21001 by ZCTA |
+| **131,195 NYC veterans, 53.5% aged 65+** | Computed here: ACS 2023 5-year B21001 by ZCTA |
 | **36,146 electricity-dependent Medicare beneficiaries in NYC** | Computed here: HHS emPOWER |
 | **PM2.5 203.5 µg/m³, AQI 254, Queens, 7 June 2023** | Computed here: EPA AirNow daily files |
 | Heat-medication mechanisms and the ACE-inhibitor/ARB-plus-diuretic combination | CDC, Heat and Medications — Guidance for Clinicians |

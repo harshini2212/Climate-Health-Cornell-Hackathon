@@ -64,7 +64,7 @@ is the right answer, which is a useful thing to know before you trust a join.
 
 | File | Rows | What it is |
 | --- | --- | --- |
-| `acs_veterans_by_zcta.parquet` | 259 | ACS 2023 5-year table B21001: veterans per ZCTA by age band (18–34, 35–54, 55–64, 65–74, 75+). **134,711 NYC veterans, 53.3% aged 65 or over.** Age bands sum exactly to the total. This is the re-homing weight. |
+| `acs_veterans_by_zcta.parquet` | 212 | ACS 2023 5-year table B21001: veterans per ZCTA by age band (18–34, 35–54, 55–64, 65–74, 75+). **131,195 NYC veterans, 53.5% aged 65 or over.** Age bands sum exactly to the total. Only summary level 860 (ZCTA5) rows are kept; an earlier filter also caught census tracts whose ids end in an NYC ZIP. This is the re-homing weight. `pop_65plus` (all residents 65+) is the denominator that turns emPOWER counts into a per-ZIP rate. |
 | `places_zcta_nyc.parquet` | 186 | CDC PLACES 2025 per ZCTA. 22 measures. **This is where the cohort's augment priors come from.** See below. |
 | `empower_ny_zip.parquet` | 1,702 | HHS emPOWER, electricity-dependent Medicare beneficiaries per NY ZIP, split by device family. NYC totals: **36,146 power-dependent, 3,165 on oxygen, 1,948 facility ESRD dialysis.** |
 | `svi_nyc_tract.parquet` | 2,324 | CDC/ATSDR Social Vulnerability Index 2022, NYC tracts. Context layer and fairness strata. |

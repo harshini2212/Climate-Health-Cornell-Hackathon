@@ -104,6 +104,16 @@ def test_acs_age_bands_sum_to_the_veteran_total() -> None:
     assert 120_000 < total < 160_000, f"NYC veteran count {total} is outside a plausible range"
 
 
+def test_acs_has_one_row_per_zcta() -> None:
+    """The Summary File lists census tracts whose GEO_IDs end in an NYC ZIP (Miami-Dade's
+    1400000US12086010010 ends in 10010). A substring match once pulled 46 of them in as
+    duplicate ZCTAs, and every duplicate skews the re-homing weights."""
+    df = pl.read_parquet(REF / "acs_veterans_by_zcta.parquet")
+    assert df["zcta"].n_unique() == df.height, "duplicate ZCTAs: a non-ZCTA geography leaked in"
+    older = df["pop_65plus"].sum()
+    assert 1_200_000 < older < 1_600_000, f"NYC 65+ population {older} is implausible"
+
+
 def test_empower_covers_the_five_boroughs() -> None:
     df = pl.read_parquet(REF / "empower_ny_zip.parquet").filter(pl.col("borough").is_not_null())
     assert set(df["borough"].unique()) == {

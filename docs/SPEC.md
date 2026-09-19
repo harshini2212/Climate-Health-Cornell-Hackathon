@@ -240,7 +240,7 @@ python scripts/fetch_sources.py --heavy     # + stormwater GIS, ACS summary file
 | `stormwater_by_modzcta.parquet` | 178 | Pluvial flood exposure |
 | `places_zcta_nyc.parquet` | 186 | **Every augment prior** — see §5.3 |
 | `empower_ny_zip.parquet` | 1,702 | Powered-equipment prior |
-| `acs_veterans_by_zcta.parquet` | 259 | Re-homing weights by age band |
+| `acs_veterans_by_zcta.parquet` | 212 | Re-homing weights by age band |
 | `va_facilities_nyc_hazard.parquet` | 14 | **The SiteDown input** |
 | `airnow_pm25_nyc_smoke2023.parquet` | 124 | The smoke replay scenario |
 | `floodnet_events.parquet` | 3,269 | Observed flood events, real depths |
