@@ -1,44 +1,24 @@
 /**
- * The week board. This is the default screen because the care team does not visit a page,
- * they glance at a side screen and ask two questions: what does next week look like, and
- * who do I reach first. Time is the primary axis; risk orders the work inside a day.
+ * The week board. The care team does not visit a page, they glance at a side screen and
+ * ask two questions: what does next week look like, and who do I reach first. Time is the
+ * primary axis; risk only orders the work inside a day.
  *
- * Everything here is readable from two metres: no hover-only information, colour reserved
- * for urgency, and the queue de-identified by default because this hangs in a shared
- * clinical space. Names, conditions, medicines and driver phrases live behind a click.
+ * Readable from two metres: nothing lives in a hover, colour carries urgency and never
+ * decoration. The queue is de-identified by default because this hangs in a shared
+ * clinical space -- names, conditions, driver phrases and medicines open on a click.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { VeteranPanel } from "../components/VeteranCard";
+import { IconAlert, IconArrow } from "../components/Icons";
 import { getForecast, lastSource, postActionsWeek, type Source } from "../lib/api";
-import { STATUS_HEX, TIER_STEP } from "../lib/colors";
+import { ACTION_LABEL, TIER_BADGE, TIER_LABEL } from "../lib/labels";
 import {
   DEFAULT_CAPACITY,
-  type ActionRow,
   type ActionsResponse,
   type Capacity,
   type ForecastResponse,
   type ZipHazard,
 } from "../lib/types";
-
-/** Human labels. The board never shows a raw enum and never shows a bare EHA number. */
-const ACTION_LABEL: Record<string, string> = {
-  care_team_call: "Care-team call",
-  check_in_call: "3-minute check-in",
-  backup_power_plan: "Backup-power plan",
-  cold_chain_plan: "Cold-chain plan",
-  early_refill: "Early refill",
-  switch_to_local_pickup: "Switch to local pickup",
-  cooling_center_ride: "Cooling-centre ride",
-  clean_air_room: "Clean-air room",
-  alt_site_booking: "Alternate-site booking",
-  evacuation_assist: "Evacuation assist",
-  assign_buddy: "Assign buddy",
-  pharmacist_med_review: "Pharmacist review",
-  controlled_substance_bridge: "Controlled-substance bridge",
-  heap_application: "HEAP application",
-  verified_text: "Verified text",
-};
 
 /** What a capacity unit is called out loud. The ribbon names the one that ran out. */
 const BUCKET_LABEL: Record<string, string> = {
@@ -68,7 +48,6 @@ interface DayHazard {
   maxHeatIndex: number;
   maxPm25: number;
   evacZone: number;
-  mailDisrupted: boolean;
 }
 
 /** Collapse ~178 ZIP rows for one day into the handful of facts a glyph row can carry. */
@@ -76,8 +55,8 @@ function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
   const byDate = new Map<string, DayHazard>();
   for (const d of dates) {
     byDate.set(d, {
-      date: d, heat: false, smoke: false, flood: false, surge: 0, outage: 0,
-      maxHeatIndex: 0, maxPm25: 0, evacZone: 0, mailDisrupted: false,
+      date: d, heat: false, smoke: false, flood: false,
+      surge: 0, outage: 0, maxHeatIndex: 0, maxPm25: 0, evacZone: 0,
     });
   }
   for (const z of zips) {
@@ -86,7 +65,6 @@ function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
     d.heat ||= z.heat_alert;
     d.smoke ||= z.smoke_alert;
     d.flood ||= z.flood_warning || z.flash_flood_emergency;
-    d.mailDisrupted ||= z.mail_delivery_disrupted;
     d.surge = Math.max(d.surge, z.surge_ft);
     d.outage = Math.max(d.outage, z.outage_frac);
     d.maxHeatIndex = Math.max(d.maxHeatIndex, z.heat_index_max_f);
@@ -96,21 +74,21 @@ function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
   return dates.map((d) => byDate.get(d)!);
 }
 
-/** Words, not icons: a two-metre read beats a pictogram nobody has learned yet. */
+/** Words, not pictograms: a two-metre read beats an icon nobody has learned yet. */
 function glyphs(d: DayHazard) {
-  const out: { key: string; label: string; detail: string; colour: string }[] = [];
-  if (d.heat) out.push({ key: "heat", label: "HEAT", detail: `${Math.round(d.maxHeatIndex)}°F index`, colour: STATUS_HEX.critical });
-  if (d.smoke) out.push({ key: "smoke", label: "SMOKE", detail: `PM2.5 ${Math.round(d.maxPm25)}`, colour: STATUS_HEX.serious });
-  if (d.flood) out.push({ key: "flood", label: "FLOOD", detail: d.evacZone ? `evac zone ${d.evacZone}` : "warning", colour: STATUS_HEX.critical });
-  if (d.surge > 0) out.push({ key: "surge", label: "SURGE", detail: `${d.surge.toFixed(1)} ft`, colour: STATUS_HEX.serious });
-  if (d.outage > 0.05) out.push({ key: "outage", label: "OUTAGE", detail: `${Math.round(d.outage * 100)}% of ZIPs`, colour: STATUS_HEX.warning });
+  const out: { key: string; label: string; detail: string; cls: string }[] = [];
+  if (d.heat) out.push({ key: "heat", label: "HEAT", detail: `${Math.round(d.maxHeatIndex)}°F index`, cls: "rb-critical" });
+  if (d.smoke) out.push({ key: "smoke", label: "SMOKE", detail: `PM2.5 ${Math.round(d.maxPm25)}`, cls: "rb-high" });
+  if (d.flood) out.push({ key: "flood", label: "FLOOD", detail: d.evacZone ? `evac zone ${d.evacZone}` : "warning", cls: "rb-critical" });
+  if (d.surge > 0) out.push({ key: "surge", label: "SURGE", detail: `${d.surge.toFixed(1)} ft`, cls: "rb-high" });
+  if (d.outage > 0.05) out.push({ key: "outage", label: "OUTAGE", detail: `${Math.round(d.outage * 100)}% of ZIPs`, cls: "rb-medium" });
   return out;
 }
 
 const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** Dates are plain ISO strings; parse as local so the column never slips a day. */
+/** Dates are plain ISO strings; parse as local so a column never slips a day. */
 function parseDay(iso: string): Date {
   const [y, m, d] = iso.split("-").map(Number);
   return new Date(y, (m ?? 1) - 1, d ?? 1);
@@ -137,23 +115,28 @@ export function handleFor(nameDisplay: string, veteranId: string): string {
 }
 
 const isHuman = (bucket: string) => bucket !== "free";
-const uniqueVets = (rows: ActionRow[]) => new Set(rows.map((r) => r.veteran_id));
+
+export interface VeteranFocus {
+  veteranId: string;
+  actionId: string;
+  date: string;
+}
 
 interface Props {
   scenario: string;
   onSource: (s: Source) => void;
-  /** Clicking a day hands the date to the existing care-team screen and its slider. */
+  /** Clicking a day hands the date to the action list and its capacity slider. */
   onOpenDay: (date: string) => void;
+  /** Clicking a card opens the full veteran card. */
+  onOpenVeteran: (f: VeteranFocus) => void;
 }
 
-export function Week({ scenario, onSource, onOpenDay }: Props) {
+export function Week({ scenario, onSource, onOpenDay, onOpenVeteran }: Props) {
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [week, setWeek] = useState<ActionsResponse[] | null>(null);
   const [headroom, setHeadroom] = useState<ActionsResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState<Source>("fixture");
-  // What the drawer is showing: the clicked queue card and the day it was queued under.
-  const [open, setOpen] = useState<{ row: ActionRow; date: string } | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -191,7 +174,7 @@ export function Week({ scenario, onSource, onOpenDay }: Props) {
     [forecast],
   );
 
-  /** Per-day: the queue, the load on the human buckets, and who did not fit. */
+  /** Per day: the queue, the bucket the day is bound by, and who did not fit. */
   const board = useMemo(() => {
     if (!week) return [];
     return week.map((resp, i) => {
@@ -207,20 +190,15 @@ export function Week({ scenario, onSource, onOpenDay }: Props) {
         const frac = used / cap;
         if (frac > binding.frac) binding = { bucket, used, cap, frac };
       }
-      const reached = uniqueVets(human);
+      const reached = new Set(human.map((a) => a.veteran_id));
       const wanted = headroom?.[i]
-        ? uniqueVets(headroom[i].actions.filter((a) => isHuman(a.capacity_bucket)))
+        ? new Set(headroom[i].actions.filter((a) => isHuman(a.capacity_bucket)).map((a) => a.veteran_id))
         : new Set<string>();
       let missed = 0;
       wanted.forEach((v) => {
         if (!reached.has(v)) missed += 1;
       });
-      return {
-        resp,
-        actions: [...resp.actions].sort((a, b) => a.rank - b.rank),
-        binding,
-        missed,
-      };
+      return { resp, actions: [...resp.actions].sort((a, b) => a.rank - b.rank), binding, missed };
     });
   }, [week, headroom]);
 
@@ -231,8 +209,7 @@ export function Week({ scenario, onSource, onOpenDay }: Props) {
       const used = week.reduce(
         (s, r) => s + r.actions.filter((a) => a.owner === lane.key).length, 0);
       const perDay = week[0]?.capacity[lane.bucket] ?? 0;
-      const total = perDay * week.length;
-      return { ...lane, used, perDay, total };
+      return { ...lane, used, perDay, total: perDay * week.length };
     });
   }, [week]);
 
@@ -242,120 +219,106 @@ export function Week({ scenario, onSource, onOpenDay }: Props) {
     [week],
   );
 
-  if (error) return <div className="empty">{error}</div>;
-  if (!forecast || !week) return <div className="empty">Building the week…</div>;
+  if (error) {
+    return (
+      <div className="page">
+        <div className="empty"><div className="eh">The week did not load</div>{error}</div>
+      </div>
+    );
+  }
+  if (!forecast || !week) return <div className="page"><div className="spin">Building the week…</div></div>;
 
   return (
-    <div className="week">
+    <div className="page dash">
       {/* 1 · the ribbon: why Thursday is heavy, answered before anyone asks */}
-      <div className="ribbon" role="list">
+      <div className="ribbon">
         {days.map((d, i) => {
           const b = board[i];
           const load = b ? Math.min(1, b.binding.frac) : 0;
           return (
             <button
               key={d.date}
-              role="listitem"
-              className={`ribbon-day${i === 0 ? " today" : ""}`}
+              className={`rday${i === 0 ? " today" : ""}`}
               onClick={() => onOpenDay(d.date)}
-              title={`Open ${d.date} in the care-team view`}
+              title={`Open the action list for ${d.date}`}
             >
-              <div className="dow">
-                {i === 0 ? "Today" : dayName(d.date)}
-                <span className="date">{dayLabel(d.date)}</span>
+              <div className="rd-top">
+                <span className="rd-dow">{i === 0 ? "Today" : dayName(d.date)}</span>
+                <span className="rd-date">{dayLabel(d.date)}</span>
               </div>
-              <div className="glyphs">
-                {glyphs(d).length === 0 && <span className="glyph calm">clear</span>}
+              <div className="rd-glyphs">
+                {glyphs(d).length === 0 && <span className="rb rb-low">clear</span>}
                 {glyphs(d).map((g) => (
-                  <span key={g.key} className="glyph" style={{ borderColor: g.colour, color: g.colour }}>
+                  <span key={g.key} className={`rb ${g.cls} rd-g`}>
                     {g.label}
                     <small>{g.detail}</small>
                   </span>
                 ))}
               </div>
-              <div className="load">
-                <div className="load-track">
-                  <div
-                    className="load-fill"
-                    style={{ width: `${load * 100}%`, background: load >= 1 ? STATUS_HEX.critical : undefined }}
-                  />
-                </div>
-                <span className="load-text">
-                  {b ? `${b.binding.used} of ${b.binding.cap} ${BUCKET_LABEL[b.binding.bucket] ?? b.binding.bucket}` : "—"}
-                </span>
+              <div className={`prog${load >= 1 ? " over" : load >= 0.8 ? " warn" : ""}`}>
+                <i style={{ width: `${load * 100}%` }} />
+              </div>
+              <div className="rd-load">
+                {b ? `${b.binding.used} of ${b.binding.cap} ${BUCKET_LABEL[b.binding.bucket] ?? b.binding.bucket}` : "—"}
               </div>
             </button>
           );
         })}
       </div>
 
-      {/* A closure is a fact about the window, not about one column: /forecast carries
-          FacilityStatus without a date, so the strip spans the ribbon rather than
-          guessing a day. */}
-      {downSites.length > 0 && (
-        <div className="closure-strip">
-          {downSites.map((f) => (
-            <span key={f.facility_id}>
-              {f.name} ({f.facility_id}) closed somewhere in this window
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* 2 · standing banners: team-wide events, said once */}
+      {/* 2 · standing banners: a team-wide event is said once, not once per veteran */}
       <div className="banners">
         {forecast.headline && (
           <div className="banner">
-            <strong>Forecast</strong>
-            {forecast.headline}
-          </div>
-        )}
-        {/* The candidate fixture is one modelled day. The ribbon above is genuinely
-            per-day from /forecast, but offline the queue is that one day repeated, and
-            nobody should read seven distinct forecasts into it. */}
-        {source === "fixture" && (
-          <div className="banner muted">
-            <strong>Fixtures</strong>
-            Hazards and capacity are per-day; the queue is one modelled day
-            ({week[0].date}) repeated, because the offline candidate list is single-day.
-            The live API returns a distinct list per day.
+            <span className="rb rb-medium">Forecast</span>
+            <span>{forecast.headline}</span>
           </div>
         )}
         {downSites.map((f) => (
-          <div key={f.facility_id} className="banner critical">
-            <strong>Site closed</strong>
-            {f.name} ({f.facility_id}) is closed in this window
-            {f.site_dependent_services && ", and it carries site-dependent care"}. {altSiteBookings}{" "}
-            alternate-site {altSiteBookings === 1 ? "booking is" : "bookings are"} queued this week.
+          <div key={f.facility_id} className="banner crit">
+            <span className="rb rb-critical">Site closed</span>
+            <span>
+              <b>{f.name} ({f.facility_id})</b> is closed in this window
+              {f.site_dependent_services && ", and it carries site-dependent care"}.{" "}
+              {altSiteBookings} alternate-site{" "}
+              {altSiteBookings === 1 ? "booking is" : "bookings are"} queued this week.
+            </span>
           </div>
         ))}
+        {/* The offline candidate list is one modelled day. The ribbon above is genuinely
+            per-day from /forecast, but nobody should read seven forecasts into the queue. */}
+        {source === "fixture" && (
+          <div className="banner">
+            <span className="rb rb-quiet">Fixtures</span>
+            <span>
+              Hazards and capacity are per-day; the queue is one modelled day ({week[0].date})
+              repeated, because the offline candidate list is single-day. The live API returns
+              a distinct list per day.
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 4 · owner lanes: the pharmacist lane is scarce on purpose, so show it */}
-      <div className="lanes">
+      <div className="strip">
         {lanes.map((l) => {
           const frac = l.total > 0 ? Math.min(1, l.used / l.total) : 0;
           const scarce = l.bucket !== "free" && frac >= 0.9;
           return (
-            <div key={l.key} className={`lane${scarce ? " scarce" : ""}`}>
-              <div className="lane-head">
-                <span className="lane-name">{l.label}</span>
-                <span className="lane-count">
-                  {l.used}
-                  {l.bucket === "free" ? "" : ` / ${l.total}`}
-                </span>
+            <div key={l.key} className={`stat${scarce ? " crit" : ""}`}>
+              <div className="k">{l.label}</div>
+              <div className="vrow">
+                <span className="v">{l.used}</span>
+                {l.bucket !== "free" && (
+                  <span className="muted" style={{ fontSize: 12 }}>of {l.total}</span>
+                )}
               </div>
               {l.bucket !== "free" && (
-                <div className="load-track">
-                  <div
-                    className="load-fill"
-                    style={{ width: `${frac * 100}%`, background: scarce ? STATUS_HEX.critical : undefined }}
-                  />
+                <div className={`prog${scarce ? " over" : ""}`} style={{ marginTop: 9 }}>
+                  <i style={{ width: `${frac * 100}%` }} />
                 </div>
               )}
-              <div className="lane-note">
-                {l.bucket === "free" ? l.note : `${l.perDay} ${l.note}`}
-              </div>
+              <div className="s">{l.bucket === "free" ? l.note : `${l.perDay} ${l.note}`}</div>
             </div>
           );
         })}
@@ -364,31 +327,37 @@ export function Week({ scenario, onSource, onOpenDay }: Props) {
       {/* 3 · the queue, under the day it is due, priority order inside the day */}
       <div className="queue">
         {board.map((b, i) => (
-          <section key={b.resp.date} className="queue-col">
+          <section key={b.resp.date} className="qcol">
             <header onClick={() => onOpenDay(b.resp.date)}>
-              {i === 0 ? "Today" : dayName(b.resp.date)} · {b.actions.length} queued
+              <span>{i === 0 ? "Today" : dayName(b.resp.date)}</span>
+              <span className="muted">{b.actions.length}</span>
+              <IconArrow />
             </header>
-            <div className="cards">
+            <div className="qcards">
               {b.actions.map((a) => (
                 <button
                   key={a.action_id}
                   className="qcard"
-                  style={{ borderLeftColor: TIER_STEP[a.tier] }}
-                  onClick={() => setOpen({ row: a, date: b.resp.date })}
-                  title="Open the full card"
+                  onClick={() =>
+                    onOpenVeteran({ veteranId: a.veteran_id, actionId: a.action_id, date: b.resp.date })
+                  }
                 >
-                  <div className="qtop">
-                    <span className="handle">{handleFor(a.name_display, a.veteran_id)}</span>
-                    <span className="owner">{a.owner.replace(/_/g, " ")}</span>
+                  <div className="qc-top">
+                    <span className="qc-handle">{handleFor(a.name_display, a.veteran_id)}</span>
+                    <span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span>
                   </div>
-                  <div className="qaction">{ACTION_LABEL[a.action] ?? a.action}</div>
-                  <div className="qwhy">{a.rationale}</div>
+                  <div className="qc-action">{ACTION_LABEL[a.action] ?? a.action}</div>
+                  <div className="qc-why">{a.rationale}</div>
+                  <div className="qc-owner">{a.owner.replace(/_/g, " ")}</div>
                 </button>
               ))}
-              {b.actions.length === 0 && <div className="qempty">Nothing queued</div>}
+              {b.actions.length === 0 && (
+                <div className="muted" style={{ fontSize: 12, padding: 8 }}>Nothing queued</div>
+              )}
             </div>
             {/* 5 · what does not fit. More persuasive than the list above it. */}
             <footer className={b.missed > 0 ? "short" : ""}>
+              {b.missed > 0 ? <IconAlert /> : null}
               {b.missed > 0
                 ? `${b.missed} veteran${b.missed === 1 ? "" : "s"} not reached at this capacity`
                 : "Everyone who needed a person got one"}
@@ -396,15 +365,6 @@ export function Week({ scenario, onSource, onOpenDay }: Props) {
           </section>
         ))}
       </div>
-
-      {open && (
-        <VeteranPanel
-          veteranId={open.row.veteran_id}
-          date={open.date}
-          action={open.row}
-          onClose={() => setOpen(null)}
-        />
-      )}
     </div>
   );
 }

@@ -1,28 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { CapacitySlider } from "../components/CapacitySlider";
 import { HarmCounter } from "../components/HarmCounter";
-import { TierBadge } from "../components/TierBadge";
 import { lastSource, postActions, type Source } from "../lib/api";
-import { TIER_LABEL, TIER_STEP } from "../lib/colors";
+import { ACTION_LABEL, TIER_BADGE, TIER_LABEL } from "../lib/labels";
 import { DEFAULT_CAPACITY, TIERS, type ActionsResponse } from "../lib/types";
-
-const ACTION_LABEL: Record<string, string> = {
-  care_team_call: "Care-team call",
-  check_in_call: "3-minute check-in",
-  backup_power_plan: "Backup-power plan",
-  cold_chain_plan: "Cold-chain plan",
-  early_refill: "Early refill",
-  switch_to_local_pickup: "Switch to local pickup",
-  cooling_center_ride: "Cooling-center ride",
-  clean_air_room: "Clean-air room",
-  alt_site_booking: "Alternate-site booking",
-  evacuation_assist: "Evacuation assist",
-  assign_buddy: "Assign buddy",
-  pharmacist_med_review: "Pharmacist review",
-  controlled_substance_bridge: "Controlled-substance bridge",
-  heap_application: "HEAP application",
-  verified_text: "Verified text",
-};
 
 interface Props {
   scenario: string;
@@ -37,6 +18,7 @@ export function CareTeam({ scenario, date, onSource }: Props) {
   const [busy, setBusy] = useState(false);
   const [roundTrip, setRoundTrip] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [tierFilter, setTierFilter] = useState<string>("all");
 
   const load = useCallback(
     async (n: number) => {
@@ -44,11 +26,7 @@ export function CareTeam({ scenario, date, onSource }: Props) {
       setError(null);
       const t0 = performance.now();
       try {
-        const r = await postActions({
-          date: date ?? resp?.date ?? "",
-          capacity: { ...DEFAULT_CAPACITY, call: n },
-          scenario,
-        });
+        const r = await postActions({ date: date ?? "", capacity: { ...DEFAULT_CAPACITY, call: n }, scenario });
         setResp(r);
         setRoundTrip(Math.round(performance.now() - t0));
         onSource(lastSource());
@@ -58,10 +36,7 @@ export function CareTeam({ scenario, date, onSource }: Props) {
         setBusy(false);
       }
     },
-    // resp?.date only matters after the first load; with no date from the week board the
-    // first request sends "" and the fixture/API resolve the demo date themselves.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scenario, date],
+    [scenario, date, onSource],
   );
 
   useEffect(() => {
@@ -74,90 +49,97 @@ export function CareTeam({ scenario, date, onSource }: Props) {
     void load(n);
   };
 
-  const cutAt = resp?.actions.filter((a) => a.capacity_bucket === "call").length ?? 0;
+  if (error) return <div className="page"><div className="empty"><div className="eh">Could not load the action list</div>{error}</div></div>;
+  if (!resp) return <div className="page"><div className="skgrid"><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /></div></div>;
+
+  const callsUsed = resp.actions.filter((a) => a.capacity_bucket === "call").length;
+  const rows = tierFilter === "all" ? resp.actions : resp.actions.filter((a) => a.tier === tierFilter);
 
   return (
-    <div className="screen careteam">
-      <aside className="panel">
-        <h2>Today's action list</h2>
-        <CapacitySlider value={calls} onCommit={commit} disabled={busy} />
-        {resp && <HarmCounter total={resp.total_eha} baselines={resp.baselines} />}
-        {resp && (
-          <div>
-            <h3>By tier</h3>
-            <div className="tiers">
-              {TIERS.map((t) => (
-                <span key={t} className="tier">
-                  <span className="dot" style={{ background: TIER_STEP[t] }} />
-                  {TIER_LABEL[t]} · {resp.counts_by_tier[t] ?? 0}
-                </span>
-              ))}
-            </div>
+    <div className="page dash">
+      <div className="strip">
+        <div className="stat hero">
+          <div className="k">Expected harm averted today</div>
+          <div className="vrow"><div className="v"><HarmCounter total={resp.total_eha} /></div></div>
+          <div className="s">severity-weighted need-days · {resp.n_selected} actions</div>
+        </div>
+        <div className="stat">
+          <div className="k">Calls used</div>
+          <div className="vrow"><div className="v">{callsUsed} / {calls}</div></div>
+          <div className="prog" style={{ marginTop: 8 }}><i style={{ width: `${(100 * callsUsed) / calls}%` }} /></div>
+        </div>
+        {TIERS.filter((t) => t !== "everyday").map((t) => (
+          <div className={`stat${t === "act_now" ? " crit" : ""}`} key={t}>
+            <div className="k">{TIER_LABEL[t]}</div>
+            <div className="vrow"><div className="v">{resp.counts_by_tier[t] ?? 0}</div></div>
+            <div className="s">{t === "act_now" ? "call today, up to 3 actions" : t === "find_out" ? "wide interval: 3-minute check-in" : t === "self_serve" ? "verified text, self-directed" : "monthly wellness plan"}</div>
           </div>
-        )}
-        {resp && (
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>
-            {resp.n_selected} actions for {resp.n_panel.toLocaleString()} veterans on the panel.
-            Model rung {resp.model_rung}. Last request {roundTrip} ms.
-          </div>
-        )}
-      </aside>
+        ))}
+      </div>
 
-      <section className="table-wrap">
-        {error && <div className="empty">{error}</div>}
-        {!resp && !error && <div className="empty">Loading the action list…</div>}
-        {resp && (
-          <>
-            <div className="meta">
-              <span>
-                <strong>{resp.date}</strong>
-              </span>
-              <span>
-                Cut at <strong>{cutAt} calls</strong> of {calls} available
-              </span>
-              <span>
-                Total EHA <strong>{resp.total_eha.toFixed(1)}</strong>
-              </span>
-            </div>
-            <table>
-              <thead>
-                <tr>
-                  <th className="num">#</th>
-                  <th>Veteran</th>
-                  <th>Tier</th>
-                  <th>Action</th>
-                  <th>Top driver</th>
-                  <th className="num">EHA</th>
-                  <th>Owner</th>
+      <div className="row g2">
+        <div className="card">
+          <div className="ch"><h3>Capacity</h3><span className="muted" style={{ fontSize: 12 }}>drag, release, the list re-ranks</span><span className="sp" /><span className="pillbadge">{roundTrip} ms</span></div>
+          <CapacitySlider value={calls} onCommit={commit} disabled={busy} />
+        </div>
+        <div className="card">
+          <div className="ch"><h3>Versus the baselines</h3><span className="sp" /><span className="muted" style={{ fontSize: 12 }}>same capacity, different ranking</span></div>
+          <div className="bars">
+            {[{ name: "leeward", total_eha: resp.total_eha }, ...resp.baselines.filter((b) => b.name !== "leeward")].map((b) => {
+              const max = Math.max(resp.total_eha, ...resp.baselines.map((x) => x.total_eha), 1e-9);
+              const label: Record<string, string> = { leeward: "Leeward", rank_by_age: "Oldest first", rank_by_chronic: "Most conditions first", random: "Random" };
+              return (
+                <div className={`barrow${b.name === "leeward" ? " lead" : ""}`} key={b.name}>
+                  <span className="lb">{label[b.name] ?? b.name}</span>
+                  <div className="bt"><div className="bf" style={{ width: `${(100 * b.total_eha) / max}%` }} /></div>
+                  <span className="bv">{b.total_eha.toFixed(1)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div className="tbar">
+          <span className="ct"><b>{resp.date}</b> · {resp.n_panel.toLocaleString()} on the panel · cut at {callsUsed} calls</span>
+          <span className="sp" />
+          <div className="ctrls" style={{ margin: 0 }}>
+            <span className={`iv${tierFilter === "all" ? " on" : ""}`} onClick={() => setTierFilter("all")}>All</span>
+            {TIERS.map((t) => (
+              <span key={t} className={`iv${tierFilter === t ? " on" : ""}`} onClick={() => setTierFilter(t)}>{TIER_LABEL[t]}</span>
+            ))}
+          </div>
+        </div>
+        <div className="tablewrap">
+          <table>
+            <thead>
+              <tr>
+                <th className="n">#</th>
+                <th>Veteran</th>
+                <th>Tier</th>
+                <th>Action</th>
+                <th>Top driver</th>
+                <th className="n">EHA</th>
+                <th>Owner</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((a) => (
+                <tr key={a.action_id}>
+                  <td className="n">{a.rank}</td>
+                  <td>{a.name_display}<div className="muted" style={{ fontSize: 11.5 }}>{a.borough} · {a.modzcta}</div></td>
+                  <td><span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span></td>
+                  <td className="wrap">{ACTION_LABEL[a.action] ?? a.action}<div className="muted" style={{ fontSize: 12 }}>{a.rationale}</div></td>
+                  <td>{a.top_driver ? <span className="tag">{a.top_driver}</span> : <span className="muted">—</span>}</td>
+                  <td className="n">{a.eha.toFixed(2)}</td>
+                  <td className="muted">{a.owner.replace("_", " ")}</td>
                 </tr>
-              </thead>
-              <tbody>
-                {resp.actions.map((a) => (
-                  <tr key={a.action_id}>
-                    <td className="num">{a.rank}</td>
-                    <td>
-                      {a.name_display}
-                      <div className="sub">
-                        {a.borough} · {a.modzcta}
-                      </div>
-                    </td>
-                    <td>
-                      <TierBadge tier={a.tier} />
-                    </td>
-                    <td>
-                      {ACTION_LABEL[a.action] ?? a.action}
-                      <div className="sub">{a.rationale}</div>
-                    </td>
-                    <td>{a.top_driver ? <span className="chip">{a.top_driver}</span> : <span className="sub">—</span>}</td>
-                    <td className="num">{a.eha.toFixed(2)}</td>
-                    <td>{a.owner.replace("_", " ")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </>
-        )}
-      </section>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

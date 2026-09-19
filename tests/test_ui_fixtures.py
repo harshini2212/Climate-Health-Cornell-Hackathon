@@ -57,6 +57,8 @@ def test_candidates_are_legal_action_rows_and_cover_the_slider_range() -> None:
     for row in rows:
         api.ActionRow(**{k: row[k] for k in keys})
         assert {"age", "n_chronic", "rand"} <= set(row), "baselines need age, n_chronic, rand"
+    ids = [r["action_id"] for r in rows]
+    assert len(ids) == len(set(ids)), "action_id must be unique; React keys and the log depend on it"
     calls = sum(1 for r in rows if r["capacity_bucket"] == "call")
     assert calls >= 100, f"only {calls} call candidates; the slider goes to 100"
     assert fx["model_rung"] in (0, 1, 2, 3)

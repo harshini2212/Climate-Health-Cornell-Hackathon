@@ -149,7 +149,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
                 else "self_serve" if v["peak"] >= 0.05 else "everyday")
         # Most people get one action; act-now veterans get a call plus their need's action.
         acts = [ACTION_FOR_NEED[v["top_need"]]]
-        if tier == "act_now":
+        if tier == "act_now" and "care_team_call" not in acts:
             acts.append("care_team_call")
         elif tier == "find_out":
             acts = ["check_in_call"]

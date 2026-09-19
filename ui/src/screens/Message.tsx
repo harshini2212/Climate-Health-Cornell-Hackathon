@@ -1,14 +1,15 @@
 /**
  * The outreach text, with the five things that make it checkable rendered as a visible
- * checklist beside it. The point of the checklist is not decoration: a veteran is being
- * asked to trust a message about their own care during a storm, and a scammer sending a
- * lookalike cannot produce the channel tag or the phrase the caller reads back.
+ * checklist beside it. The checklist is not decoration: a veteran is being asked to trust
+ * a message about their own care during a storm, and a scammer sending a lookalike cannot
+ * produce the VA channel tag or the phrase the caller reads back.
  *
  * Each row is verified against the body we are actually showing, not against the flag the
  * API set, so the checklist cannot go green on a message that lost a line in transit.
  */
 
 import { useEffect, useState } from "react";
+import { IconShield } from "../components/Icons";
 import { getMessage } from "../lib/api";
 import type { Message } from "../lib/types";
 
@@ -56,6 +57,7 @@ function checks(m: Message): Check[] {
   ];
 }
 
+/** The panel, reusable inside the veteran card as well as on its own screen. */
 export function MessagePanel({ actionId }: { actionId: string }) {
   const [msg, setMsg] = useState<Message | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -72,38 +74,74 @@ export function MessagePanel({ actionId }: { actionId: string }) {
     };
   }, [actionId]);
 
-  if (error) return <div className="msg-empty">No message for this action ({error}).</div>;
-  if (!msg) return <div className="msg-empty">Loading the message…</div>;
+  if (error) return <div className="spin">No message for this action ({error}).</div>;
+  if (!msg) return <div className="spin">Loading the message…</div>;
 
   const rows = checks(msg);
   const allOk = rows.every((r) => r.ok);
 
   return (
-    <div className="message">
-      <div className="msg-head">
-        <span className="chip">{msg.channel}</span>
-        <span className="chip">to the {msg.addressed_to}</span>
+    <div className="row g2 msgwrap">
+      <div className="card">
+        <div className="ch">
+          <h3>What the veteran receives</h3>
+          <div className="sp" />
+          <span className="tag">{msg.channel}</span>
+          <span className="tag">to the {msg.addressed_to}</span>
+        </div>
+        <pre className="msgbody">{msg.body}</pre>
       </div>
-      <pre className="msg-body">{msg.body}</pre>
-      <div className={`msg-checks${allOk ? "" : " failed"}`}>
-        <h4>{allOk ? "All five verification elements present" : "This message is incomplete"}</h4>
-        <ul>
+      <div className="card">
+        <div className="ch">
+          <IconShield />
+          <h3>{allOk ? "All five elements present" : "This message is incomplete"}</h3>
+        </div>
+        <ul className="checks">
           {rows.map((r) => (
             <li key={r.label} className={r.ok ? "ok" : "bad"}>
-              <span className="mark" aria-hidden="true">{r.ok ? "✓" : "✕"}</span>
+              <span className="mk" aria-hidden="true">{r.ok ? "✓" : "✕"}</span>
               <span>
-                <strong>{r.label}</strong>
+                <b>{r.label}</b>
                 <small>{r.found}</small>
               </span>
             </li>
           ))}
         </ul>
+        <p className="muted" style={{ fontSize: 12.5, marginBottom: 0 }}>
+          Checked against the text on the left, not against the flags the API set.
+        </p>
         {msg.scam_card_url && (
-          <a className="msg-link" href={msg.scam_card_url} target="_blank" rel="noreferrer">
+          <a href={msg.scam_card_url} target="_blank" rel="noreferrer" style={{ fontSize: 12.5 }}>
             VA scam-prevention card
           </a>
         )}
       </div>
+    </div>
+  );
+}
+
+interface ScreenProps {
+  focus: { veteranId: string; actionId: string; date: string } | null;
+  onBack: () => void;
+}
+
+/** The nav entry. Without a subject there is nothing honest to show, so it says so. */
+export function MessageScreen({ focus, onBack }: ScreenProps) {
+  if (!focus) {
+    return (
+      <div className="page">
+        <div className="empty">
+          <div className="eh">Pick someone first</div>
+          Open a card on the week board; this screen shows the message that would go to
+          that veteran, with its verification checklist.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="page dash">
+      <span className="backbtn" onClick={onBack}>← Back to the card</span>
+      <MessagePanel actionId={focus.actionId} />
     </div>
   );
 }
