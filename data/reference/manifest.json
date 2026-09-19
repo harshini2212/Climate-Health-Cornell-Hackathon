@@ -1,12 +1,12 @@
 {
   "acs_veterans": {
-    "bytes": 15013,
-    "cols": 19,
-    "fetched_utc": "2026-09-19T20:02:21Z",
+    "bytes": 14765,
+    "cols": 20,
+    "fetched_utc": "2026-09-19T20:54:28Z",
     "file": "acs_veterans_by_zcta.parquet",
     "note": "ACS 5-year B21001 (sex by age by veteran status) per ZCTA, used to weight where the synthetic cohort is re-homed. NOTE: api.census.gov now 302s to missing_key.html for every request, so the keyed API is NOT a demo-day dependency; this Summary File path is keyless.",
-    "rows": 259,
-    "sha256": "b82bd798dfae2e13",
+    "rows": 212,
+    "sha256": "12eb86cde0325ca4",
     "url": "https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b21001.dat"
   },
   "airnow_smoke": {

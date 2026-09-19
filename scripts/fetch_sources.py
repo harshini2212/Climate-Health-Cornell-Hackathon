@@ -555,7 +555,10 @@ def fetch_acs_veterans():
     geos = pl.read_csv(geo_path, separator="|", infer_schema_length=0, truncate_ragged_lines=True)
     gcol = next(c for c in geos.columns if c.upper() in {"GEO_ID", "GEOID"})
     ncol = next(c for c in geos.columns if c.upper() in {"NAME", "GEONAME"})
-    zc = geos.filter(pl.col(gcol).str.contains("860")).select(
+    # Summary level 860 is ZCTA5, and its GEO_IDs are "860Z200US<zcta>". Match the prefix,
+    # not a substring: "860" also occurs inside tract ids such as 1400000US12086010010
+    # (Miami-Dade), whose last five digits collide with NYC ZIPs and double-count them.
+    zc = geos.filter(pl.col(gcol).str.starts_with("860Z200US")).select(
         pl.col(gcol).alias("geo_id"), pl.col(ncol).alias("name"))
     zc = zc.with_columns(pl.col("geo_id").str.extract(r"(\d{5})$").alias("zcta"))
 
@@ -572,6 +575,11 @@ def fetch_acs_veterans():
     BANDS = {"18_34": (8, 26), "35_54": (11, 29), "55_64": (14, 32),
              "65_74": (17, 35), "75plus": (20, 38)}
     want = {"B21001_E001": "pop_18plus", "B21001_E002": "veterans_total"}
+    # All residents 65+, veteran or not: the denominator that turns emPOWER's Medicare
+    # counts into a per-ZIP rate. E016/E019 are male 65-74/75+, E034/E037 female; each
+    # equals its veteran + nonveteran cells on the real file.
+    SENIOR = {16: "pop_m_65_74", 19: "pop_m_75plus", 34: "pop_f_65_74", 37: "pop_f_75plus"}
+    want.update({f"B21001_E{c:03d}": n for c, n in SENIOR.items()})
     for band, (m, f) in BANDS.items():
         want[f"B21001_E{m:03d}"] = f"vet_m_{band}"
         want[f"B21001_E{f:03d}"] = f"vet_f_{band}"
@@ -585,6 +593,9 @@ def fetch_acs_veterans():
                                  .alias(f"vet_{band}"))
     if {"vet_65_74", "vet_75plus"} <= set(df.columns):
         df = df.with_columns((pl.col("vet_65_74") + pl.col("vet_75plus")).alias("veterans_65plus"))
+    if set(SENIOR.values()) <= set(df.columns):
+        df = df.with_columns(pl.sum_horizontal(list(SENIOR.values())).alias("pop_65plus")) \
+               .drop(list(SENIOR.values()))
     return write(df, "acs_veterans_by_zcta", "https://www2.census.gov/programs-surveys/acs/"
                  "summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b21001.dat")
 

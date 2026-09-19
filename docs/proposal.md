@@ -95,7 +95,7 @@ Base: the VA's public Synthea release (500+ clinical concepts, 90 disease module
 
 We then:
 
-1. **Re-home** each record to an NYC ZIP, sampled in proportion to ACS veteran counts by age band. ACS 2023 5-year table B21001 puts **134,711 veterans in NYC ZCTAs, 53.3 percent of them aged 65 or over**; the age bands sum exactly to the total, which is the check that the table was read correctly.
+1. **Re-home** each record to an NYC ZIP, sampled in proportion to ACS veteran counts by age band. ACS 2023 5-year table B21001 puts **131,195 veterans in NYC ZCTAs, 53.5 percent of them aged 65 or over**; the age bands sum exactly to the total, which is the check that the table was read correctly.
 2. **Assign an NYC VA facility** (Manhattan, Brooklyn, Bronx, St. Albans, CBOCs) by nearest, so the facility-disruption term has a target.
 3. **Augment** with fields Synthea lacks, drawing every neighbourhood rate from a real per-ZIP source rather than inventing it (see §4.4): deployment era and burn-pit dose; PTSD severity; home AC; powered equipment from emPOWER ZIP counts; active cancer treatment or dialysis; heat-sensitive medications flagged from the medication table; **housing floor (basement / ground / upper) and evacuation zone from the stormwater and surge maps**; mobility impairment; **caregiver status and household resources**.
 4. **Simulate** 120 days of daily outcomes from a known generative model with fixed true coefficients, under two scripted scenarios. This planted truth is what the model must recover.
