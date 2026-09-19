@@ -15,7 +15,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 REF = ROOT / "data" / "reference"
-MANIFEST = json.loads((REF / "manifest.json").read_text())
+MANIFEST = json.loads((REF / "manifest.json").read_text(encoding="utf-8"))
 
 # The five tables the cohort joins on modzcta / zcta. Anything here going missing
 # means an augment prior silently falls back to an invented number.
@@ -123,7 +123,7 @@ def test_empower_covers_the_five_boroughs() -> None:
 
 
 def test_map_base_is_renderable() -> None:
-    geo = json.loads((REF / "nyc_modzcta.geojson").read_text())
+    geo = json.loads((REF / "nyc_modzcta.geojson").read_text(encoding="utf-8"))
     assert geo["type"] == "FeatureCollection"
     assert len(geo["features"]) == 178
     assert all("modzcta" in f["properties"] for f in geo["features"])

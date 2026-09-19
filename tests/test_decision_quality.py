@@ -169,7 +169,7 @@ def test_outputs_are_a_tidy_csv_and_an_offline_plotly_chart(tmp_path) -> None:
     back = pl.read_csv(csv, try_parse_dates=True)
     assert back.columns == list(dq.TIDY_SCHEMA)
     assert back.height == _tidy().height
-    page = html.read_text()
+    page = html.read_text(encoding="utf-8")
     assert "plotly" in page.lower()
     assert not re.search(r"<script[^>]*\bsrc=[\"']https?://", page), (
         "the chart loads plotly.js from the network; it must open with the wifi off")

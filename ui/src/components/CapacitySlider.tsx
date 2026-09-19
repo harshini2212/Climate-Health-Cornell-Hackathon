@@ -4,7 +4,7 @@ interface Props {
   value: number;
   min?: number;
   max?: number;
-  /** Fires on release (pointer up, key up, or a change event), never on every tick. */
+  /** Fires on release (pointer up, key up, or blur), never on every tick. */
   onCommit: (calls: number) => void;
   disabled?: boolean;
 }
@@ -23,8 +23,8 @@ export function CapacitySlider({ value, min = 10, max = 100, onCommit, disabled 
 
   return (
     <div className="slider">
-      <div className="row" style={{ justifyContent: "space-between" }}>
-        <span>Calls the team can make today</span>
+      <div className="top">
+        <span className="muted">Calls the team can make today</span>
         <span className="value">{local}</span>
       </div>
       <input
@@ -42,8 +42,13 @@ export function CapacitySlider({ value, min = 10, max = 100, onCommit, disabled 
       />
       <div className="ticks">
         <span>{min}</span>
-        <span>40</span>
+        <span>40 · default</span>
         <span>{max}</span>
+      </div>
+      <div className="ctrls" style={{ margin: "8px 0 0" }}>
+        {[20, 40, 80].map((n) => (
+          <span key={n} className={`iv${value === n ? " on" : ""}`} onClick={() => onCommit(n)}>{n} calls</span>
+        ))}
       </div>
     </div>
   );
