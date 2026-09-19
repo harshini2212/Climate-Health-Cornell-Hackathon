@@ -13,3 +13,6 @@ Two things to know: `ActionsRequest` is single-day so a week is 7 parallel `post
 
 ## 19:55 — merged main; the week board now lives inside the template shell
 Rebuilt Week.tsx on the template's tokens (.rb glyphs, .prog load bar, .stat lanes, .card banners; week-specific rules appended to design/leeward.css). VeteranCard and Message moved to screens/ and now fill the two ComingSoon slots the shell already reserved; both use the shared lib/labels.ts instead of their own label maps. CareTeam keeps the template rewrite plus an optional `date` prop so a ribbon-day click opens that date. Week board is the default screen — one line in App.tsx if Forecast should be home instead. Fixtures rebuilt on top of the duplicate-action_id fix. `make check` green, `npm run build` clean; rendering is unverified in a browser (the Chrome extension would not open a tab this session).
+
+## 20:25 — fixtures from the real pipeline; merge with the week board
+make_ui_fixtures.py --date 2026-08-03 now cuts leeward.decision.allocate's own list (100 calls) from the 10,000-veteran cohort and rung 0 scores: 76 act-now, station 630 bookings on top. Rahul: test_no_queue_card_line_names_a_diagnosis is xfail(strict) — the real allocator's rationale names the service and embeds the driver, so the board will show it live too; fix in _rationale or in Week.tsx, then drop the marker.
