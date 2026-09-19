@@ -1,0 +1,127 @@
+/**
+ * TypeScript mirrors of leeward/api/schemas.py. Those shapes are frozen; if a field here
+ * disagrees with the pydantic model, the pydantic model wins and this file is wrong.
+ * tests/test_ui_fixtures.py parses every fixture through the pydantic models so the two
+ * cannot drift silently.
+ */
+
+export const NEEDS = ["breathing", "heat", "mental", "treatment_gap", "access_loss"] as const;
+export type Need = (typeof NEEDS)[number];
+
+export const TIERS = ["act_now", "find_out", "self_serve", "everyday"] as const;
+export type Tier = (typeof TIERS)[number];
+
+export type Capacity = Record<string, number>;
+
+/** leeward.schema.DEFAULT_CAPACITY. The slider moves `call`. */
+export const DEFAULT_CAPACITY: Capacity = {
+  call: 40,
+  refill: 200,
+  ride: 15,
+  booking: 20,
+  evac: 8,
+  partner_slot: 10,
+  pharmacist_slot: 12,
+  va_fill: 30,
+  free: 10000,
+};
+
+// GET /forecast ------------------------------------------------------------
+
+export interface ZipHazard {
+  modzcta: string;
+  date: string;
+  heat_index_max_f: number;
+  hot_day: boolean;
+  heat_alert: boolean;
+  pm25: number;
+  smoke_alert: boolean;
+  flood_warning: boolean;
+  flash_flood_emergency: boolean;
+  surge_ft: number;
+  evac_zone_ordered: number;
+  outage_frac: number;
+  mail_delivery_disrupted: boolean;
+}
+
+export interface FacilityStatus {
+  facility_id: string;
+  name: string;
+  lat: number;
+  lon: number;
+  evac_zone: number;
+  site_down: boolean;
+  site_dependent_services: boolean;
+}
+
+export interface ForecastResponse {
+  scenario: string;
+  day: number;
+  dates: string[];
+  zips: ZipHazard[];
+  facilities: FacilityStatus[];
+  headline?: string | null;
+}
+
+// GET /scores --------------------------------------------------------------
+
+export interface ZipScore {
+  modzcta: string;
+  need: string;
+  expected_count: number;
+  lo80: number;
+  hi80: number;
+  n_panel: number;
+}
+
+export interface ScoresResponse {
+  date: string;
+  need: string;
+  zips: ZipScore[];
+  facilities: ZipScore[];
+  model_rung: number;
+}
+
+// POST /actions ------------------------------------------------------------
+
+export interface ActionsRequest {
+  date: string;
+  capacity: Capacity;
+  group_floor?: Record<string, number> | null;
+  prior_scale?: number;
+  scenario?: string;
+}
+
+export interface ActionRow {
+  action_id: string;
+  rank: number;
+  veteran_id: string;
+  name_display: string;
+  modzcta: string;
+  borough: string;
+  action: string;
+  tier: Tier;
+  eha: number;
+  capacity_bucket: string;
+  owner: string;
+  rationale: string;
+  top_driver?: string | null;
+  message_id?: string | null;
+}
+
+export interface BaselineResult {
+  name: string;
+  total_eha: number;
+}
+
+export interface ActionsResponse {
+  date: string;
+  capacity: Capacity;
+  actions: ActionRow[];
+  total_eha: number;
+  baselines: BaselineResult[];
+  n_panel: number;
+  n_selected: number;
+  counts_by_tier: Record<string, number>;
+  model_rung: number;
+}
