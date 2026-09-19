@@ -82,8 +82,18 @@ smoke:              ## boot the API and hit every route; fails if any shape is w
 clean-clone:        ## prove a fresh clone boots offline in under 60s
 	@bash scripts/clean_clone_test.sh
 
-lanes:              ## create the six git worktrees
+lanes:              ## create the six git worktrees, each with its own venv
 	@for l in api ui demo cohort model eval; do \
-	  git worktree add ../lw-$$l -b lane/$$l 2>/dev/null && echo "  ../lw-$$l" || echo "  ../lw-$$l exists"; \
+	  if [ -d ../lw-$$l ]; then echo "  ../lw-$$l exists"; else \
+	    git worktree add -q ../lw-$$l -b lane/$$l && echo "  ../lw-$$l created"; fi; \
+	  if [ ! -x ../lw-$$l/.venv/bin/python ]; then \
+	    echo "    installing venv..."; \
+	    (cd ../lw-$$l && uv venv --python 3.11 .venv -q && uv pip install -q -e ".[dev]" \
+	      && .venv/bin/python scripts/make_fixtures.py >/dev/null) ; fi; \
 	done
-	@echo "Each lane: cd ../lw-<lane> && claude"
+	@echo
+	@echo "Each lane needs its OWN venv -- an editable install resolves to wherever it"
+	@echo "was installed from, so a shared venv would test the wrong checkout silently."
+	@echo
+	@echo "Start a lane:  cd ../lw-<lane> && claude"
+	@echo "Then paste that lane's Wave 1 prompt from docs/PROMPTS.md"
