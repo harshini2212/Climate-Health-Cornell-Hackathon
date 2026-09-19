@@ -24,7 +24,14 @@ const ACTION_LABEL: Record<string, string> = {
   verified_text: "Verified text",
 };
 
-export function CareTeam({ scenario, onSource }: { scenario: string; onSource: (s: Source) => void }) {
+interface Props {
+  scenario: string;
+  /** Set when the week board hands over a day; null means "whatever the API calls today". */
+  date?: string | null;
+  onSource: (s: Source) => void;
+}
+
+export function CareTeam({ scenario, date, onSource }: Props) {
   const [calls, setCalls] = useState(DEFAULT_CAPACITY.call);
   const [resp, setResp] = useState<ActionsResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +45,7 @@ export function CareTeam({ scenario, onSource }: { scenario: string; onSource: (
       const t0 = performance.now();
       try {
         const r = await postActions({
-          date: resp?.date ?? "",
+          date: date ?? resp?.date ?? "",
           capacity: { ...DEFAULT_CAPACITY, call: n },
           scenario,
         });
@@ -51,10 +58,10 @@ export function CareTeam({ scenario, onSource }: { scenario: string; onSource: (
         setBusy(false);
       }
     },
-    // resp?.date only matters after the first load; the first request sends "" and the
-    // fixture/API resolve the demo date themselves.
+    // resp?.date only matters after the first load; with no date from the week board the
+    // first request sends "" and the fixture/API resolve the demo date themselves.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [scenario],
+    [scenario, date],
   );
 
   useEffect(() => {

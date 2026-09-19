@@ -13,9 +13,10 @@ from pathlib import Path
 import pytest
 
 from leeward.api import schemas as api
-from leeward.schema import DEFAULT_CAPACITY, NEEDS
+from leeward.schema import CHANNELS, DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 
-FIXTURES = Path(__file__).resolve().parents[1] / "ui" / "public" / "fixtures"
+ROOT = Path(__file__).resolve().parents[1]
+FIXTURES = ROOT / "ui" / "public" / "fixtures"
 
 
 def _load(name: str):
@@ -96,3 +97,93 @@ def test_fixture_mode_cut_obeys_capacity_and_is_monotone() -> None:
                      for i, r in enumerate(sorted(kept, key=lambda r: r["eha"], reverse=True))],
             total_eha=total, n_panel=1, n_selected=len(kept), model_rung=0)
         assert resp.n_selected == len(kept)
+
+
+# --------------------------------------------------------------------------- #
+# The week board's detail views. Week.tsx opens VeteranCard.tsx and Message.tsx
+# from these two fixtures when the network is off, so they carry the same
+# promises the live routes will have to carry.
+# --------------------------------------------------------------------------- #
+
+def test_veteran_fixture_is_veteran_cards_keyed_by_id() -> None:
+    fx = _load("veterans")
+    cands = _load("actions_candidates")
+    assert set(c["veteran_id"] for c in cands["candidates"]) <= set(fx), (
+        "a candidate has no veteran card; clicking that queue card would open nothing")
+    for vid, payload in fx.items():
+        card = api.VeteranCard(**payload)
+        assert card.veteran_id == vid
+        assert {n.need for n in card.needs} == set(NEEDS), f"{vid}: needs {card.needs}"
+        for n in card.needs:
+            assert n.p_lo80 <= n.p_mean <= n.p_hi80, f"{vid}/{n.need}: interval excludes the mean"
+            assert 0.0 <= n.p_epistemic_share <= 1.0
+        assert card.why_this_tier, "every card says why it landed in its tier"
+        assert card.is_synthetic, "these are synthetic people and the card must say so"
+
+
+def test_message_fixture_carries_every_mandatory_element() -> None:
+    """The same promise test_guardrails makes of leeward.outreach.messages, made here of
+    the text the UI actually renders offline. A veteran must be able to tell this from a scam."""
+    fx = _load("messages")
+    cands = _load("actions_candidates")
+    assert set(c["action_id"] for c in cands["candidates"]) <= set(fx), (
+        "a candidate action has no message; the Message panel would open empty")
+    for aid, payload in fx.items():
+        msg = api.Message(**payload)
+        assert msg.action_id == aid
+        for element in MANDATORY_MESSAGE_ELEMENTS:
+            assert element in msg.body, f"message {aid} is missing {element!r}"
+        assert "Veterans Crisis Line" in msg.body, f"message {aid} omits the crisis line"
+        assert len(msg.verification_phrase.split()) == 4, "the verification phrase is four words"
+        assert msg.verification_phrase in msg.body, "the phrase must appear in the text we send"
+        assert msg.channel in CHANNELS, f"{aid}: channel {msg.channel!r}"
+        assert msg.includes_never_pay_line and msg.includes_vsafe and msg.includes_crisis_line
+    for bad in ("bit.ly", "tinyurl", "t.co/", "goo.gl"):
+        assert not any(bad in m["body"] for m in fx.values()), f"shortener {bad!r} in outreach"
+
+
+def test_no_queue_card_line_names_a_diagnosis() -> None:
+    """Week.tsx shows `rationale` on the de-identified queue card and keeps `top_driver`
+    behind the reveal, because driver phrases name conditions and medicines by design."""
+    words = ("copd", "asthma", "ptsd", "dialysis", "insulin", "cancer", "depression",
+             "diabetes", "inhaler", "therapy", "methadone")
+    for row in _load("actions_candidates")["candidates"]:
+        low = row["rationale"].lower()
+        assert not any(w in low for w in words), (
+            f"rationale for {row['action_id']} names a condition: {row['rationale']!r}. "
+            "It is rendered on a wall-mounted board next to a de-identified handle.")
+
+
+def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
+    """The board hangs on a wall in a shared clinical space.
+
+    A screenshot proves this once; this proves it every time anyone edits the screen.
+    The handle is initials plus the last four of the id, so `name_display` may only reach
+    `handleFor`, and the clinical fields -- driver phrases, conditions, medicines -- stay
+    in VeteranCard.tsx behind a click.
+    """
+    src = (ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8")
+    body = src.split("export function Week(", 1)[1]
+
+    for banned, why in [
+        ("top_driver", "driver phrases name conditions and medicines"),
+        ("conditions", "the condition list belongs behind the reveal"),
+        (".eha", "never show a bare expected-harm number as the reason"),
+        ("medications", "the medication panel belongs behind the reveal"),
+    ]:
+        assert banned not in body, f"Week.tsx renders {banned!r}: {why}"
+
+    uses = [ln.strip() for ln in src.splitlines() if "name_display" in ln]
+    assert uses, "Week.tsx no longer builds a handle at all"
+    for line in uses:
+        assert "handleFor(" in line or "nameDisplay" in line, (
+            f"Week.tsx touches name_display outside handleFor: {line!r}")
+
+
+def test_handle_never_leaks_more_than_initials() -> None:
+    """handleFor('James Okafor', 'SYN-000309') -> 'J.O. - 0309' and nothing more."""
+    src = (ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8")
+    fn = src.split("export function handleFor(", 1)[1].split("\n}", 1)[0]
+    assert "slice(0, 2)" in fn, "the handle takes at most two initials"
+    assert "[0]" in fn, "the handle takes the first letter of a name part, never the part"
+    assert "slice(-4)" in fn, "the handle takes the last four of the id, never the whole id"
