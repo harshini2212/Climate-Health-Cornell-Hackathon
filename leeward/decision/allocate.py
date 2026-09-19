@@ -27,6 +27,13 @@ candidate, which may cost its veteran a later one, which frees a slot for a late
 (Re-valuing an Act-now veteran's actions *as they are chosen* breaks this: a seeded search
 found capacity increases that lowered the total by up to 7%.)
 
+`compare()` is `allocate()` plus baselines: what the same team, with the same capacity and the
+same candidate actions valued the same way, averts when it works the veterans in some other
+order -- oldest first, most chronic conditions first, a seeded shuffle. Only who goes first
+changes; each veteran's own actions are still tried best first, so the gap to `allocate()` is
+what risk-ranking the veterans is worth. The shared work is done once and only the greedy pass
+repeats, which is what keeps `POST /actions` inside its 300 ms.
+
 `group_floor={"borough": 0.1}` reserves floor(0.1 x capacity) of every bucket for each
 borough. Reserved slots are filled greedily first; whatever a group cannot use goes back to
 everyone. A floor is a constraint, so it can cost harm averted, and the argument above does
@@ -44,6 +51,7 @@ import argparse
 import hashlib
 import math
 import time
+from collections.abc import Mapping
 from datetime import date as Date
 
 import numpy as np
@@ -118,26 +126,53 @@ def allocate(
 
     `weights` and `tau` default to severity.yaml and tau.yaml.
     """
+    return compare(scores, cohort, capacity, group_floor, date=date, weights=weights,
+                   tau=tau)[0]
+
+
+def compare(
+    scores: pl.DataFrame,
+    cohort: pl.DataFrame,
+    capacity: dict[str, int],
+    group_floor: dict[str, float] | None = None,
+    *,
+    rank_by: Mapping[str, str] | None = None,
+    date: Date | None = None,
+    weights: dict[str, float] | None = None,
+    tau: dict[str, dict[str, float]] | None = None,
+) -> tuple[pl.DataFrame, dict[str, float]]:
+    """`allocate()`'s table, and the total EHA of each baseline in `rank_by`.
+
+    `rank_by` maps a baseline's name to a numeric cohort column; that baseline works the
+    veterans from the highest value of the column down (ties in veteran order, so the answer
+    does not depend on risk). The total is summed over every day allocated, like `total_eha`.
+    """
     weights = weights if weights is not None else severity.load()
     table = tau if tau is not None else tau_table.load()
     cap = _check_capacity(capacity)
     floor = _check_floor(group_floor or {}, cohort)
+    rank_by = dict(rank_by or {})
+    missing = {n: c for n, c in rank_by.items() if c not in cohort.columns}
+    if missing:
+        raise ValueError(f"rank_by names cohort columns that do not exist: {missing}")
     if date is not None:
         scores = scores.filter(pl.col("date") == date)
     if scores.height == 0:
-        return _empty()
+        return _empty(), dict.fromkeys(rank_by, 0.0)
 
     wide = eha.needs_wide(scores)
     unknown = wide.join(cohort, on="veteran_id", how="anti")["veteran_id"].unique()
     if unknown.len():
         raise ValueError(f"{unknown.len()} scored veterans are not in the cohort, "
                          f"e.g. {unknown.sort()[0]!r}")
-    cols = ["veteran_id", *dict.fromkeys([*eha.COHORT_COLUMNS, *floor])]
+    cols = ["veteran_id", *dict.fromkeys([*eha.COHORT_COLUMNS, *floor, *rank_by.values()])]
     frame = (wide.join(tiers.assign(scores, weights), on=["veteran_id", "date"])
                  .join(cohort.select(cols), on="veteran_id")
                  .sort("date", "veteran_id"))
-    return pl.concat([_allocate_day(day, cap, floor, weights, table)
-                      for _, day in frame.group_by("date", maintain_order=True)])
+    days = [_allocate_day(day, cap, floor, weights, table, rank_by)
+            for _, day in frame.group_by("date", maintain_order=True)]
+    totals = {n: sum(t[n] for _, t in days) for n in rank_by}
+    return pl.concat([a for a, _ in days]), totals
 
 
 def total_eha(actions: pl.DataFrame) -> float:
@@ -146,7 +181,8 @@ def total_eha(actions: pl.DataFrame) -> float:
 
 
 def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float],
-                  weights: dict[str, float], table: dict[str, dict[str, float]]) -> pl.DataFrame:
+                  weights: dict[str, float], table: dict[str, dict[str, float]],
+                  rank_by: Mapping[str, str]) -> tuple[pl.DataFrame, dict[str, float]]:
     n = day.height
     vids = day["veteran_id"].to_list()
     tier = day["tier"].to_numpy()
@@ -165,37 +201,49 @@ def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float
     slots = np.where(tier == "act_now", ACT_NOW_SLOTS, 1)
     value, top = _values(p * w, w * eha.epistemic_var(p, share), T, open_, slots)
 
-    # One pass, highest value first; (value, veteran, action) breaks ties the same way every run.
     i_idx, a_idx = np.nonzero(open_ & (value > EPS))
-    order = np.lexsort((a_idx, i_idx, -value[i_idx, a_idx]))
-    queue = list(zip(i_idx[order].tolist(), a_idx[order].tolist(), strict=True))
-
-    used = np.zeros(n, dtype=int)
-    remaining = dict(cap)
     groups = {col: day[col].to_list() for col in floor}
-    quota = {(col, g, b): math.floor(f * cap[b] + 1e-9)
-             for col, f in floor.items() for g in set(groups[col]) for b in cap}
-    taken: set[tuple[int, int]] = set()
 
-    def run(reserved_only: bool) -> None:
-        for i, a in queue:
-            b = bucket[a]
-            if used[i] >= slots[i] or remaining[b] <= 0 or (i, a) in taken:
-                continue
-            mine = [(col, groups[col][i], b) for col in floor]
-            if reserved_only and not any(quota[q] > 0 for q in mine):
-                continue
-            taken.add((i, a))
-            used[i] += 1
-            remaining[b] -= 1
-            for q in mine:
-                quota[q] = max(0, quota[q] - 1)
+    def pick(order_by: np.ndarray | None) -> set[tuple[int, int]]:
+        """One greedy pass over the candidates: highest value first, or -- for a baseline --
+        veterans from the highest `order_by` down, each one's own actions best first.
+        (value, veteran, action) breaks ties the same way every run."""
+        if order_by is None:
+            order = np.lexsort((a_idx, i_idx, -value[i_idx, a_idx]))
+        else:
+            order = np.lexsort((a_idx, -value[i_idx, a_idx], i_idx, -order_by[i_idx]))
+        queue = list(zip(i_idx[order].tolist(), a_idx[order].tolist(), strict=True))
 
-    if floor:
-        run(reserved_only=True)
-    run(reserved_only=False)
+        used = np.zeros(n, dtype=int)
+        remaining = dict(cap)
+        quota = {(col, g, b): math.floor(f * cap[b] + 1e-9)
+                 for col, f in floor.items() for g in set(groups[col]) for b in cap}
+        taken: set[tuple[int, int]] = set()
+
+        def run(reserved_only: bool) -> None:
+            for i, a in queue:
+                b = bucket[a]
+                if used[i] >= slots[i] or remaining[b] <= 0 or (i, a) in taken:
+                    continue
+                mine = [(col, groups[col][i], b) for col in floor]
+                if reserved_only and not any(quota[q] > 0 for q in mine):
+                    continue
+                taken.add((i, a))
+                used[i] += 1
+                remaining[b] -= 1
+                for q in mine:
+                    quota[q] = max(0, quota[q] - 1)
+
+        if floor:
+            run(reserved_only=True)
+        run(reserved_only=False)
+        return taken
+
+    taken = pick(None)
+    totals = {name: float(sum(value[i, a] for i, a in pick(day[col].to_numpy().astype(float))))
+              for name, col in rank_by.items()}
     if not taken:
-        return _empty()
+        return _empty(), totals
     chosen = [(i, a, float(value[i, a]), int(top[i, a])) for i, a in sorted(taken)]
 
     lo = day.select([f"p_lo80_{k}" for k in NEEDS]).to_numpy()
@@ -220,9 +268,10 @@ def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float
             "owner": OWNER.get(act, "care_team"), "message_id": f"msg-{aid}",
             "top_need": need, "top_driver": drivers[i][k],
         })
-    return (pl.DataFrame(rows, schema=OUT_SCHEMA)
-              .sort(["eha", "veteran_id", "action"], descending=[True, False, False])
-              .with_columns(rank=pl.int_range(1, pl.len() + 1, dtype=pl.Int32)))
+    actions_df = (pl.DataFrame(rows, schema=OUT_SCHEMA)
+                    .sort(["eha", "veteran_id", "action"], descending=[True, False, False])
+                    .with_columns(rank=pl.int_range(1, pl.len() + 1, dtype=pl.Int32)))
+    return actions_df, totals
 
 
 def _values(risk: np.ndarray, info: np.ndarray, T: np.ndarray, open_: np.ndarray,
