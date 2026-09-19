@@ -18,23 +18,17 @@ import pytest
 from leeward import schema
 from leeward.model import design, priors, score_prior
 from leeward.schema import NEEDS
-
-
-def _table(name: str) -> pl.DataFrame:
-    path = schema.TABLES[name].path
-    if not path.exists():
-        pytest.skip(f"data/{name}.parquet missing -- run `make fixtures`")
-    return pl.read_parquet(path)
+from tables import table
 
 
 def _dates(n: int, offset: int = 0) -> list:
-    return sorted(_table("hazards")["date"].unique().to_list())[offset:offset + n]
+    return sorted(table("hazards")["date"].unique().to_list())[offset:offset + n]
 
 
 @pytest.fixture(scope="module")
 def scored() -> pl.DataFrame:
     """The full fixture panel over one week."""
-    return score_prior.score(_table("cohort"), _table("hazards"), _table("site_status"),
+    return score_prior.score(table("cohort"), table("hazards"), table("site_status"),
                              dates=_dates(7, offset=10))
 
 
@@ -43,7 +37,7 @@ def scored() -> pl.DataFrame:
 # --------------------------------------------------------------------------- #
 
 def test_all_five_needs_for_every_veteran_day(scored: pl.DataFrame) -> None:
-    n_vet = _table("cohort").height
+    n_vet = table("cohort").height
     assert scored.height == n_vet * 7 * len(NEEDS)
     per = scored.group_by("veteran_id", "date").agg(pl.col("need").sort().alias("needs"))
     assert per.height == n_vet * 7
@@ -70,10 +64,10 @@ def test_epistemic_share_is_a_share(scored: pl.DataFrame) -> None:
 
 
 def test_ten_thousand_veterans_by_seven_days_in_under_five_seconds() -> None:
-    base = _table("cohort")
+    base = table("cohort")
     big = (base.sample(10_000, with_replacement=True, seed=0)
                .with_columns(veteran_id=pl.format("PERF-{}", pl.int_range(pl.len()))))
-    hazards, sites, dates = _table("hazards"), _table("site_status"), _dates(7)
+    hazards, sites, dates = table("hazards"), table("site_status"), _dates(7)
 
     t0 = time.perf_counter()
     out = score_prior.score(big, hazards, sites, dates=dates)
@@ -94,8 +88,8 @@ def test_output_satisfies_the_scores_contract_at_rung_0(scored: pl.DataFrame) ->
 
 def test_same_seed_same_numbers() -> None:
     """The same click must produce the same number in rehearsal and on stage."""
-    cohort = _table("cohort").head(40)
-    args = (cohort, _table("hazards"), _table("site_status"))
+    cohort = table("cohort").head(40)
+    args = (cohort, table("hazards"), table("site_status"))
     a = score_prior.score(*args, dates=_dates(3))
     b = score_prior.score(*args, dates=_dates(3))
     assert a.equals(b)
@@ -140,17 +134,17 @@ def test_every_prior_is_documented() -> None:
 # --------------------------------------------------------------------------- #
 
 def _one_week(cohort: pl.DataFrame, **hazard_overrides) -> tuple[pl.DataFrame, list]:
-    hazards = _table("hazards")
+    hazards = table("hazards")
     dates = _dates(7)
     week = hazards.filter(pl.col("date").is_in(dates))
     week = week.with_columns(**{k: pl.lit(v, dtype=week.schema[k])
                                 for k, v in hazard_overrides.items()})
-    return score_prior.score(cohort, week, _table("site_status").filter(
+    return score_prior.score(cohort, week, table("site_status").filter(
         pl.col("date").is_in(dates)), dates=dates), dates
 
 
 def test_a_heat_wave_raises_heat_risk_for_everyone() -> None:
-    cohort = _table("cohort").head(60)
+    cohort = table("cohort").head(60)
     calm, _ = _one_week(cohort, heat_index_max_f=74.0, hot_day=False)
     hot, _ = _one_week(cohort, heat_index_max_f=98.0, hot_day=True)
     key = ["veteran_id", "date", "need"]
@@ -164,7 +158,7 @@ def test_a_heat_wave_raises_heat_risk_for_everyone() -> None:
 
 def test_a_closed_site_lands_on_its_dialysis_patient() -> None:
     """The SiteDown term is never cut. It has to reach the veteran it is about."""
-    sites = _table("site_status")
+    sites = table("site_status")
     down_days = sites.filter((pl.col("facility_id") == "630") & pl.col("site_down"))["date"]
     up_days = sites.filter((pl.col("facility_id") == "630") & ~pl.col("site_down"))["date"]
     if down_days.len() == 0 or up_days.len() == 0:
@@ -172,11 +166,11 @@ def test_a_closed_site_lands_on_its_dialysis_patient() -> None:
     down, up = down_days.min(), up_days.max()
 
     # Dialysis at the Manhattan VA, and nothing else that competes for the treatment gap.
-    walter = _table("cohort").head(1).with_columns(
+    walter = table("cohort").head(1).with_columns(
         veteran_id=pl.lit("WALTER"), facility_id=pl.lit("630"), ckd_dialysis=pl.lit(True),
         med_controlled=pl.lit(False), med_cold_chain=pl.lit(False),
         mail_order_pharmacy=pl.lit(False), powered_equipment=pl.lit("none"))
-    out = score_prior.score(walter, _table("hazards"), sites, dates=sorted({down, up}))
+    out = score_prior.score(walter, table("hazards"), sites, dates=sorted({down, up}))
     tg = out.filter(pl.col("need") == "treatment_gap").sort("date")
     by_day = dict(zip(tg["date"].to_list(), tg["p_mean"].to_list(), strict=True))
     assert by_day[down] > 2 * by_day[up], "closure should more than double the treatment gap"
@@ -201,8 +195,8 @@ def test_drivers_are_ordered_and_never_the_intercept(scored: pl.DataFrame) -> No
 
 
 def test_intervals_widen_with_the_prior_scale() -> None:
-    cohort = _table("cohort").head(40)
-    args = (cohort, _table("hazards"), _table("site_status"))
+    cohort = table("cohort").head(40)
+    args = (cohort, table("hazards"), table("site_status"))
     narrow = score_prior.score(*args, dates=_dates(2), scale=0.5)
     wide = score_prior.score(*args, dates=_dates(2), scale=2.0)
     w = lambda df: (df["p_hi80"] - df["p_lo80"]).median()  # noqa: E731
@@ -211,7 +205,7 @@ def test_intervals_widen_with_the_prior_scale() -> None:
 
 def test_scores_cover_the_requested_window_only() -> None:
     dates = _dates(3, offset=5)
-    out = score_prior.score(_table("cohort").head(5), _table("hazards"), _table("site_status"),
+    out = score_prior.score(table("cohort").head(5), table("hazards"), table("site_status"),
                             dates=dates)
     assert sorted(out["date"].unique().to_list()) == dates
     assert dates[0] - timedelta(days=1) not in set(out["date"].to_list())
