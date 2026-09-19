@@ -1,0 +1,22 @@
+# The June 2023 Canadian-wildfire smoke episode. A replay, not a script.
+#
+# PM2.5 for 5-11 June 2023 comes straight from the EPA AirNow monitors in
+# data/reference/airnow_pm25_nyc_smoke2023.parquet, assigned to each ZIP from its nearest
+# monitor. The real citywide peak was 203.5 ug/m3 (AQI 254) on 7 June at a Queens monitor;
+# it was 13.1 two days earlier and 14.9 two days later. A judge can check every number.
+#
+# Day 0 is 15 April 2023, so 5 June is day 51 and the peak is day 53.
+
+name: smoke_2023
+start_date: 2023-04-15
+days: 120
+
+baseline:
+  seed: 2
+  heat_index_mean_f: 70
+  heat_index_amp_f: 16
+  heat_index_noise_f: 4
+  pm25_mean: 9.0
+
+events:
+  - {day: 51, type: smoke_replay, source: airnow_pm25_nyc_smoke2023, replay_start: 2023-06-05}
