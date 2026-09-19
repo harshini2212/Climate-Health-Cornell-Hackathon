@@ -1,0 +1,11 @@
+# w_k: how much harm need k does when it happens. SPEC §7.1.
+#
+# Clinician-editable. Change a number, and the next allocate() call ranks with it; no code
+# change, no redeploy. severity.load() refuses a file with a need missing, an unknown need,
+# or a weight that is not a positive number, so a typo fails loudly instead of quietly
+# reordering the care-team list.
+breathing: 3
+heat: 4
+mental: 4
+treatment_gap: 5
+access_loss: 3
