@@ -75,6 +75,7 @@ is the right answer, which is a useful thing to know before you trust a join.
 | --- | --- | --- |
 | `med_climate_risk.csv` | 52 | **VA drug class → climate mechanism.** Hand-curated from CDC's clinician guidance on heat and medications. Columns: `mechanism`, `hazard`, `weight`, `acb` (anticholinergic burden 0–3), `controlled`, `cold_chain`, `narrow_ti`. Pharmacist-editable, like `severity.py` and `tau.py`. |
 | `va_drug_class_members.parquet` | 4,222 | **RxNorm code → VA drug class**, pulled from RxNav for every class in the crosswalk. Lets the cohort map Synthea prescriptions offline, with no RxNav call at demo time. |
+| `synthea_med_profiles.parquet` | 109 | **One row per Synthea bundle: that patient's active RxNorm codes**, sex, and age at their last recorded event. Distilled from the 30 MB FHIR sample by `profiles_from_fhir()`, so a clean clone gets real medication lists — co-prescribing intact — without `data/raw/`. 77 of the 109 carry at least one active medication. |
 
 RxNav publishes the **VA's own 576-class drug taxonomy**, keyless — which means Leeward
 speaks the vocabulary a VA clinical pharmacist already uses. `CV702` is LOOP DIURETICS to
@@ -84,16 +85,25 @@ Synthea emits RxNorm codes on every `MedicationRequest`, so the prescription lay
 data the cohort was already carrying and the first draft ignored**. Measured on the 109-bundle
 Synthea FHIR sample:
 
-| | Share of patients on active meds |
+| | Share of the 77 patients on active meds |
 | --- | --- |
-| On ≥1 medication that impairs heat response | **77%** |
+| On ≥1 medication in the crosswalk, of any hazard | **77%** |
+| On ≥1 medication that impairs heat response (`med_thermoreg_score > 0`) | **65%** |
 | On **ACE inhibitor or ARB + a diuretic** — the combination CDC names as additive heat risk | **16%** |
 | On a controlled substance (cannot use the retail emergency refill route) | 10% |
 | On a cold-chain medication (insulin) | 9% |
-| Anticholinergic burden ≥ 3 (clinically meaningful on the ACB scale) | 5% |
+| On a narrow-therapeutic-index medication | 8% |
+| Anticholinergic burden ≥ 3 (clinically meaningful on the ACB scale) | 12% |
 | Median active medications | 3 (max 14) |
 
-Those numbers come from a general-population sample. The veteran 65+ cohort will run higher.
+An earlier version of this table put **77%** on the heat row and **5%** on the ACB row. 77%
+is the share on *any* crosswalk medication, whatever its hazard; heat alone is 65%. ACB is
+12% under the most-specific-class rule in `cohort/medications.py`. Every figure above is
+asserted in `tests/test_medications.py`, which re-derives them straight from the bundles
+whenever `data/raw/` is present — so the table cannot drift from the data again.
+
+Those numbers come from a general-population sample. The veteran 65+ cohort runs higher, and
+does: 72% heat-impairing, 18% on the CDC pair, 11% cold-chain, 4.4 active medications each.
 
 The five most-prescribed drugs in the sample are insulin, hydrochlorothiazide, lisinopril,
 metformin and amlodipine — so the medication terms fire on the *ordinary* patient, not an
@@ -104,6 +114,14 @@ the mechanism and combination rules (CDC). **What is synthetic:** `days_supply_r
 `mail_order_pharmacy`, because Synthea's FHIR export carries no `dispenseRequest` block. Both
 are drawn from VA's published conventions — 30-day window fills, 90-day mail fills, and the
 ~80% of VA outpatient prescriptions that go by mail — and both carry a `_synthetic` flag.
+
+Also synthetic: **which** of those 109 real lists a given synthetic veteran carries. The
+cohort bootstraps whole lists from `synthea_med_profiles.parquet`, stratified by age band
+only (18–54 / 55+), because the sample's medication burden triples at 55+ — 1.9 active meds
+below, 5.4 above — and our panel is 54% over 65. Whole lists, never drug-by-drug, so real
+co-prescribing survives. The draw ignores the veteran's own diagnosis list, so a cold-chain
+medication does not imply the diabetes flag; the sample has six diabetics, too few to
+condition on without inventing the structure. That closes with the Synthea swap.
 
 ### Care sites and hazard to those sites
 

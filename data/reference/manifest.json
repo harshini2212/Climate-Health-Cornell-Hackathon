@@ -149,6 +149,16 @@
     "sha256": "b6b2f48a9efcfb33",
     "url": "https://svi.cdc.gov/Documents/Data/2022/csv/states/NewYork.csv"
   },
+  "synthea_med_profiles": {
+    "bytes": 5109,
+    "cols": 4,
+    "fetched_utc": "2026-09-19T23:11:01Z",
+    "file": "synthea_med_profiles.parquet",
+    "note": "One row per Synthea bundle: that patient's active RxNorm codes, sex, and age at their last recorded event. Distilled from the 30 MB FHIR sample so the cohort can give every synthetic veteran a real medication list -- co-prescribing intact -- without committing the bundles or reading data/raw/ at demo time.",
+    "rows": 109,
+    "sha256": "c4602c22ed04f518",
+    "url": "derived: synthea_sample_fhir.zip"
+  },
   "synthea_sample": {
     "bytes": 29595199,
     "cols": 0,
