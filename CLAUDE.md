@@ -9,6 +9,19 @@ Read before coding, in this order:
 1. `data/README.md` — what data already exists and where every rate comes from
 2. `docs/SPEC.md` — the section for your lane
 3. `docs/BUILD_PLAN.md` — who owns what, and what is being cut
+4. `docs/PROMPTS.md` — the task you were probably handed came from here
+
+## The gate
+`make check` is the review. Nobody on this project reads diffs, so it has to be: lint, every
+test, and the semantic guardrails in `tests/test_guardrails.py`. **Green means you may merge;
+red means you may not.** Run it before you claim anything is done.
+
+`make status` shows where the build is without opening a file. `make fixtures` regenerates
+correctly-shaped fake data for every contract table.
+
+A guardrail for a module that does not exist yet skips with a message naming what it will
+enforce, and starts enforcing the moment that module lands. Before you build a module, read
+the skipping guardrail for it — **it is your specification.**
 
 ## The data is already fetched
 `data/reference/` holds 21 joined, verified public tables (~4 MB, committed), built by
@@ -34,6 +47,8 @@ mail-order status, days of supply remaining, and every daily outcome — carries
 - `data/posterior.nc`: ArviZ InferenceData; var names match `leeward/model/priors.py`.
 - API bodies/responses: pydantic models in `leeward/api/schemas.py`.
 - `leeward/model/design.py` is shared by the simulator and the model. Do not fork it.
+- Write tables with `schema.write(df, "<table>")`, never `df.write_parquet(...)`. It validates
+  first, and that validation is most of what stands between a plausible bug and the demo.
 - **`modzcta` is the geography key everywhere.** Not `zip`, not `zcta`, not NTA.
 
 Contract-file ownership: `leeward/schema.py` and `model/design.py` belong to the `cohort`
@@ -62,6 +77,8 @@ Never run inference inside a request.
 - `pytest -q` passes before any merge; `make demo` boots in < 60 s from a clean clone.
 - One task per prompt; write the acceptance test first; ask before touching a contract file.
 - Seed everything. The same click must produce the same number in rehearsal and on stage.
+- Finish a task like this: `make check` green → commit → push → two lines in
+  `status/<lane>.md` → **stop**. Do not roll on to the next task.
 
 ## Lanes
 Two builders, six git worktrees, one `main`.

@@ -1,0 +1,42 @@
+name: check
+
+# The merge gate. Nobody on this project reads diffs, so this is the review.
+# A lane branch that is red here does not go to main.
+
+on:
+  push:
+    branches: [main, "lane/**"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install -qU pip
+          python -m pip install -q -e ".[dev]"
+
+      - name: Lint
+        run: ruff check leeward scripts tests
+
+      - name: Fixtures
+        run: python scripts/make_fixtures.py
+
+      - name: Tests
+        run: pytest -q -rs
+
+      - name: Guardrails still waiting
+        if: always()
+        run: |
+          echo "Modules not yet built (each turns into an enforced guardrail on landing):"
+          pytest -q -rs 2>/dev/null | grep -E '^SKIPPED' | sed 's/SKIPPED \[[0-9]*\] /  - /' || true

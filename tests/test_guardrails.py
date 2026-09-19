@@ -1,0 +1,253 @@
+"""Guardrails: the project's non-negotiables, enforced by machine.
+
+Nobody is reading the diffs, so these tests are the review. They are deliberately
+*semantic* -- they check that the numbers mean the right thing, not merely that the code
+ran. An agent producing plausible-but-wrong work fails here.
+
+Each guardrail for a module that does not exist yet **skips with a message naming what it
+will enforce**, and starts enforcing automatically the moment that module lands. So the
+suite gets stricter as the build fills in, with nobody having to remember to turn it on.
+
+Run `make check` and read the skip list: it is an accurate to-do list.
+"""
+
+from __future__ import annotations
+
+import importlib
+import inspect
+import re
+from pathlib import Path
+
+import polars as pl
+import pytest
+
+from leeward import schema
+from leeward.schema import DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _mod(name: str):
+    """Import a lane's module, or skip with a message saying what this will check."""
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError:
+        pytest.skip(f"{name} not built yet -- this guardrail activates the moment it lands")
+
+
+def _table(name: str) -> pl.DataFrame:
+    path = schema.TABLES[name].path
+    if not path.exists():
+        pytest.skip(f"data/{name}.parquet missing -- run `make fixtures`")
+    return pl.read_parquet(path)
+
+
+# --------------------------------------------------------------------------- #
+# Contracts. These never skip: the fixtures exist from minute one.
+# --------------------------------------------------------------------------- #
+
+@pytest.mark.parametrize("table", sorted(schema.TABLES))
+def test_every_table_matches_its_contract(table: str) -> None:
+    schema.validate(_table(table), table)
+
+
+def test_synthetic_columns_all_carry_their_flag() -> None:
+    """'Only the people are synthetic' is the central claim. It has to be enforced."""
+    cohort = _table("cohort")
+    for col in schema.TABLES["cohort"].columns:
+        if not col.synthetic:
+            continue
+        flag = f"{col.name}_synthetic"
+        assert flag in cohort.columns, f"{col.name} is synthetic but has no {flag} column"
+        assert cohort[flag].all(), f"{flag} is False somewhere; synthetic data must say so"
+
+
+def test_intervals_are_ordered() -> None:
+    s = _table("scores")
+    bad = s.filter((pl.col("p_lo80") > pl.col("p_mean")) | (pl.col("p_mean") > pl.col("p_hi80")))
+    assert bad.height == 0, f"{bad.height} scores where lo80 <= mean <= hi80 is violated"
+
+
+def test_every_veteran_day_has_all_five_needs() -> None:
+    s = _table("scores")
+    per = s.group_by("veteran_id", "date").agg(pl.col("need").n_unique().alias("k"))
+    assert per["k"].min() == len(NEEDS), (
+        "some veteran-days are missing needs; the care-team list would silently under-rank them")
+
+
+def test_geography_key_is_real_nyc() -> None:
+    """A cohort in ZIPs that do not exist renders an empty map and nobody notices until demo."""
+    real = set(pl.read_parquet(schema.REFERENCE / "nyc_modzcta.parquet")["modzcta"].to_list())
+    for table in ("cohort", "hazards"):
+        got = set(_table(table)["modzcta"].unique().to_list())
+        assert got <= real, f"{table} references ZIPs not in nyc_modzcta: {sorted(got - real)[:5]}"
+
+
+def test_facilities_are_real_stations() -> None:
+    real = set(pl.read_parquet(
+        schema.REFERENCE / "va_facilities_nyc_hazard.parquet")["station_no"].to_list())
+    for table in ("cohort", "site_status"):
+        col = "facility_id"
+        got = set(_table(table)[col].unique().to_list())
+        assert got <= real, f"{table}.{col} has unknown stations: {sorted(got - real)[:5]}"
+
+
+# --------------------------------------------------------------------------- #
+# Decision layer
+# --------------------------------------------------------------------------- #
+
+def test_capacity_is_never_exceeded() -> None:
+    """The whole pitch is 'cut at the team's real capacity'. Overfilling it is a lie."""
+    actions = _table("actions")
+    for day, grp in actions.group_by("date"):
+        used = grp.group_by("capacity_bucket").agg(pl.len().alias("n"))
+        for bucket, n in zip(used["capacity_bucket"], used["n"], strict=False):
+            cap = DEFAULT_CAPACITY.get(bucket)
+            assert cap is not None, f"unknown capacity bucket {bucket!r}"
+            assert n <= cap, f"{day}: {n} actions in bucket {bucket}, capacity is {cap}"
+
+
+def test_one_action_per_veteran_unless_act_now() -> None:
+    actions = _table("actions")
+    counts = (actions.group_by("date", "veteran_id")
+                     .agg(pl.len().alias("n"), pl.col("tier").min().alias("tier")))
+    over = counts.filter((pl.col("n") > 1) & (pl.col("tier") != "act_now"))
+    assert over.height == 0, f"{over.height} non-act-now veterans got more than one action"
+    assert counts["n"].max() <= 3, "no veteran may receive more than three actions in a day"
+
+
+def test_ranks_are_dense_and_ordered_by_eha() -> None:
+    actions = _table("actions")
+    for _, grp in actions.group_by("date"):
+        g = grp.sort("rank")
+        assert g["rank"].to_list() == list(range(1, g.height + 1)), "ranks must be 1..n, no gaps"
+        eha = g["eha"].to_list()
+        assert eha == sorted(eha, reverse=True), "rank must be non-increasing in EHA"
+
+
+def test_more_capacity_never_averts_less_harm() -> None:
+    """A monotonicity property. If this breaks, the capacity slider tells the wrong story."""
+    allocate = _mod("leeward.decision.allocate")
+    fn = getattr(allocate, "allocate", None)
+    assert fn is not None, "leeward.decision.allocate must expose allocate(...)"
+    sig = inspect.signature(fn)
+    assert "capacity" in sig.parameters, "allocate() must take a `capacity` dict"
+
+    total = getattr(allocate, "total_eha", None)
+    if total is None:
+        pytest.skip("allocate.total_eha(actions) not exposed yet")
+    scores, cohort = _table("scores"), _table("cohort")
+    prev = None
+    for calls in (10, 20, 40, 80):
+        cap = dict(DEFAULT_CAPACITY, call=calls)
+        got = total(fn(scores=scores, cohort=cohort, capacity=cap))
+        if prev is not None:
+            assert got >= prev - 1e-9, f"capacity {calls} averted less harm than the step below"
+        prev = got
+
+
+# --------------------------------------------------------------------------- #
+# Outreach. These are the promises made to a veteran, so they are hard failures.
+# --------------------------------------------------------------------------- #
+
+def test_every_message_carries_all_mandatory_elements() -> None:
+    messages = _mod("leeward.outreach.messages")
+    render = getattr(messages, "render", None)
+    assert render is not None, "leeward.outreach.messages must expose render(...)"
+
+    actions, cohort = _table("actions"), _table("cohort")
+    checked = 0
+    for row in actions.head(40).to_dicts():
+        vet = cohort.filter(pl.col("veteran_id") == row["veteran_id"])
+        if vet.height == 0:
+            continue
+        msg = render(action=row, veteran=vet.to_dicts()[0])
+        body = msg if isinstance(msg, str) else getattr(msg, "body", str(msg))
+        for element in MANDATORY_MESSAGE_ELEMENTS:
+            assert element in body, (
+                f"message for action {row['action_id']} is missing {element!r}. "
+                "Every message must be distinguishable from a scam.")
+        phrase = getattr(msg, "verification_phrase", None)
+        if phrase is not None:
+            assert len(phrase.split()) == 4, "the verification phrase is four words"
+        checked += 1
+    assert checked > 0, "no messages were rendered, so nothing was actually checked"
+
+
+def test_no_message_contains_an_unapproved_phone_or_shortener() -> None:
+    messages = _mod("leeward.outreach.messages")
+    allowed = {"833-388-7233", "988", "911"}
+    src = Path(inspect.getfile(messages)).read_text()
+    for phone in re.findall(r"\b\d{3}-\d{3}-\d{4}\b", src):
+        assert phone in allowed, f"unapproved phone number in messages.py: {phone}"
+    for bad in ("bit.ly", "tinyurl", "t.co/", "goo.gl"):
+        assert bad not in src, f"URL shortener {bad!r} in outreach; scammers use those"
+
+
+def test_partner_export_excludes_rather_than_redacts() -> None:
+    export = _mod("leeward.outreach.export")
+    fn = getattr(export, "partner_sheet", None)
+    if fn is None:
+        pytest.skip("export.partner_sheet(...) not exposed yet")
+    cohort, actions = _table("cohort"), _table("actions")
+    sheet = fn(actions=actions, cohort=cohort)
+    ids = set(sheet["veteran_id"].to_list()) if hasattr(sheet, "to_list") or hasattr(
+        sheet, "columns") else set()
+    withheld = set(cohort.filter(~pl.col("consent_partner_check"))["veteran_id"].to_list())
+    assert not (ids & withheld), (
+        "veterans without partner consent appear in the export; rows are excluded, never redacted")
+
+
+# --------------------------------------------------------------------------- #
+# Honesty guardrails
+# --------------------------------------------------------------------------- #
+
+def test_fairness_audit_is_never_suppressed() -> None:
+    """A failing audit is displayed. Code that swallows it is the one thing we will not ship."""
+    fairness = _mod("leeward.eval.fairness")
+    src = Path(inspect.getfile(fairness)).read_text()
+    for pattern in (r"except\s*:\s*\n\s*pass", r"except Exception:\s*\n\s*pass"):
+        assert not re.search(pattern, src), "fairness.py swallows an exception"
+    assert "flagged" in src, "fairness.py must mark groups whose relative FNR gap exceeds 20 pct"
+
+
+def test_model_rung_is_recorded() -> None:
+    """You have to be able to say on stage which rung actually fitted."""
+    s = _table("scores")
+    assert s["model_rung"].n_unique() == 1, "scores mix model rungs; that cannot be explained"
+    assert s["model_rung"][0] in (0, 1, 2, 3)
+
+
+def test_demo_path_makes_no_network_calls() -> None:
+    """`make demo` must work with the wifi off. Catch an import-time fetch before the judges do."""
+    offenders = []
+    for path in (ROOT / "leeward").rglob("*.py"):
+        if "ingest" in path.parts:      # ingest is allowed to fetch; the demo never calls it
+            continue
+        src = path.read_text()
+        for pattern in (r"\brequests\.(get|post)\b", r"\burllib\.request\b", r"\bhttpx\.(get|post)\b"):
+            if re.search(pattern, src):
+                offenders.append(f"{path.relative_to(ROOT)}: {pattern}")
+    assert not offenders, (
+        "network calls outside leeward/ingest/: " + "; ".join(offenders) +
+        ". The demo runs offline; fetching belongs in scripts/fetch_sources.py.")
+
+
+def test_no_real_patient_data_paths() -> None:
+    """The one hard rule in CLAUDE.md. Cheap to check, catastrophic to miss."""
+    banned = re.compile(r"\b(vistA_prod|phi_|real_patient|mpi_|ssn|social_security)\b", re.I)
+    for path in (ROOT / "leeward").rglob("*.py"):
+        hit = banned.search(path.read_text())
+        assert not hit, f"{path.relative_to(ROOT)} references {hit.group(0)!r}"
+
+
+def test_seeds_are_fixed_everywhere_that_randomises() -> None:
+    """The same click must produce the same number in rehearsal and on stage."""
+    offenders = []
+    for path in list((ROOT / "leeward").rglob("*.py")) + list((ROOT / "scripts").rglob("*.py")):
+        src = path.read_text()
+        if re.search(r"np\.random\.default_rng\(\s*\)", src):
+            offenders.append(f"{path.relative_to(ROOT)}: default_rng() with no seed")
+        if re.search(r"\brandom\.(random|choice|randint|shuffle)\(", src) and "seed" not in src:
+            offenders.append(f"{path.relative_to(ROOT)}: stdlib random with no seed")
+    assert not offenders, "unseeded randomness: " + "; ".join(offenders)

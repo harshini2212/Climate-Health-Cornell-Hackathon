@@ -6,6 +6,8 @@ data/truth.json
 report/
 
 .venv/
+*.egg-info/
+.pytest_cache/
 __pycache__/
 *.py[cod]
 .pytest_cache/

@@ -49,7 +49,7 @@ NYC_COUNTY_FIPS = {"36005": "Bronx", "36047": "Brooklyn", "36061": "Manhattan",
 NYC_COUNTY_NAMES = {"BRONX": "Bronx", "KINGS": "Brooklyn", "NEW YORK": "Manhattan",
                     "QUEENS": "Queens", "RICHMOND": "Staten Island"}
 
-REGISTRY: dict[str, "Fetcher"] = {}
+REGISTRY: dict[str, Fetcher] = {}
 
 
 class Fetcher:
@@ -414,7 +414,7 @@ def fetch_va_facility_hazard():
 
     pdf = fac.to_pandas()
     g = gpd.GeoDataFrame(pdf, crs="EPSG:4326",
-                         geometry=[Point(x, y) for x, y in zip(pdf["lon"], pdf["lat"])])
+                         geometry=[Point(x, y) for x, y in zip(pdf["lon"], pdf["lat"], strict=False)])
     j = gpd.sjoin(g, zones[["evac_zone", "geometry"]], how="left", predicate="within")
     j = j.drop(columns=["geometry", "index_right"]).drop_duplicates("station_no")
 
@@ -482,7 +482,7 @@ def fetch_airnow_smoke():
 def fetch_va_drug_classes():
     risk = pl.read_csv(REF / "med_climate_risk.csv")
     rows, missing = [], []
-    for cid, cname in zip(risk["va_class_id"], risk["va_class_name"]):
+    for cid, cname in zip(risk["va_class_id"], risk["va_class_name"], strict=False):
         try:
             js = get("https://rxnav.nlm.nih.gov/REST/rxclass/classMembers.json",
                      params={"classId": cid, "relaSource": "VA", "rela": "has_VAClass"}).json()

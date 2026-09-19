@@ -1,0 +1,289 @@
+"""API request and response models. The contract between the `api` lane and the `ui` lane.
+
+The UI is built against these before any real scores exist, so the shapes here are frozen
+the moment they are pushed. Adding an optional field is fine; renaming or removing one is
+a contract change and belongs in docs/SPEC.md first.
+"""
+
+from __future__ import annotations
+
+from datetime import date as Date
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from leeward.schema import ACTIONS, DEFAULT_CAPACITY, NEEDS, TIERS
+
+
+class Base(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+# --------------------------------------------------------------------------- #
+# GET /forecast?scenario=&day=
+# --------------------------------------------------------------------------- #
+
+class ZipHazard(Base):
+    modzcta: str
+    date: Date
+    heat_index_max_f: float
+    hot_day: bool
+    heat_alert: bool
+    pm25: float
+    smoke_alert: bool
+    flood_warning: bool
+    flash_flood_emergency: bool
+    surge_ft: float
+    evac_zone_ordered: int
+    outage_frac: float
+    mail_delivery_disrupted: bool
+
+
+class FacilityStatus(Base):
+    facility_id: str
+    name: str
+    lat: float
+    lon: float
+    evac_zone: int
+    site_down: bool
+    site_dependent_services: bool
+
+
+class ForecastResponse(Base):
+    scenario: str
+    day: int
+    dates: list[Date]
+    zips: list[ZipHazard]
+    facilities: list[FacilityStatus]
+    #: Free-text banner, e.g. "Coastal flood warning, zones 1-2, landfall in 3 days".
+    headline: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# GET /scores?date=&need=
+# --------------------------------------------------------------------------- #
+
+class ZipScore(Base):
+    modzcta: str
+    need: str
+    expected_count: float = Field(description="Sum of p_mean over the panel in this ZIP")
+    lo80: float
+    hi80: float
+    n_panel: int
+
+
+class ScoresResponse(Base):
+    date: Date
+    need: str
+    zips: list[ZipScore]
+    facilities: list[ZipScore] = Field(default_factory=list,
+                                       description="Same shape, keyed by facility_id in modzcta")
+    model_rung: int = Field(ge=0, le=3, description="Which ladder rung produced these")
+
+
+# --------------------------------------------------------------------------- #
+# GET /veteran/{id}?date=
+# --------------------------------------------------------------------------- #
+
+class NeedScore(Base):
+    need: str
+    p_mean: float
+    p_lo80: float
+    p_hi80: float
+    p_epistemic_share: float
+    drivers: list[str] = Field(default_factory=list, max_length=3)
+    driver_contribs: list[float] = Field(default_factory=list, max_length=3)
+
+
+class MedicationFlags(Base):
+    """What the prescription list says, separate from what the diagnosis list says."""
+    n_active_meds: int
+    thermoreg_score: float
+    acb_score: int
+    combo_raas_diuretic: bool = Field(description="The combination CDC names explicitly")
+    renal_triple: bool
+    cold_chain: bool
+    controlled: bool = Field(description="Retail emergency refill excludes these")
+    narrow_ti: bool
+    mail_order_pharmacy: bool
+    days_supply_remaining: int
+    #: Plain phrases for the card, e.g. "hydrochlorothiazide + lisinopril on a 96F day".
+    notes: list[str] = Field(default_factory=list)
+
+
+class VeteranCard(Base):
+    veteran_id: str
+    name_display: str
+    age: int
+    modzcta: str
+    borough: str
+    facility_id: str
+    facility_name: str
+    date: Date
+    tier: str
+    why_this_tier: str
+    needs: list[NeedScore]
+    medications: MedicationFlags
+    conditions: list[str] = Field(default_factory=list)
+    powered_equipment: str
+    caregiver: str
+    floor: str
+    evac_zone: int
+    planned_actions: list[str] = Field(default_factory=list)
+    is_synthetic: bool = True
+
+
+# --------------------------------------------------------------------------- #
+# POST /actions
+# --------------------------------------------------------------------------- #
+
+class ActionsRequest(Base):
+    date: Date
+    capacity: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_CAPACITY))
+    group_floor: dict[str, float] | None = Field(
+        default=None, description="Minimum share of slots per group, e.g. {'borough': 0.1}")
+    prior_scale: float = Field(default=1.0, description="0.5, 1.0 or 2.0; picks a cached posterior")
+    scenario: str = "sandy_then_heat"
+
+
+class ActionRow(Base):
+    action_id: str
+    rank: int
+    veteran_id: str
+    name_display: str
+    modzcta: str
+    borough: str
+    action: str
+    tier: str
+    eha: float
+    capacity_bucket: str
+    owner: str
+    rationale: str
+    top_driver: str | None = None
+    message_id: str | None = None
+
+
+class BaselineResult(Base):
+    name: str = Field(description="leeward | rank_by_age | rank_by_chronic | random")
+    total_eha: float
+
+
+class ActionsResponse(Base):
+    date: Date
+    capacity: dict[str, int]
+    actions: list[ActionRow]
+    total_eha: float
+    baselines: list[BaselineResult] = Field(default_factory=list)
+    n_panel: int
+    n_selected: int
+    counts_by_tier: dict[str, int] = Field(default_factory=dict)
+    model_rung: int = Field(ge=0, le=3)
+
+
+# --------------------------------------------------------------------------- #
+# GET /message/{action_id}
+# --------------------------------------------------------------------------- #
+
+class Message(Base):
+    message_id: str
+    action_id: str
+    veteran_id: str
+    channel: str = Field(description="VEText | MHV | care_team_phone")
+    addressed_to: str = Field(description="veteran | caregiver")
+    verification_phrase: str = Field(description="Four words the veteran can read back")
+    body: str
+    #: Mandatory elements, surfaced separately so the UI can show them as a checklist
+    # and `test_guardrails.py` can assert they are present.
+    includes_never_pay_line: bool
+    includes_vsafe: bool
+    includes_crisis_line: bool
+    scam_card_url: str | None = None
+
+
+# --------------------------------------------------------------------------- #
+# POST /log
+# --------------------------------------------------------------------------- #
+
+class LogRequest(Base):
+    action_id: str
+    veteran_id: str
+    date: Date
+    done: bool
+    reached: bool
+    need_occurred: bool | None = None
+    partner_ack: bool | None = None
+    logged_by: str
+
+
+class LogResponse(Base):
+    ok: bool
+    n_rows: int
+
+
+# --------------------------------------------------------------------------- #
+# GET /report
+# --------------------------------------------------------------------------- #
+
+class RecoveryRow(Base):
+    parameter: str
+    truth: float
+    post_mean: float
+    lo90: float
+    hi90: float
+    covered: bool
+
+
+class CalibrationBin(Base):
+    need: str
+    predicted: float
+    observed: float
+    n: int
+
+
+class FairnessRow(Base):
+    stratum: str
+    group: str
+    n: int
+    ece: float
+    fnr: float
+    fnr_ratio_to_cohort: float
+    flagged: bool = Field(description="True when relative FNR gap exceeds 20 percent")
+
+
+class AblationRow(Base):
+    dropped: str
+    ece: float
+    harm_averted_at_40: float
+
+
+class DecisionQualityRow(Base):
+    k: int
+    strategy: str
+    harm_averted: float
+
+
+class ReportResponse(Base):
+    model_rung: int = Field(ge=0, le=3)
+    rhat_max: float | None = None
+    divergences: int | None = None
+    recovery: list[RecoveryRow] = Field(default_factory=list)
+    recovery_coverage: float | None = None
+    calibration: list[CalibrationBin] = Field(default_factory=list)
+    ece_by_need: dict[str, float] = Field(default_factory=dict)
+    ablations: list[AblationRow] = Field(default_factory=list)
+    decision_quality: list[DecisionQualityRow] = Field(default_factory=list)
+    fairness: list[FairnessRow] = Field(default_factory=list)
+    #: True when any fairness row is flagged. The UI shows it either way, never hides it.
+    fairness_failed: bool = False
+    generated_at: str | None = None
+
+
+__all__ = [
+    "NEEDS", "TIERS", "ACTIONS", "DEFAULT_CAPACITY",
+    "ForecastResponse", "ZipHazard", "FacilityStatus",
+    "ScoresResponse", "ZipScore",
+    "VeteranCard", "NeedScore", "MedicationFlags",
+    "ActionsRequest", "ActionsResponse", "ActionRow", "BaselineResult",
+    "Message", "LogRequest", "LogResponse",
+    "ReportResponse", "RecoveryRow", "CalibrationBin", "FairnessRow",
+    "AblationRow", "DecisionQualityRow",
+]

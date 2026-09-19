@@ -25,6 +25,8 @@ and `docs/sources.md` for every URL.
 | Census API key | **Worked around.** `api.census.gov` now 302s to `missing_key.html`; the ACS Summary File path is keyless |
 | FEMA NRI static zip (now 301s to a landing page) | **Fixed.** Live FEMA FeatureServer, 2,324 NYC tracts |
 | Building a heat-sensitive drug list by hand | **Done.** 52-class crosswalk from CDC's clinician guidance, plus 4,222 RxNorm→VA-class mappings from RxNav |
+| The 45-minute contract freeze | **Done.** `schema.py`, `api/schemas.py`, `make_fixtures.py`, all seven tables generating and validating |
+| Figuring out how to review six agents you are not watching | **Done.** `make check` (lint + tests + semantic guardrails), `make status`, CI on every lane branch |
 
 **Net: roughly four hours of Track-A work is already in the repo.** Hour 0 is not an ingest
 hour any more. Spend it on the spine.
@@ -124,37 +126,31 @@ is a strong answer. A model that silently did not fit is not.
 Clock times assume a 16:00 Saturday start and a 15:00 Sunday submission. `T+` offsets are
 the real contract — shift them if you start later.
 
-### T+0 → T+0:45 · The contract freeze — **both people, one screen, no agents**
+### T+0 → T+0:20 · The contract freeze is **already done** — just read it
 
-Do this together, out loud, in one terminal. It is the highest-leverage 45 minutes of the
-event and it is the one thing you should not delegate.
+`leeward/schema.py`, `leeward/api/schemas.py` and `scripts/make_fixtures.py` are written,
+tested and committed. All seven contract tables generate and validate. That was the 45-minute
+joint task; it is done, so Wave 1 can start immediately.
 
-1. `leeward/schema.py` — polars schemas for `cohort`, `hazards`, `outcomes`, `scores`,
-   `actions`, `outcome_log`. Copy from SPEC §3, change `zip` → `modzcta` throughout.
-2. `leeward/api/schemas.py` — pydantic v2 request/response models for the eight routes.
-3. `scripts/make_fixtures.py` — emits fake-but-correctly-shaped parquets into `data/`.
-   500 veterans, 30 days, random risks. **This is what unblocks all six lanes.**
-4. `make fixtures && pytest -q tests/test_schema.py` green.
-5. Commit to `main`, push, both people pull.
+The one thing still worth doing together, and it takes twenty minutes:
 
-> **Prompt (run once, together):**
-> Read `CLAUDE.md` and `docs/SPEC.md` §3. Write `leeward/schema.py` with polars schemas for
-> the six contract tables, using `modzcta` (not `zip`) as the geography key, and
-> `leeward/api/schemas.py` with pydantic v2 models for the routes in §9. Then write
-> `scripts/make_fixtures.py` that generates a 500-veteran, 30-day fixture set satisfying
-> every schema, seeded at 0. Write `tests/test_schema.py` first: it must load each fixture
-> and assert the schema. Do not implement any model, API route, or UI.
+```bash
+make setup && make fixtures && make check && make status
+python -m leeward.schema | less        # every column, every bound, in one screen
+```
 
-### T+0:45 → T+2:30 · Spine
+Read the cohort contract out loud to each other. Changing a column after six lanes are
+building against it is the single most expensive mistake available to you, and it is much
+cheaper to catch now. If something is missing, the owner of the file adds it and pushes
+before anyone starts.
 
-| Lane | Task |
-| --- | --- |
-| `api` | FastAPI app, all 8 routes, reading fixtures from disk. No logic, correct shapes. |
-| `ui` | Vite + React + deck.gl skeleton. Map of 178 MODZCTAs from `data/reference/nyc_modzcta.geojson`, coloured by a fixture column. |
-| `demo` | `Makefile` (`fixtures data cohort fit score demo report test`), `pyproject.toml`, `.env.example`, clean-clone test script. |
-| `cohort` | `cohort/build.py`: read `data/reference/*`, emit 10,000 veterans with real ZIP-level priors. **No Synthea yet** — draw demographics parametrically. |
-| `model` | Rung 0: `model/priors.py`, `model/design.py`, `model/score_prior.py`. |
-| `eval` | `decision/severity.py`, `decision/tau.py`, `decision/eha.py`, `decision/allocate.py` against fixtures. |
+Then: `make lanes` and start all six Wave 1 prompts from `docs/PROMPTS.md`.
+
+### T+0:20 → T+2:30 · Wave 1 — all six lanes at once
+
+This is **Wave 1** in `docs/PROMPTS.md`. All six prompts are self-contained and can start at
+the same moment, because every one of them depends only on `data/reference/` and the fixtures,
+both of which already exist. Paste them and let them run.
 
 **Checkpoint T+2:30 — the first `make demo`.** If the browser shows a map, a ranked list and
 a veteran card driven by rung-0 scores, you are on schedule. If not, cut UI polish until it does.
@@ -286,6 +282,47 @@ exactly that reason — it is a real person's afternoon.
 
 ---
 
+## 5c. Operating async, without reading the code
+
+Neither of you is going to read six agents' diffs. That is workable, but only if the
+machine does the reviewing. Four things make it safe:
+
+**1. `make check` is the gate, and it is the only gate.** Lint, every test, and the
+guardrails in `tests/test_guardrails.py`. Those guardrails are *semantic* — they assert that
+capacity is never exceeded, that every message carries the anti-scam elements, that synthetic
+columns carry their flag, that ranks are ordered by EHA, that the demo path makes no network
+calls, that nothing is randomised without a seed. An agent producing something plausible but
+wrong fails here rather than on stage. Green means merge; red means do not.
+
+**2. The skip list is the to-do list.** A guardrail for a module that does not exist yet
+skips with a message naming what it will enforce, and starts enforcing the instant that
+module lands. Nobody has to remember to turn anything on — the suite tightens by itself as
+the build fills in. `make check` prints the skip list at the end; that is your backlog.
+
+**3. `make status` replaces standup.** It reads the repo, not your memory: which modules
+exist, how many rows each table has, which model rung produced the current scores, whether
+the gate is green, which guardrails are still waiting, and the last few commits. Run it
+instead of asking each other what happened.
+
+**4. Handoff is a file.** Each lane appends two lines to `status/<lane>.md` when it finishes
+a task. Separate files, so six agents never collide on a merge.
+
+**The habit that matters most.** When something looks wrong, do not ask for a fix — ask for a
+failing test:
+
+> `make status` shows X but I expected Y. Find the cause, write a failing test that
+> reproduces it, then fix it. Show me the test, not the fix.
+
+A failing test you can read in ten seconds is worth more than a diff you were never going to
+read. It also permanently closes the hole, which a fix alone does not.
+
+**What still needs a human.** Three things, and they are all Rahul's:
+the demo script and the order of the beats; whether the numbers on screen are *plausible*
+(a calibration plot can be green and still look wrong); and the rehearsal. No test catches a
+demo that is technically correct and tells the wrong story.
+
+---
+
 ## 6. Cut list, re-ordered for one day
 
 Cut in this order, without discussion, the moment a checkpoint slips:
@@ -404,65 +441,16 @@ the r-hat was, what did not converge.
 
 ---
 
-## 9. Claude Code prompts, by lane
+## 9. Prompts → [`docs/PROMPTS.md`](PROMPTS.md)
 
-Paste these as first messages. One task per prompt; state the acceptance test in the prompt.
+Every prompt lives in one file now, grouped into three waves, each self-contained enough for
+an agent that has never seen this conversation. Wave 1's six prompts can all start at the
+same moment.
 
-**`cohort` — build the cohort on real priors**
-> Read `CLAUDE.md`, `docs/SPEC.md` §5 and `data/README.md`. Implement `leeward/cohort/build.py`
-> and `leeward/cohort/augment.py`. Draw every neighbourhood rate from `data/reference/`:
-> `places_zcta_nyc.parquet` for mobility, emotional support, utility shutoff, transport and
-> chronic-disease prevalence; `empower_ny_zip.parquet` for powered equipment; `hvi_by_zcta.parquet`
-> for the heat band; `evac_zone_by_modzcta.parquet` for surge exposure. Do not invent a rate that
-> exists in those files. Write `tests/test_cohort.py` FIRST: assert that the cohort's realised
-> rate for each augmented field is within 20% of the ZIP-weighted source rate, and that every
-> augmented column has a `_synthetic` sibling set True. Do not touch `leeward/schema.py`.
+They share an ending, and the ending is the part that matters when nobody is reading code:
 
-**`cohort` — the medication layer**
-> Read `data/README.md` (the Medication section) and `docs/SPEC.md` §5.3. Implement
-> `leeward/cohort/medications.py`: for each veteran, take the active `MedicationRequest`
-> RxNorm codes, map them to VA drug classes with `data/reference/va_drug_class_members.parquet`,
-> join `data/reference/med_climate_risk.csv`, and derive `med_thermoreg_score`, `acb_score`,
-> `med_combo_raas_diuretic`, `med_renal_triple`, `med_cold_chain`, `med_controlled` and
-> `med_narrow_ti`. Add synthetic `mail_order_pharmacy` (Bernoulli 0.80) and
-> `days_supply_remaining` (90-day fill if mail order else 30-day, uniform phase), both with
-> `_synthetic` siblings. Make no network calls. Write the test first: on the Synthea FHIR
-> sample, ~77% of patients with active meds have `med_thermoreg_score > 0` and ~16% have
-> `med_combo_raas_diuretic`, each within 10 percentage points.
-
-**`model` — rung 0, then rung 1**
-> Read `docs/SPEC.md` §6 and `docs/BUILD_PLAN.md` §3. Implement rung 0 only:
-> `leeward/model/priors.py`, `leeward/model/design.py` and `leeward/model/score_prior.py`,
-> which draws 400 coefficient vectors from the priors and produces `data/scores.parquet`
-> matching the schema, with `p_mean`, `p_lo80`, `p_hi80` and `p_epistemic_share`. No MCMC.
-> Test: scores for all five needs exist for every veteran-day, probabilities are in (0,1),
-> and `p_lo80 <= p_mean <= p_hi80` everywhere. Stop there; I will ask for rung 1 separately.
-
-**`api` — decision layer**
-> Read `docs/SPEC.md` §7. Implement `leeward/decision/allocate.py`: greedy selection
-> maximising summed EHA per cost unit under `capacity: dict[str,int]`, at most one action per
-> veteran unless `tier == "act_now"` (max 3), with `group_floor` support. Write the test first:
-> a five-veteran fixture where the optimum is hand-checkable, plus a property test that
-> increasing any capacity never decreases total EHA. Use the fixtures in `data/`, not real scores.
-
-**`ui` — the care-team list**
-> Build `ui/src/screens/CareTeam.tsx`. POST `/actions` with `{date, capacity}`, render a ranked
-> table (rank, name, tier badge, top driver, EHA), a CapacitySlider (10–100) that refetches on
-> release, and a harm-averted counter that animates between values. Read the map base from
-> `data/reference/nyc_modzcta.geojson`. Use the stub API and nothing outside `package.json`.
-
-**`demo` — offline safety**
-> Write `scripts/clean_clone_test.sh`: clone this repo into a temp dir, create a venv, install,
-> run `make demo` with `HTTP_PROXY=http://127.0.0.1:1` set so any network call fails fast, and
-> report wall-clock time to first successful `GET /forecast`. It must pass in under 60 seconds
-> with no network. Fix whatever it catches.
-
-**`eval` — the Impact bar chart**
-> Read `docs/SPEC.md` §11. Implement `leeward/eval/decision_quality.py`: for each day in 91–120
-> and K in {20, 40, 80}, select actions with `allocate.py` and with three baselines (rank by age,
-> rank by `n_chronic`, random seeded at 0), then compute harm averted as
-> `Σ w_k · τ[a,k] · y_true[i,k,t]` over selected veterans. Emit a tidy CSV and a Plotly bar chart.
-> Add a test on a tiny fixture where Leeward must beat random.
+> Run `make check`. It must be green. Then commit, push, write two lines to
+> `status/<lane>.md`, and stop. Do not start the next task.
 
 ---
 
@@ -472,7 +460,7 @@ Print this. Check it on the hour.
 
 | T+ | Must be true |
 | --- | --- |
-| 0:45 | Contracts merged to `main`; `make fixtures` green; six worktrees created |
+| 0:20 | Contract read together; `make check` green; `make lanes` done; all six Wave 1 prompts running |
 | 2:30 | `make demo` opens a browser showing a map, a ranked list and a veteran card |
 | 6:00 | Real 10,000-veteran cohort; rung-0 scores; real messages with all five mandatory elements |
 | 9:30 | Model report screen renders; fairness audit runs; deck v1 exists; **backup video recorded** |
