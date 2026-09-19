@@ -34,6 +34,15 @@ nobody re-discovers it at 03:00.
 > NYC Health, Heat Vulnerability Index —
 > https://a816-dohbesp.nyc.gov/IndicatorPublic/data-features/hvi/
 
+### Smoke
+
+> US EPA, *NAAQS Table* — https://www.epa.gov/criteria-air-pollutants/naaqs-table
+
+- The primary and secondary 24-hour PM2.5 standard is **35 µg/m³** (98th percentile, averaged
+  over 3 years); the 2024 revision lowered only the annual primary standard, to 9.0 µg/m³.
+  *This is the model's smoke hinge:* `leeward/model/design.py` counts PM2.5 above 35 µg/m³,
+  and a smoke day is a day above it.
+
 ### Flooding
 
 > NYC Health, *What Hurricane Ida and Superstorm Sandy taught us about flooding and health* —
