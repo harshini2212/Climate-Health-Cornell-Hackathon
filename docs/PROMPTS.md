@@ -169,6 +169,65 @@ already exist. Start all six simultaneously.
 
 ---
 
+## Wave 1 fixes — found at merge, paste these first
+
+Wave 1 merged green, but running the real pipeline end to end surfaced four things.
+The first one is visible on stage; the rest are gaps against the deck.
+
+### `api` — make the tier column mean what the deck says  **(decide before you build)**
+
+On the Sandy SiteDown day, **29 of 40 call slots went to `self_serve` veterans while 33
+`act_now` veterans got no call at all.** Across the run, 98% of expensive actions
+(10,198 of 10,436) went to `self_serve`, and 70% of `act_now` veterans received only an
+automated text.
+
+`allocate.py` is not buggy — it implements SPEC §7.5 faithfully. §7.5 only uses tier to gate
+`check_in_call` and to grant act_now three slots; it never says act_now gets *priority* for a
+scarce bucket. Allocation is pure greedy-by-EHA, so a self-serve veteran with broad moderate
+risk outranks an act-now veteran with one sharp high risk. **The spec is under-specified and
+the proposal promises something else** — §6's tier table says Act now → "Call today, VA care
+team" and Self-serve → "Verified text, automated".
+
+Two coherent resolutions. Rahul picks:
+
+- **(A) Tier gates the action class.** Expensive/clinical actions are offered act_now first,
+  then find_out, then self_serve; EHA ranks *within* a tier. The tier column then means what
+  the deck says. Costs a little total EHA.
+- **(B) Keep pure EHA maximisation** and change the deck: drop the tier→action mapping and say
+  "we spend the call where it averts most harm, not where a label says to." Defensible, maybe
+  even stronger — but then the tier badge must stop implying an action.
+
+> Read `leeward/decision/allocate.py`, `docs/SPEC.md` §7.5 and `docs/proposal.md` §6.
+> Implement resolution **<A or B>**. If A: add a tier priority band to the allocation order so
+> scarce buckets fill act_now before find_out before self_serve, EHA-ranked within each band,
+> and update SPEC §7.5 to say so. If B: update SPEC §7.5 and proposal §6 to state that tiers
+> describe urgency, not entitlement, and stop the UI implying an action from a tier.
+> Either way add a test asserting the chosen behaviour, and one asserting total EHA does not
+> fall by more than 15% versus today. Run `make check`; green; commit; push; stop.
+
+### `cohort` — three populations the story needs and the data does not have
+
+> Read `leeward/cohort/build.py` and `data/README.md`. Three fixes, one commit each.
+>
+> 1. **`race` and `ethnicity` are null for all 10,000**, so the fairness audit cannot stratify
+>    by them — but the deck quotes NYC Health's finding that Black New Yorkers die of heat
+>    stress at three times the white rate, and §9 of the proposal lists race in the audit.
+>    Draw both from a real per-ZIP source (CDC SVI `EP_MINRTY` is already in
+>    `data/reference/svi_nyc_tract.parquet`; aggregate tract → MODZCTA) so the distribution is
+>    grounded rather than invented, and flag them `_synthetic`. If you conclude no defensible
+>    source exists, say so in `status/cohort.md` and leave them null — do not invent a
+>    distribution to make a table render.
+> 2. **Only 7 veterans are on dialysis (0.07%)**, because emPOWER's per-ZIP facility-dialysis
+>    count is small. The Sandy dialysis story is the emotional core of the pitch and it
+>    currently rests on seven people. Raise the rate to the VA's own ESRD prevalence among
+>    enrolled veterans, cite it in `docs/sources.md`, and state the change in the PR.
+> 3. **`med_cold_chain` and `med_controlled` are zero for everyone** because the medication
+>    layer has not landed. Leave them; the next task fills them.
+>
+> Write the test first in each case. Run `make check`; green; commit; push; stop.
+
+---
+
 ## Wave 2 — after Wave 1 merges
 
 ### `cohort` — medications
