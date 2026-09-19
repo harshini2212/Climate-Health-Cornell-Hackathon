@@ -475,6 +475,36 @@ def fetch_airnow_smoke():
     return res
 
 
+@source("va_drug_classes", "https://rxnav.nlm.nih.gov/REST/rxclass/",
+        "RxNav exposes the VA's own 576-class drug taxonomy, keyless. This resolves every "
+        "RxNorm code in the climate-risk crosswalk to its VA drug class offline, so the "
+        "cohort can map Synthea prescriptions without calling RxNav at demo time.")
+def fetch_va_drug_classes():
+    risk = pl.read_csv(REF / "med_climate_risk.csv")
+    rows, missing = [], []
+    for cid, cname in zip(risk["va_class_id"], risk["va_class_name"]):
+        try:
+            js = get("https://rxnav.nlm.nih.gov/REST/rxclass/classMembers.json",
+                     params={"classId": cid, "relaSource": "VA", "rela": "has_VAClass"}).json()
+        except Exception as exc:  # noqa: BLE001
+            print(f"    {cid}: {exc}")
+            continue
+        members = js.get("drugMemberGroup", {}).get("drugMember", [])
+        if not members:
+            missing.append(cid)
+        for m in members:
+            c = m["minConcept"]
+            rows.append({"rxcui": str(c["rxcui"]), "drug_name": c["name"], "tty": c.get("tty"),
+                         "va_class_id": cid, "va_class_name": cname})
+    if missing:
+        print(f"    no members returned for: {missing}")
+    df = pl.DataFrame(rows).unique(subset=["rxcui", "va_class_id"])
+    # Ingredient-level lookup too: Synthea codes are SCDs, but a real EHR may send INs.
+    df = df.with_columns(pl.col("drug_name").str.extract(r"^([A-Za-z][A-Za-z\- ]+?)\s+\d")
+                           .str.to_lowercase().alias("ingredient_guess"))
+    return write(df, "va_drug_class_members", "https://rxnav.nlm.nih.gov/REST/rxclass/")
+
+
 @source("nws_snapshot", "https://api.weather.gov/alerts/active?area=NY",
         "A live snapshot of NWS active alerts and the 7-day gridpoint forecast for the "
         "five borough points. Keyless. Re-run on demo morning; the snapshot is the "

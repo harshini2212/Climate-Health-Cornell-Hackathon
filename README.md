@@ -43,9 +43,19 @@ Leeward answers the three questions a care team asks before a climate event, in 
 
 | Question | Leeward's answer |
 | --- | --- |
-| **Who** is at risk? | A daily discrete-time hazard model per veteran per need: breathing flare-up, heat illness, mental-health crisis, treatment or medication gap, and loss of access to care. |
+| **Who** is at risk? | A daily discrete-time hazard model per veteran per need: breathing flare-up, heat illness, mental-health crisis, treatment or medication gap, and loss of access to care — driven by diagnosis, exposure, housing, social support **and the medication list**. |
 | **When** does risk peak? | Distributed lags for heat (0–3 days) and smoke (0–2 days), driven by NWS and AirNow forecasts, so alerts fire two to five days ahead. |
 | **What changes if we act?** | A decision layer that computes expected harm averted for every (veteran, action, day) and fills the team's daily capacity greedily, like a knapsack. |
+
+**The prescription says more than the diagnosis.** A diagnosis says a veteran has
+hypertension. The medication list says he is on hydrochlorothiazide *and* lisinopril — the
+exact pairing CDC names as significantly increasing harm in heat — that he has nine days of
+supply left, and that those nine days are arriving by mail through a ZIP that floods. Leeward
+resolves every RxNorm code to the VA's own drug classes, scores thermoregulatory risk and
+anticholinergic burden, and flags cold-chain and controlled-substance dependence. On the
+Synthea sample, **77% of patients on active medications carry at least one drug that impairs
+heat response and 16% carry the CDC-named pair.** Leeward flags them for the VA clinical
+pharmacist; it never changes a dose.
 
 **Uncertainty is a feature, not decoration.** The posterior splits into risk we are sure about and risk we are unsure about. A veteran with a wide interval (unknown AC status, unknown deployment history) gets a cheap 3-minute check-in call because the value of that information is high. A veteran with a narrow, high interval gets the expensive action: an early refill and a cooling-center ride.
 
@@ -258,7 +268,7 @@ make test
 make demo       # must boot offline, with no .env and no API key
 ```
 
-**The public data is already in the repo.** `data/reference/` holds 17 joined and verified
+**The public data is already in the repo.** `data/reference/` holds 21 joined and verified
 tables (~4 MB, committed): NYC MODZCTA polygons, the Heat Vulnerability Index, hurricane
 evacuation zones, stormwater flood extent, CDC PLACES and SVI, FEMA National Risk Index, HHS
 emPOWER, ACS veteran counts, the VHA facility registry, FloodNet events, and real EPA AirNow
@@ -358,4 +368,6 @@ requiring keys are in [`docs/sources.md`](docs/sources.md). Headline numbers:
 | **134,711 NYC veterans, 53.3% aged 65+** | Computed here: ACS 2023 5-year B21001 by ZCTA |
 | **36,146 electricity-dependent Medicare beneficiaries in NYC** | Computed here: HHS emPOWER |
 | **PM2.5 203.5 µg/m³, AQI 254, Queens, 7 June 2023** | Computed here: EPA AirNow daily files |
+| Heat-medication mechanisms and the ACE-inhibitor/ARB-plus-diuretic combination | CDC, Heat and Medications — Guidance for Clinicians |
+| ~80% of VA outpatient prescriptions delivered by mail; retail emergency refill **excludes** controlled substances | VA CMOP and Pharmacy Disaster Relief Plan |
 | VSAFE fraud line 833-388-7233; Veterans Crisis Line 988 press 1 | VA |

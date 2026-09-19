@@ -12,7 +12,9 @@
 
 VA care is reactive: a veteran is seen after the ER visit, after the missed refill, after the flooded basement. Leeward is a Bayesian decision engine that reads the 3–7 day forecast (heat, coastal surge, flash flood, outage, smoke), scores every veteran on a care team's panel for five concrete needs, and returns **today's action list, cut at the team's real capacity**, with each call justified in plain language and sent through a channel a scammer cannot imitate. It does not replace the VA, HUD-VASH, Team Rubicon or the Veterans Crisis Line; it tells those systems who to reach first, two to five days before the event, and what to bring.
 
-**What is new versus every other risk score:** (1) climate × exposure × treatment interactions from PACT Act and WTC Registry evidence, (2) uncertainty that *drives* triage rather than decorating it, (3) actions ranked by expected harm averted under staff capacity, (4) explicit coverage of the two challenge areas most teams skip: coordination and protection from exploitation, and (5) a facility-disruption term, because in NYC the flood does not only hit the veteran; it has closed the VA itself.
+**What is new versus every other risk score:** (1) climate × exposure × treatment interactions from PACT Act and WTC Registry evidence, (2) uncertainty that *drives* triage rather than decorating it, (3) actions ranked by expected harm averted under staff capacity, (4) explicit coverage of the two challenge areas most teams skip: coordination and protection from exploitation, (5) a facility-disruption term, because in NYC the flood does not only hit the veteran; it has closed the VA itself, and (6) **the medication list as a climate exposure in its own right** — not "has chronic disease" but *which drugs, in what combination, with how many days left, arriving how*.
+
+That sixth one is the cheapest large gain available, and almost nobody takes it. A risk score built on diagnoses says a veteran has hypertension. The prescription says he is on hydrochlorothiazide **and** lisinopril — the exact pairing CDC names as significantly increasing harm in heat — that he has nine days of supply left, and that those nine days are arriving by mail through a ZIP that floods. Diagnosis tells you he is vulnerable. The medication list tells you what will go wrong, on which day, and what to do about it on Tuesday.
 
 ---
 
@@ -46,7 +48,8 @@ Older and exposure-affected veterans in NYC, scored as a *combination*, never as
 | Burn-pit / airborne-hazard exposed | PACT Act presumptive respiratory disease and cancers | Flare-ups on smoke and post-flood mold days |
 | PTSD or depression | Higher physical illness risk; disruption worsens symptoms | Missed therapy, crisis after displacement |
 | Active cancer treatment, dialysis, serious lung/heart disease | No reserve; power- and site-dependent | Treatment gap, infection, equipment failure |
-| **Flood-exposed housing** (new) | Basement/ground-floor, evacuation zone 1–3, mobility impaired | Displacement, entrapment, loss of transport to care |
+| **Flood-exposed housing** | Basement/ground-floor, evacuation zone 1–3, mobility impaired | Displacement, entrapment, loss of transport to care |
+| **Medication-exposed** (new) | On drugs that impair thermoregulation, on the CDC-named additive combination, on a cold-chain drug, or on a controlled substance the emergency retail refill route excludes | Heat illness at a lower temperature than their neighbour; insulin spoiled by an outage; running out mid-event because the refill is in the mail |
 
 ---
 
@@ -56,7 +59,7 @@ Real public data for places, hazards and facilities. A documented synthetic gene
 
 The claim is deliberately narrow and we will say it in exactly these words: **every neighbourhood-level rate in the cohort is real and cited; only the people are synthetic.**
 
-All of it is already in the repo. `scripts/fetch_sources.py` runs 17 keyless fetchers into `data/reference/` (~4 MB, committed) and records url, rows, bytes and a checksum for each in `manifest.json`. `make demo` reads only that directory, so the demo runs with the network off.
+All of it is already in the repo. `scripts/fetch_sources.py` runs 18 keyless fetchers into `data/reference/` (~4 MB, committed) and records url, rows, bytes and a checksum for each in `manifest.json`. `make demo` reads only that directory, so the demo runs with the network off.
 
 ### 4.1 Hazard and context layers (real)
 
@@ -163,16 +166,25 @@ logit h[i,k,t] = α_k
 | **SiteDown × site-dependent treatment** | Dialysis or methadone patient whose facility is closed (the Sandy case) |
 | **No caregiver × any hazard** | Nobody to notice the missed dose, fetch the refill, or get them out; the effect is a *multiplier* on every other risk, not a separate cause |
 | **Low income/assets × heat** | Has an AC unit but cannot afford to run it (the pattern in NYC heat-stress deaths) |
+| **Heat × thermoregulatory medication load** | A graded score, not a flag: diuretic 1.0, antipsychotic 1.0, beta-blocker 0.8, antihistamine 0.6, summed across the list |
+| **Heat × (ACE inhibitor or ARB) × diuretic** | The one combination CDC singles out by name as significantly increasing harm. 16 percent of the cohort carries it. |
+| **Heat × anticholinergic burden ≥ 3** | Cannot sweat. ACB is a validated 0–3-per-drug scale; 3 or more is the accepted clinical threshold |
+| **Heat × NSAID on top of a diuretic and a RAAS agent** | Acute kidney injury with dehydration |
+| **Outage × cold-chain medication** | Insulin in a warm refrigerator is a treatment gap in about a day |
+| **Mail delivery disrupted × mail-order pharmacy × days supply < lead time** | Four in five VA prescriptions arrive by mail. This term is nearly deterministic, and that is exactly what makes it actionable. |
+| **SiteDown × controlled substance** | The VA emergency retail refill benefit **excludes** controlled substances — VA must fill them. A closed station is a hard stop, not an inconvenience. |
 | **Low income/assets × flood or outage** | Cannot pay for a hotel, a cab, a generator, or to replace ruined medication and equipment |
 
-**Six design choices, each visible in the demo**
+**Seven design choices, each visible in the demo**
 
 1. **Daily hazard with distributed lags.** Heat harms over 0–3 days, smoke over 0–2. Lag curves are constrained to be smooth (random-walk prior), so the model learns a shape from few parameters.
 2. **Latent exposure with measurement error.** Deployment dose Λ_i has an era-based prior and a noisy indicator when a record carries a PACT Act presumptive diagnosis. Wide uncertainty in Λ flows into wide intervals, which route that veteran to a check-in call.
 3. **Facility as a unit of risk.** SiteDown is a per-facility daily indicator driven by the facility's own evacuation-zone status and the surge forecast. This is the term no heat-only model has, and it is exactly what Sandy did to the Manhattan VA. The input table is a join, not an assumption: of the 14 NYC VA facilities, **station 630 (Manhattan) is in evacuation zone 1**, the Staten Island clinic is in zone 2, and Brooklyn VAMC is in zone 4. Three of them — Manhattan, Brooklyn and the Bronx — carry the site-dependent services (dialysis, infusion, opioid treatment) whose loss is a treatment gap rather than an inconvenience.
 4. **Weakly informative priors, shown not hidden.** Centers from WTC Registry and PACT Act evidence, wide scales; a slider halves or doubles the prior scale and re-scores live. Rankings barely move. The heat hinge is the one hyperparameter that is not a judgement call: it sits at 82 °F because that is the threshold NYC Health's own mortality analysis identifies as the source of the increase.
 5. **Social support as a multiplier, not a covariate.** Caregiver absence and low resources enter twice: as main effects on every need, and as interactions with every hazard. Two veterans with identical charts and the same forecast can differ two- to three-fold in risk depending on whether someone is in the apartment with them and whether they can afford to run the AC or pay for a cab. Clinicians told us this is the first thing they look for; the model treats it that way.
-6. **Fit on sufficient statistics.** 10,000 × 120 × 5 Bernoulli rows collapse to binomial cells by ZIP × stratum × day; NumPyro NUTS on JAX fits in minutes on CPU; the posterior is cached and live scoring is a matrix multiply.
+6. **The medication list is a covariate block, not a checkbox.** Synthea already emits an RxNorm code on every prescription, and NLM's RxNav resolves those codes into the **VA's own 576-class drug taxonomy** — so Leeward speaks the vocabulary the care team's clinical pharmacist already uses. `CV702` is LOOP DIURETICS to RxNav, to the VA formulary, and to us. From that we derive a thermoregulatory-risk score, an anticholinergic burden on the validated ACB scale, the CDC-named additive combination, cold-chain dependence, controlled-substance status, and days of supply remaining. The mechanisms are CDC's, cited per class in `data/reference/med_climate_risk.csv`, and a pharmacist can edit that file without touching code.
+
+7. **Fit on sufficient statistics.** 10,000 × 120 × 5 Bernoulli rows collapse to binomial cells by ZIP × stratum × day; NumPyro NUTS on JAX fits in minutes on CPU; the posterior is cached and live scoring is a matrix multiply.
 
 **Outputs.** Per veteran per day: posterior mean and 80 percent interval per need, epistemic share, top three drivers from posterior contributions (no black-box SHAP). Per ZIP and per facility per day: expected counts with intervals for staffing. Per care team: today's action list.
 
@@ -196,7 +208,7 @@ EHA[i,a,t] = Σ_k  w_k · E_posterior[ h[i,k,t] · τ[a,k] ]
 
 | Tier | Trigger | Action | Owner |
 | --- | --- | --- | --- |
-| Act now | High hazard, narrow interval, site- or power-dependent | Call today; early refill; backup-power or evacuation plan; reroute dialysis/infusion | VA care team |
+| Act now | High hazard, narrow interval, site- or power-dependent, **or will run out of medication mid-event** | Call today; early refill; backup-power or evacuation plan; reroute dialysis/infusion; pharmacist medication review | VA care team |
 | Find out | Wide interval, missing fields (floor, AC, deployment) | 3-minute check-in; re-score same day | Care team or volunteer partner |
 | Self-serve | Medium hazard | Verified text: cooling/clean-air site, evacuation center, refill link, 988 press 1 | Automated via VA channels |
 | Everyday | Low hazard | Monthly plan: shaded green space, movement, VA Whole Health | Automated |
@@ -205,7 +217,10 @@ EHA[i,a,t] = Σ_k  w_k · E_posterior[ h[i,k,t] · τ[a,k] ]
 
 | Need | 5 days out | 2 days out | During / after |
 | --- | --- | --- | --- |
-| Medication gap | Early refill via My HealtheVet | Confirm delivery or local pickup | Emergency Pharmacy Refill Program voucher at retail pharmacies when activated; VA mobile pharmacy |
+| Medication gap | Early refill via My HealtheVet, **targeted by days-supply remaining against the forecast window rather than sent to everyone** | **Switch mail-order to local window pickup** if delivery to that ZIP is at risk; confirm delivery | VA Emergency Pharmacy Program: any retail pharmacy, ≥10-day supply, with a VA bottle or script |
+| **Controlled substance** | Flag early: the retail emergency refill route **excludes** controlled substances, so VA must fill them itself | VA fill before the event; for OTP, pre-dispense take-home doses where protocol allows | Guest-dosing arrangement — the Sandy playbook, ~100 veterans |
+| **Heat-risk medication** | Route to the VA clinical pharmacist for a heat-interaction review. Leeward flags; the pharmacist decides. | Hydration and timing advice per protocol; storage guidance (nothing left in a hot car or a hot room) | Same-day pharmacist call if a heat alert lands while the review is open |
+| **Cold-chain medication** | Confirm the insulin storage plan and a cooler before an outage window | Backup-power or ice plan; identify the nearest open pharmacy fridge | Replace spoiled supply; VA mobile pharmacy |
 | Heat illness | AC check; HEAP cooling application if none | Cooling-center match, step-free transit | Wellness call day 2 of wave |
 | Breathing | Inhaler/oxygen supply check | Clean-air room; windows-closed advisory | Same-day tele-visit; post-flood mold check |
 | Treatment gap (dialysis, chemo, methadone, oxygen) | Register with utility medical-needs list; **pre-arrange alternate site** (the Sandy dialysis lesson) | Confirm ride or reschedule; **pre-dispense take-home doses where protocol allows** | Care-team call within 2 h of outage or site closure |
@@ -220,6 +235,8 @@ The tool proposes; clinicians approve every Act-now action. It never changes a m
 ---
 
 ## 7. Coordination (area 04) and protection from exploitation (area 05)
+
+**The pharmacist is a named owner, not an afterthought.** VA care teams already include clinical pharmacy specialists with their own scope of practice, and every medication action in Leeward routes to that person rather than to the physician's inbox or to an algorithm. Leeward flags a heat-interaction review; the pharmacist decides. **The tool never changes a dose, and the demo says so out loud.** CDC's own guidance tells clinicians to review medication lists for heat interactions and consider adjusting dose or fluid restriction on hot days — Leeward's contribution is telling them *which forty patients* to review before Thursday.
 
 **One list, many hands.** The care team's action list exports, with consent flags, as a partner sheet: who opted in to a Team Rubicon wellness check, who needs a Combined Arms ride, who needs a HUD-VASH housing contact, who is on the utility medical-needs list. One owner (the VA care team); partners acknowledge back; the acknowledgment is an outcome-log row.
 

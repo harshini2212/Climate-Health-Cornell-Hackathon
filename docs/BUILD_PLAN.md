@@ -15,7 +15,7 @@ and `docs/sources.md` for every URL.
 
 | Was going to cost you | Status |
 | --- | --- |
-| Finding live endpoints for 10 agencies | **Done.** `scripts/fetch_sources.py`, 15 fetchers, all keyless |
+| Finding live endpoints for 10 agencies | **Done.** `scripts/fetch_sources.py`, 18 fetchers, all keyless |
 | emPOWER ArcGIS paging | **Done.** 1,702 NY ZIPs, `empower_ny_zip.parquet` |
 | HVI → ZIP crosswalk via NTA | **Not needed.** NYC now publishes HVI per ZCTA20 directly |
 | Evacuation-zone polygons → ZIP | **Done.** Area-weighted, `evac_zone_by_modzcta.parquet` |
@@ -24,11 +24,12 @@ and `docs/sources.md` for every URL.
 | VA Facilities API key | **Not needed.** VHA ArcGIS mirror is keyless, 84 NY sites |
 | Census API key | **Worked around.** `api.census.gov` now 302s to `missing_key.html`; the ACS Summary File path is keyless |
 | FEMA NRI static zip (now 301s to a landing page) | **Fixed.** Live FEMA FeatureServer, 2,324 NYC tracts |
+| Building a heat-sensitive drug list by hand | **Done.** 52-class crosswalk from CDC's clinician guidance, plus 4,222 RxNorm→VA-class mappings from RxNav |
 
 **Net: roughly four hours of Track-A work is already in the repo.** Hour 0 is not an ingest
 hour any more. Spend it on the spine.
 
-Three findings from that work change the pitch, not just the schedule — read §7 before you
+Four findings from that work change the pitch, not just the schedule — read §7 before you
 write the deck.
 
 ---
@@ -164,6 +165,7 @@ a veteran card driven by rung-0 scores, you are on schedule. If not, cut UI poli
 | --- | --- |
 | `cohort` | Swap parametric demographics for Synthea. Use `data/raw/synthea_sample_fhir.zip` for the FHIR code path and its tests; use the VA 100k CSV release for the 10,000-veteran cohort if the download has landed, otherwise say so and move on. |
 | `cohort` | `cohort/augment.py` using the **real** ZIP priors (see §5) and `cohort/missingness.py`. |
+| `cohort` | `cohort/medications.py` — the medication layer (§5b). Cheap and high-yield: the RxNorm codes are already in the record and the crosswalks are already committed. |
 | `model` | `cohort/simulate.py` sharing `design.py`, `truth.json`, 120 days. Then rung 1: `model/hazard.py`, `model/fit.py`. |
 | `api` | Real EHA + greedy allocation + tiers. `outreach/messages.py` + `verify.py` with all five mandatory elements. |
 | `ui` | Care-team list, capacity slider, veteran card with interval bars, message screen. |
@@ -247,6 +249,43 @@ cohort is real and cited; only the people are synthetic.**
 
 ---
 
+## 5b. The medication layer — the cheapest large gain in the build
+
+Synthea puts an RxNorm code on every prescription. The first draft of the spec collapsed all
+of that into one boolean, `heat_sensitive_meds`. Two committed files turn it into a covariate
+block, and the work is a couple of joins:
+
+- `data/reference/va_drug_class_members.parquet` — 4,222 RxNorm codes → **the VA's own drug
+  classes**, from RxNav. Offline, so no API call at demo time.
+- `data/reference/med_climate_risk.csv` — 52 VA classes → mechanism, hazard, weight, ACB
+  score, controlled/cold-chain/narrow-TI flags. Curated from CDC's clinician guidance.
+  A pharmacist can edit it; nobody has to touch code.
+
+Derive six fields and you have the whole layer:
+
+```
+med_thermoreg_score      Σ weight over heat-mechanism classes
+acb_score                Σ acb, 0-3 per drug; >=3 is the clinical threshold
+med_combo_raas_diuretic  (ACE-i or ARB) and a diuretic   <- CDC names this pair explicitly
+med_cold_chain           insulin and friends             -> outage interaction
+med_controlled           opioid / benzo / stimulant      -> retail refill route EXCLUDES these
+days_supply_remaining    synthetic, 30-day window / 90-day mail
+```
+
+Measured on the Synthea FHIR sample, so you know what to expect: **77%** of patients on
+active meds carry at least one heat-impairing drug, **16%** carry the CDC-named pair, 10%
+a controlled substance, 9% cold-chain, 5% at ACB ≥ 3. The five most-prescribed drugs are
+insulin, hydrochlorothiazide, lisinopril, metformin and amlodipine — so these terms fire on
+the ordinary patient, not an exotic one.
+
+**The safety line matters and belongs in the demo script:** Leeward flags a medication for
+pharmacist review. It never changes a dose. CDC's guidance already tells clinicians to review
+medication lists before hot weather; Leeward's contribution is naming which forty patients to
+review before Thursday. `pharmacist_slot` is a scarce capacity unit in `allocate.py` for
+exactly that reason — it is a real person's afternoon.
+
+---
+
 ## 6. Cut list, re-ordered for one day
 
 Cut in this order, without discussion, the moment a checkpoint slips:
@@ -258,14 +297,16 @@ Cut in this order, without discussion, the moment a checkpoint slips:
 5. Outcome-log write-back into scoring
 6. Ida scenario — keep Sandy-then-heat and the smoke replay
 7. deck.gl → static Plotly choropleth
-8. Rung 2 interactions → ship rung 1
+8. Medication interaction *terms* in the model → keep the medication **drivers and actions**,
+   which are rule-based and need no posterior
+9. Rung 2 interactions → ship rung 1
 
 **Never cut:** Walter's card · the capacity slider · the calibration plot · the SiteDown
 term · the verified-message screen. Those five are the demo.
 
 ---
 
-## 7. Three things the grounding work changed — put these in the deck
+## 7. Four things the grounding work changed — put these in the deck
 
 **1. The Manhattan VA is in Evacuation Zone 1. That is a join, not a claim.**
 
@@ -311,6 +352,23 @@ heat stress at three times the rate of white New Yorkers — which is why the fa
 is a screen and not a footnote.
 
 ---
+
+**4. Four in five VA prescriptions arrive by mail — so a flood stops the pharmacy.**
+
+VA delivers roughly **80% of outpatient prescriptions** through its Consolidated Mail
+Outpatient Pharmacy network: about **518,000 prescriptions a day**, reaching **330,000
+veterans**. No civilian health system has that concentration, and it means a flooded ZIP is a
+medication-supply event, not only a clinic event. It has already failed once for a non-climate
+reason — the 2020 USPS slowdown drew a bipartisan congressional letter about delayed veteran
+prescriptions.
+
+The sharpest edge is a rule, not a model: **the VA emergency retail refill benefit excludes
+controlled substances.** A veteran can walk into any pharmacy with a VA bottle and get a
+10-day supply — unless they are on an opioid, a benzodiazepine, a stimulant, or methadone
+through an OTP. Those veterans are exactly the ones the workaround does not cover, and exactly
+the ones Sandy stranded: about 100 needed emergency guest-dosing when the Manhattan VA's
+opioid treatment program closed for five months. Leeward surfaces them first, five days out,
+because for them the fallback does not exist.
 
 ## 8. Demo engineering — Rahul's checklist
 
@@ -359,6 +417,18 @@ Paste these as first messages. One task per prompt; state the acceptance test in
 > exists in those files. Write `tests/test_cohort.py` FIRST: assert that the cohort's realised
 > rate for each augmented field is within 20% of the ZIP-weighted source rate, and that every
 > augmented column has a `_synthetic` sibling set True. Do not touch `leeward/schema.py`.
+
+**`cohort` — the medication layer**
+> Read `data/README.md` (the Medication section) and `docs/SPEC.md` §5.3. Implement
+> `leeward/cohort/medications.py`: for each veteran, take the active `MedicationRequest`
+> RxNorm codes, map them to VA drug classes with `data/reference/va_drug_class_members.parquet`,
+> join `data/reference/med_climate_risk.csv`, and derive `med_thermoreg_score`, `acb_score`,
+> `med_combo_raas_diuretic`, `med_renal_triple`, `med_cold_chain`, `med_controlled` and
+> `med_narrow_ti`. Add synthetic `mail_order_pharmacy` (Bernoulli 0.80) and
+> `days_supply_remaining` (90-day fill if mail order else 30-day, uniform phase), both with
+> `_synthetic` siblings. Make no network calls. Write the test first: on the Synthea FHIR
+> sample, ~77% of patients with active meds have `med_thermoreg_score > 0` and ~16% have
+> `med_combo_raas_diuretic`, each within 10 percentage points.
 
 **`model` — rung 0, then rung 1**
 > Read `docs/SPEC.md` §6 and `docs/BUILD_PLAN.md` §3. Implement rung 0 only:

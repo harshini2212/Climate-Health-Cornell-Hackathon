@@ -11,14 +11,22 @@ Read before coding, in this order:
 3. `docs/BUILD_PLAN.md` — who owns what, and what is being cut
 
 ## The data is already fetched
-`data/reference/` holds 17 joined, verified public tables (~4 MB, committed), built by
+`data/reference/` holds 21 joined, verified public tables (~4 MB, committed), built by
 `scripts/fetch_sources.py` and catalogued in `data/README.md`.
 
 **Never invent a neighbourhood rate that exists in `data/reference/`.** Mobility impairment,
 social support, utility-shutoff risk, transport barriers, chronic-disease prevalence and
 powered-equipment counts are all real per-ZIP numbers from CDC PLACES, emPOWER, ACS and NYC
-Open Data. Read them. What is legitimately synthetic — housing floor, burn-pit years, PTSD
-severity, per-person AC, every daily outcome — carries a `_synthetic` flag.
+Open Data. Read them.
+
+The same goes for medication. Synthea puts an RxNorm code on every prescription;
+`va_drug_class_members.parquet` maps those to the VA's own drug classes and
+`med_climate_risk.csv` attaches CDC's mechanism, weight, ACB score and the
+controlled / cold-chain / narrow-TI flags. Do not hand-write a drug list.
+
+What is legitimately synthetic — housing floor, burn-pit years, PTSD severity, per-person AC,
+mail-order status, days of supply remaining, and every daily outcome — carries a
+`_synthetic` flag.
 
 ## Contracts (frozen; change only by editing docs/SPEC.md §3 and telling the other person)
 - `data/cohort.parquet`, `hazards.parquet`, `site_status.parquet`, `outcomes.parquet`,
@@ -45,6 +53,9 @@ Never run inference inside a request.
   rung actually fitted, and its r-hat.
 - Drivers come from posterior contributions; no SHAP.
 - Fairness audit runs in `make report`; a failing audit is displayed, never suppressed.
+- **Leeward never changes a medication.** Medication actions flag a veteran for the VA
+  clinical pharmacist, who decides. `pharmacist_slot` is a scarce capacity unit because it
+  is a real person's afternoon. Say this out loud in the demo.
 - Every outreach message includes: VA channel tag, 4-word verification phrase,
   "The VA will never ask you to pay, wire money, or share bank details",
   VSAFE 833-388-7233, and "Veterans Crisis Line: dial 988, press 1".

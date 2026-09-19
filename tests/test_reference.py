@@ -117,3 +117,66 @@ def test_map_base_is_renderable() -> None:
     assert geo["type"] == "FeatureCollection"
     assert len(geo["features"]) == 178
     assert all("modzcta" in f["properties"] for f in geo["features"])
+
+
+# --------------------------------------------------------------------------- #
+# Medication layer. Synthea emits RxNorm codes; RxNav maps them to the VA's own
+# drug classes; med_climate_risk.csv attaches a mechanism and a weight to each.
+# --------------------------------------------------------------------------- #
+
+def test_med_climate_risk_crosswalk_is_well_formed() -> None:
+    risk = pl.read_csv(REF / "med_climate_risk.csv")
+    assert risk.height >= 45
+    assert set(risk.columns) == {
+        "va_class_id", "va_class_name", "mechanism", "hazard", "weight",
+        "acb", "controlled", "cold_chain", "narrow_ti", "source"}
+    assert risk["va_class_id"].n_unique() == risk.height, "duplicate VA class in the crosswalk"
+    assert risk["weight"].min() > 0 and risk["weight"].max() <= 1.0
+    assert risk["acb"].is_between(0, 3).all(), "ACB scale runs 0-3 per drug"
+    assert set(risk["hazard"].unique()) <= {
+        "heat", "outage", "breathing", "access_loss", "treatment_gap"}
+
+
+def test_va_drug_classes_resolve_to_the_crosswalk() -> None:
+    xw = pl.read_parquet(REF / "va_drug_class_members.parquet")
+    risk = pl.read_csv(REF / "med_climate_risk.csv")
+    assert xw.height > 3000, "RxNav membership pull looks truncated"
+    assert set(xw["va_class_id"].unique()) <= set(risk["va_class_id"])
+    # Every class in the crosswalk should have members except AH103, an obsolete
+    # antihistamine class RxNav no longer populates.
+    empty = set(risk["va_class_id"]) - set(xw["va_class_id"].unique())
+    assert empty <= {"AH103"}, f"VA classes with no members: {empty}"
+    assert xw["rxcui"].str.contains(r"^\d+$").all()
+
+
+def test_the_cdc_named_heat_combination_is_representable() -> None:
+    """CDC singles out ACE inhibitor or ARB *plus* a diuretic as additive heat risk.
+
+    Both halves must be resolvable to real RxNorm codes, or the interaction term
+    can never fire.
+    """
+    xw = pl.read_parquet(REF / "va_drug_class_members.parquet")
+    diuretics = xw.filter(pl.col("va_class_id").is_in(
+        ["CV700", "CV701", "CV702", "CV703", "CV704", "CV709"]))
+    raas = xw.filter(pl.col("va_class_id").is_in(["CV800", "CV805"]))
+    assert diuretics.height > 20, "no diuretic members"
+    assert raas.height > 20, "no ACE inhibitor / ARB members"
+    names = " ".join(xw["drug_name"].to_list()).lower()
+    # The two most-prescribed drugs in the Synthea cohort, and the pair CDC names.
+    assert "hydrochlorothiazide" in names
+    assert "lisinopril" in names
+
+
+def test_controlled_substances_are_flagged() -> None:
+    """The VA disaster pharmacy benefit excludes controlled substances -- VA must fill
+    them. That exclusion is what makes these veterans need an earlier, different action."""
+    risk = pl.read_csv(REF / "med_climate_risk.csv")
+    controlled = set(risk.filter(pl.col("controlled") == 1)["va_class_id"])
+    assert {"CN101", "CN302", "CN802"} <= controlled, "opioids, benzos and stimulants must be flagged"
+
+
+def test_cold_chain_medications_are_flagged() -> None:
+    risk = pl.read_csv(REF / "med_climate_risk.csv")
+    cold = risk.filter(pl.col("cold_chain") == 1)
+    assert "HS501" in set(cold["va_class_id"]), "insulin must be flagged cold-chain"
+    assert (cold.filter(pl.col("va_class_id") == "HS501")["hazard"] == "outage").all()

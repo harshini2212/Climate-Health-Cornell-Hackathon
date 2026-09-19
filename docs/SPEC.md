@@ -72,7 +72,7 @@ leeward/
     clean_clone_test.sh
   data/
     README.md                   # the data catalog: what each file is, and the augment priors
-    reference/                  # COMMITTED. 17 tables + manifest.json + nyc_modzcta.geojson
+    reference/                  # COMMITTED. 21 tables + manifest.json + nyc_modzcta.geojson
     raw/                        # gitignored: synthea, stormwater GIS, ACS summary file
     cohort.parquet
     truth.json
@@ -152,7 +152,18 @@ leeward/
 | copd, asthma, chf, diabetes, ckd_dialysis, active_cancer_tx, ptsd, depression | bool | derived | |
 | pact_presumptive | bool | derived | any PACT respiratory/cancer code |
 | n_chronic | int | derived | |
-| heat_sensitive_meds | bool | derived | diuretic, anticholinergic, beta-blocker, antipsychotic (RxNorm classes) |
+| med_rxcuis | list[str] | synthea | RxNorm codes from MedicationRequest, status = active |
+| va_drug_classes | list[str] | derived | via `va_drug_class_members.parquet`; the VA's own 576-class taxonomy |
+| n_active_meds | int | derived | polypharmacy count |
+| med_thermoreg_score | float | derived | Σ `weight` over heat-mechanism classes in `med_climate_risk.csv` |
+| acb_score | int | derived | anticholinergic burden, 0–3 per drug summed; ≥ 3 is the clinical threshold |
+| med_combo_raas_diuretic | bool | derived | **the combination CDC names by name**; ACE-i or ARB plus a diuretic |
+| med_renal_triple | bool | derived | NSAID on top of a diuretic and a RAAS agent |
+| med_cold_chain | bool | derived | insulin or other refrigerated product; drives the outage interaction |
+| med_controlled | bool | derived | opioid, benzodiazepine, barbiturate or stimulant. **Excluded from the VA retail emergency refill benefit.** |
+| med_narrow_ti | bool | derived | lithium, warfarin, levothyroxine, antiarrhythmics, anticonvulsants |
+| mail_order_pharmacy | bool | augment | **synthetic**, base rate 0.80 from VA's published CMOP share |
+| days_supply_remaining | int | augment | **synthetic**; 30-day window fills, 90-day mail fills, uniform phase |
 | on_methadone_otp | bool | augment | site-dependent treatment |
 | powered_equipment | str | augment | none / oxygen / ventilator / wheelchair / bed / dialysis_home |
 | deployment_era | str | augment | vietnam / gulf / post911 / peacetime |
@@ -174,7 +185,10 @@ leeward/
 
 ### 3.2 hazards.parquet — one row per modzcta × day
 
-`modzcta, date, heat_index_max_f, hot_day(>=82F), heat_alert, pm25, smoke_alert, flood_watch, flood_warning, flash_flood_emergency, surge_ft, evac_zone_ordered, floodnet_trip, stormwater_flooded_frac, outage_frac`
+`modzcta, date, heat_index_max_f, hot_day(>=82F), heat_alert, pm25, smoke_alert, flood_watch, flood_warning, flash_flood_emergency, surge_ft, evac_zone_ordered, floodnet_trip, stormwater_flooded_frac, outage_frac, mail_delivery_disrupted`
+
+`mail_delivery_disrupted` is set by the scenario when a ZIP is flooded, evacuated or in a
+sustained outage. Four in five VA prescriptions arrive by mail, so this is not a minor term.
 
 Plus `site_status.parquet`, one row per `facility_id × date` with `site_down: bool` — a
 separate table rather than a dict column, because 14 facilities × 120 days is small and a
@@ -206,7 +220,7 @@ This section used to describe nine modules to be written in the first two hours.
 written, they have been run, and their output is committed. `leeward/ingest/` is no longer
 on the critical path; if you build it at all, build it as a thin re-fetch wrapper.
 
-`scripts/fetch_sources.py` holds 17 fetchers, every one keyless, each writing one table into
+`scripts/fetch_sources.py` holds 18 fetchers, every one keyless, each writing one table into
 `data/reference/` plus a row in `manifest.json` recording url, rows, bytes and a sha256
 prefix. The catalog and the column meanings are in [`data/README.md`](../data/README.md).
 
@@ -290,6 +304,27 @@ every column — which is a free sanity check that the joins are right:
 | 3 | 8.9% | 30.8% | 13.2% | 10.1% | 5.3% |
 | 5 | 17.2% | 35.0% | 18.8% | 16.6% | 6.7% |
 
+#### Medication, derived not invented
+
+Synthea already puts an RxNorm code on every `MedicationRequest`. `cohort/medications.py`
+resolves each to a VA drug class with `va_drug_class_members.parquet` (committed, so no RxNav
+call at demo time) and then joins `med_climate_risk.csv` for the mechanism and weight:
+
+```
+med_thermoreg_score      = Σ weight    over classes where hazard == 'heat'
+acb_score                = Σ acb       over all classes          # ACB scale, >=3 is meaningful
+med_combo_raas_diuretic  = any(CV800, CV805) and any(CV70*)      # the CDC-named combination
+med_renal_triple         = med_combo_raas_diuretic and any(MS101, MS102)
+med_cold_chain           = any(cold_chain == 1)                  # insulin -> outage term
+med_controlled           = any(controlled == 1)                  # excluded from retail refill
+```
+
+Expected prevalence, measured on the Synthea FHIR sample and reproduced in
+`tests/test_cohort.py`: **77 percent** on ≥1 heat-impairing medication, **16 percent** on the
+CDC-named pair, 10 percent controlled, 9 percent cold-chain, 5 percent at ACB ≥ 3. The
+veteran 65+ cohort should come out higher on all of them; if it comes out lower, the class
+mapping is broken.
+
 **Still genuinely synthetic** — no public source exists, so these keep parametric priors and a
 `_synthetic` flag:
 
@@ -302,6 +337,8 @@ every column — which is a free sanity check that the joins are right:
 | floor | basement 0.06, ground 0.25, upper 0.69 citywide; basement up-weighted ×2 where `stormwater_flooded_frac` is high |
 | on_methadone_otp | 0.01 overall |
 | caregiver type, given present | coresident / remote / va_pcafc split 0.55 / 0.35 / 0.10; `lives_alone=True` forces remote |
+| mail_order_pharmacy | Bernoulli(0.80), from VA's published ~80 percent CMOP share. Synthea's FHIR export has no `dispenseRequest`, so this cannot be read. |
+| days_supply_remaining | 90-day fill if mail order else 30-day; phase drawn uniform, so on any given day the cohort is spread across its refill cycle |
 
 **Acceptance:** `test_cohort.py` asserts that for every PLACES-derived field, the cohort's
 realised rate is within 20 percent of the ZIP-weighted source rate, and that every augmented
@@ -429,6 +466,13 @@ Notes:
 | θ outage×equipment | Normal(0.8, 0.6) | emPOWER rationale |
 | θ flood×lowfloor | Normal(0.8, 0.6) | Ida basement evidence |
 | θ sitedown×sitedependent | Normal(1.0, 0.7) | Sandy dialysis/OTP evidence |
+| θ heat × med_thermoreg_score | Normal(0.35, 0.3) per unit | CDC mechanism list; graded, so the prior is per score unit |
+| θ heat × med_combo_raas_diuretic | Normal(0.5, 0.4) | CDC names this combination explicitly |
+| θ heat × (acb_score ≥ 3) | Normal(0.5, 0.4) | ACB scale threshold |
+| θ heat × med_renal_triple | Normal(0.6, 0.5) | NSAID + RAAS + diuretic, AKI with dehydration |
+| θ outage × med_cold_chain | Normal(0.9, 0.6) | insulin spoils in about a day |
+| θ maildisrupt × mail_order × supply_short | Normal(1.2, 0.6) | near-deterministic; wide anyway, and it should shrink |
+| θ sitedown × med_controlled | Normal(0.9, 0.6) | retail emergency refill excludes controlled substances |
 | β PTSD | Normal(0.3, 0.3) | WTC mind–body |
 | σ no_caregiver (main, per need) | Normal(0.5, 0.4) | clinician input; social-isolation literature |
 | σ low_assets (main) | Normal(0.4, 0.4) | NYC heat report: AC owned but not run for cost |
@@ -468,19 +512,25 @@ Driver contributions = each term's posterior-mean contribution to the linear pre
 | alt_site_booking (dialysis/infusion/OTP) | 0.00 | 0.00 | 0.05 | 0.70 | 0.30 | booking |
 | evacuation_assist | 0.05 | 0.10 | 0.10 | 0.30 | 0.75 | evac |
 | verified_text | 0.05 | 0.15 | 0.10 | 0.10 | 0.05 | free |
+| switch_to_local_pickup | 0.10 | 0.05 | 0.05 | 0.65 | 0.10 | refill |
+| pharmacist_med_review | 0.15 | 0.45 | 0.10 | 0.20 | 0.00 | pharmacist_slot |
+| cold_chain_plan | 0.05 | 0.10 | 0.00 | 0.55 | 0.05 | call |
+| controlled_substance_bridge | 0.00 | 0.00 | 0.20 | 0.70 | 0.20 | va_fill |
 | check_in_call (Find out) | information action; value = expected reduction in epistemic variance × w | call |
 
 ### 7.3 eha.py
 `EHA[i,a,t] = Σ_k w_k · mean_draws(p[i,k,t,draw]) · τ[a,k]`, plus `VOI[i] = Σ_k w_k · sqrt(epistemic_var[i,k,t])` for check-in calls.
 
 ### 7.4 allocate.py
-Greedy by EHA per unit cost under `capacity = {call: 40, refill: 200, ride: 15, booking: 20, evac: 8}`; one action per veteran per day unless the veteran is Act-now, then up to 3. Optional `group_floor = {borough: 0.1}` for the fairness floor. Deterministic; returns `actions.parquet` with rank and rationale.
+Greedy by EHA per unit cost under
+`capacity = {call: 40, refill: 200, ride: 15, booking: 20, evac: 8, pharmacist_slot: 12, va_fill: 30}`;
+the pharmacist slot is deliberately scarce, because it is a real person's afternoon; one action per veteran per day unless the veteran is Act-now, then up to 3. Optional `group_floor = {borough: 0.1}` for the fairness floor. Deterministic; returns `actions.parquet` with rank and rationale.
 
 ### 7.4b Caregiver routing
 If `caregiver != none` and `caregiver_contact_consent`, `care_team_call` and `verified_text` target the caregiver first (τ for those actions +0.10 on treatment_gap and access_loss, because a co-resident can act same-day). If `caregiver == none`, `verified_text` τ is halved and `care_team_call` / `evacuation_assist` are preferred; `assign_buddy` becomes available (τ access_loss 0.35, cost unit `partner_slot`). If `low_assets`, `cooling_center_ride` and `evacuation_assist` are booked, not suggested, and `heap_application` is added as a 5-day-out action (τ heat 0.30 over the season).
 
 ### 7.5 tiers.py
-Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast). Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10. Self-serve: p_mean 0.05–0.25. Everyday: rest.
+Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast), **or `mail_order_pharmacy` and `days_supply_remaining ≤ forecast lead time` on a day the scenario disrupts delivery to that ZIP, or `med_controlled` and the veteran's station is SiteDown**. The last two are close to deterministic, which is the point: they are the rows a care team can act on with no argument. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10. Self-serve: p_mean 0.05–0.25. Everyday: rest.
 
 **Acceptance:** `test_allocate.py` hand-checkable 5-veteran case; capacity never exceeded; raising capacity never lowers total EHA.
 

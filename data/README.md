@@ -69,6 +69,42 @@ is the right answer, which is a useful thing to know before you trust a join.
 | `empower_ny_zip.parquet` | 1,702 | HHS emPOWER, electricity-dependent Medicare beneficiaries per NY ZIP, split by device family. NYC totals: **36,146 power-dependent, 3,165 on oxygen, 1,948 facility ESRD dialysis.** |
 | `svi_nyc_tract.parquet` | 2,324 | CDC/ATSDR Social Vulnerability Index 2022, NYC tracts. Context layer and fairness strata. |
 
+### Medication
+
+| File | Rows | What it is |
+| --- | --- | --- |
+| `med_climate_risk.csv` | 52 | **VA drug class → climate mechanism.** Hand-curated from CDC's clinician guidance on heat and medications. Columns: `mechanism`, `hazard`, `weight`, `acb` (anticholinergic burden 0–3), `controlled`, `cold_chain`, `narrow_ti`. Pharmacist-editable, like `severity.py` and `tau.py`. |
+| `va_drug_class_members.parquet` | 4,222 | **RxNorm code → VA drug class**, pulled from RxNav for every class in the crosswalk. Lets the cohort map Synthea prescriptions offline, with no RxNav call at demo time. |
+
+RxNav publishes the **VA's own 576-class drug taxonomy**, keyless — which means Leeward
+speaks the vocabulary a VA clinical pharmacist already uses. `CV702` is LOOP DIURETICS to
+RxNav, to the VA formulary, and to us.
+
+Synthea emits RxNorm codes on every `MedicationRequest`, so the prescription layer is **real
+data the cohort was already carrying and the first draft ignored**. Measured on the 109-bundle
+Synthea FHIR sample:
+
+| | Share of patients on active meds |
+| --- | --- |
+| On ≥1 medication that impairs heat response | **77%** |
+| On **ACE inhibitor or ARB + a diuretic** — the combination CDC names as additive heat risk | **16%** |
+| On a controlled substance (cannot use the retail emergency refill route) | 10% |
+| On a cold-chain medication (insulin) | 9% |
+| Anticholinergic burden ≥ 3 (clinically meaningful on the ACB scale) | 5% |
+| Median active medications | 3 (max 14) |
+
+Those numbers come from a general-population sample. The veteran 65+ cohort will run higher.
+
+The five most-prescribed drugs in the sample are insulin, hydrochlorothiazide, lisinopril,
+metformin and amlodipine — so the medication terms fire on the *ordinary* patient, not an
+exotic one. Hydrochlorothiazide plus lisinopril is exactly the pair CDC singles out.
+
+**What is real here:** the RxNorm codes (from the record), the VA class mapping (RxNav), and
+the mechanism and combination rules (CDC). **What is synthetic:** `days_supply_remaining` and
+`mail_order_pharmacy`, because Synthea's FHIR export carries no `dispenseRequest` block. Both
+are drawn from VA's published conventions — 30-day window fills, 90-day mail fills, and the
+~80% of VA outpatient prescriptions that go by mail — and both carry a `_synthetic` flag.
+
 ### Care sites and hazard to those sites
 
 | File | Rows | What it is |

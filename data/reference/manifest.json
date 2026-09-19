@@ -159,6 +159,16 @@
     "sha256": "",
     "url": "https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip"
   },
+  "va_drug_classes": {
+    "bytes": 71285,
+    "cols": 6,
+    "fetched_utc": "2026-09-19T20:19:51Z",
+    "file": "va_drug_class_members.parquet",
+    "note": "RxNav exposes the VA's own 576-class drug taxonomy, keyless. This resolves every RxNorm code in the climate-risk crosswalk to its VA drug class offline, so the cohort can map Synthea prescriptions without calling RxNav at demo time.",
+    "rows": 4222,
+    "sha256": "e32272ec754e263e",
+    "url": "https://rxnav.nlm.nih.gov/REST/rxclass/"
+  },
   "va_facilities": {
     "bytes": 7731,
     "cols": 10,

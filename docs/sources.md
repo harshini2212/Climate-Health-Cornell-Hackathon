@@ -78,8 +78,83 @@ These are not quotes. They are joins you can re-run; the script is `scripts/fetc
 | Veterans in NYC | **134,711**, of whom **53.3% are 65+** | `acs_veterans_by_zcta.parquet` — ACS 2023 5-year B21001, summed over NYC ZCTAs |
 | Electricity-dependent Medicare beneficiaries in NYC | **36,146**; **3,165** on oxygen; **1,948** facility ESRD dialysis | `empower_ny_zip.parquet` — HHS emPOWER, five-borough ZIPs |
 | June 2023 smoke peak | **203.5 µg/m³ PM2.5, AQI 254**, Queens monitor, 7 June 2023 | `airnow_pm25_nyc_smoke2023.parquet` — EPA AirNow daily files |
+| Veterans on ≥1 heat-impairing medication | **77%** of Synthea patients with active meds; **16%** on the CDC-named ACE-inhibitor/ARB-plus-diuretic pair; 10% on a controlled substance; 9% cold-chain | `med_climate_risk.csv` × `va_drug_class_members.parquet` × Synthea FHIR sample |
 | Vulnerability stacks along the heat gradient | Utility-shutoff threat rises **5.3% → 17.2%** from HVI band 1 to 5; mobility difficulty **9.3% → 18.8%**; lacks transport **6.0% → 16.6%** | `places_zcta_nyc.parquet` × `hvi_by_zcta.parquet` |
 | Most flood-exposed ZIPs | Rockaways 11692 (**59%** of area), 11693, 11694, 11697; Coney Island 11224; Lower Manhattan 10004 | `stormwater_by_modzcta.parquet` |
+
+### Medication and climate
+
+> CDC, *Heat and Medications — Guidance for Clinicians* —
+> https://www.cdc.gov/heat-health/hcp/clinical-guidance/heat-and-medications-guidance-for-clinicians.html
+
+Mechanisms, quoted by class:
+
+| Class | CDC's stated mechanism |
+| --- | --- |
+| Diuretics | "Volume depletion, dehydration", "reduced thirst sensation", "electrolyte imbalance" |
+| Beta blockers | "Reduced superficial vasodilation", decreased sweating |
+| ACE inhibitors / ARBs / ARNIs | "Decreased blood pressure", "reduced thirst sensation" |
+| Antipsychotics | "Impaired sweating", "impaired temperature" |
+| Lithium | "Electrolyte imbalance"; narrow therapeutic index |
+| Tricyclic antidepressants, antihistamines | "Decreased sweating" |
+| NSAIDs | "Kidney injury with dehydration" |
+| Stimulants | "Increased body temperature" |
+
+- **The named additive combination:** "an angiotensin converting enzyme (ACE) inhibitor or an
+  angiotensin II receptor blocker (ARB) with a diuretic may significantly increase risk."
+- **Storage:** "Insulin, which should be stored in a refrigerator, may become less effective
+  if left in the heat." Inhalers can malfunction; epinephrine auto-injectors may deliver less
+  drug after heat exposure.
+- **Clinician actions named by CDC:** review medication lists for heat interactions, consider
+  adjusting dose, frequency or fluid restrictions on hot days, give storage guidance, and
+  document any adjustment. Leeward surfaces the review; it never makes the adjustment.
+
+> Anticholinergic Cognitive Burden (ACB) scale — https://www.acbcalc.com/pages/about ·
+> British Geriatrics Society, *Evaluating the use of the ACB score in the elderly* —
+> https://www.bgs.org.uk/evaluating-the-use-of-anticholinergic-burden-acb-score-in-the-elderly
+
+Each drug scores 0–3; scores are summed across the medication list; **a cumulative score of 3
+or more is clinically meaningful**, and higher totals predict greater cognitive slowing and
+fall risk. Leeward uses the same 0–3 convention in `med_climate_risk.csv`.
+
+### VA pharmacy under disaster
+
+> VA, *Pharmacy Disaster Relief Plan* — https://www.va.gov/fayetteville-coastal-health-care/programs/pharmacy-disaster-relief-plan/ ·
+> VA Spokane, *U.S. VA Pharmacy Disaster Response Letter* — https://www.va.gov/spokane-health-care/news-releases/us-va-pharmacy-disaster-response-letter/
+
+- When VA activates the Emergency Pharmacy Program, a veteran with a VA ID card can take a
+  valid VA prescription form or an active VA prescription bottle to **any retail pharmacy
+  open to the public and receive at least a 10-day supply**.
+- **Controlled substances are excluded. VA must fill those itself.** This is the exclusion
+  that drives Leeward's `med_controlled` flag: the veteran on an opioid, a benzodiazepine, a
+  stimulant or methadone is precisely the one the retail workaround does not cover, and so
+  needs an earlier, different action.
+
+> VA, *Refill prescriptions and manage medications* — https://www.va.gov/health-care/manage-prescriptions-medications/ ·
+> VA News, *Automated pharmacy means more Veterans get prescriptions faster* — https://news.va.gov/133691/automated-pharmacy-veterans-get-prescriptions/
+
+- VA delivers roughly **80% of outpatient prescriptions by mail** through the Consolidated
+  Mail Outpatient Pharmacy network — on the order of **518,000 prescriptions a day**, reaching
+  about **330,000 veterans daily**. CMOP handled ~129.6 million prescriptions in FY2022.
+- Mail delivery has failed before for non-climate reasons: the 2020 USPS slowdown produced
+  a bipartisan congressional letter about delayed veteran prescriptions
+  (https://www.duckworth.senate.gov/news/press-releases/duckworth-durbin-join-tester-peters-in-demanding-postal-service-address-delivery-delays-of-veterans-prescription-drugs).
+- This concentration is the point: a flood or outage does not only close the clinic, it stops
+  the pharmacy for four veterans in five.
+
+> HHS ASPR, *Emergency Prescription Assistance Program* — https://aspr.hhs.gov/EPAP/Pages/about-epap.aspx
+
+- EPAP gives a free 30-day supply to **uninsured** people in a federally declared disaster
+  area, through a network of ~72,000 retail pharmacies. Not a route for enrolled veterans, but
+  relevant to the partner-coordination export.
+
+> NLM RxNav / RxClass — https://rxnav.nlm.nih.gov/RxClassAPIs.html
+
+- Keyless. Exposes the **VA drug classification (576 classes)** alongside ATC, MED-RT and
+  others, so RxNorm codes from any FHIR source map into the VA's own formulary vocabulary.
+- Membership: `/REST/rxclass/classMembers.json?classId=<id>&relaSource=VA&rela=has_VAClass`
+  (the `rela` parameter is required; without it the response is `{}`).
+- Reverse lookup: `/REST/rxclass/class/byRxcui.json?rxcui=<code>&relaSource=VA`.
 
 ### Policy context
 
@@ -116,6 +191,7 @@ prefix for each in `data/reference/manifest.json`.
 | `airnow_smoke` | https://files.airnowtech.org/airnow/ | `airnow_pm25_nyc_smoke2023.parquet` |
 | `nws_snapshot` | https://api.weather.gov/ | `nws_forecast_nyc.parquet`, `nws_alerts_ny.json` |
 | `acs_veterans` | https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/ | `acs_veterans_by_zcta.parquet` |
+| `va_drug_classes` | https://rxnav.nlm.nih.gov/REST/rxclass/ | `va_drug_class_members.parquet` |
 | `synthea_sample` | https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip | `data/raw/synthea_sample_fhir.zip` |
 
 ### Synthetic cohort
@@ -139,6 +215,7 @@ prefix for each in `data/reference/manifest.json`.
 | AirNow API is usable with a free key | `airnowapi.org` returns `{"WebServiceError":[{"Message":"Invalid API key"}]}`; key issuance is not instant | `https://files.airnowtech.org/airnow/YYYY/YYYYMMDD/daily_data_v2.dat`, pipe-delimited, keyless, with lat/lon per monitor |
 | VA Facilities API (`api.va.gov`) is open | `401 No API key found in request`; developer.va.gov needs an approved application | VHA Medical Facilities ArcGIS FeatureServer, keyless, 84 NY sites with `LAT`/`LON` |
 | FEMA NRI ships a static zip at `hazards.fema.gov/nri/Content/StaticDocuments/...` | **301** to a FEMA landing page | `FEMA_NationalRiskIndex` ArcGIS FeatureServer. Note the heat-wave fields are `HWAV_*`, **not** `HRWV_*`, and `RFLD_*` is absent from the tract layer. |
+| RxClass membership needs only `classId` and `relaSource` | Without `rela=has_VAClass` the response is an empty `{}` — silently, with HTTP 200 | Always pass `rela=has_VAClass`. `ttys=IN` also returns nothing for VA classes, because VA membership is asserted at clinical-drug level. |
 | FloodNet needs a data-request form | True for `floodnet.nyc` itself | The same sensor metadata and flood events are open on NYC Open Data: `kb2e-tjy3` and `aq7i-eu5q`. No form. |
 | HVI needs an NTA → ZIP crosswalk | NYC now publishes HVI **per ZCTA20** directly | `4mhf-duep`, two columns: `zcta20`, `hvi` |
 | emPOWER query field is `STATE_NAME` | It is **`STATE`** (2 characters). Layer **1** is the ZIP-level all-DME layer. | `where=STATE='NY'`, 1,702 rows |

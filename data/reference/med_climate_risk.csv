@@ -1,0 +1,53 @@
+va_class_id,va_class_name,mechanism,hazard,weight,acb,controlled,cold_chain,narrow_ti,source
+CV700,"DIURETICS",volume_depletion_reduced_thirst,heat,1.0,0,0,0,0,CDC_heat_meds
+CV701,"THIAZIDES/RELATED DIURETICS",volume_depletion_reduced_thirst,heat,1.0,0,0,0,0,CDC_heat_meds
+CV702,"LOOP DIURETICS",volume_depletion_reduced_thirst,heat,1.0,0,0,0,0,CDC_heat_meds
+CV703,"CARBONIC ANHYDRASE INHIBITOR DIURETICS",electrolyte_imbalance,heat,0.7,0,0,0,0,CDC_heat_meds
+CV704,"POTASSIUM SPARING/COMBINATIONS DIURETICS",electrolyte_imbalance,heat,0.8,0,0,0,0,CDC_heat_meds
+CV709,"DIURETICS,OTHER",volume_depletion_reduced_thirst,heat,0.8,0,0,0,0,CDC_heat_meds
+CV100,"BETA BLOCKERS/RELATED",reduced_vasodilation_and_sweating,heat,0.8,0,0,0,0,CDC_heat_meds
+CV200,"CALCIUM CHANNEL BLOCKERS",hypotension_electrolyte,heat,0.5,0,0,0,0,CDC_heat_meds
+CV800,"ACE INHIBITORS",hypotension_reduced_thirst,heat,0.7,0,0,0,0,CDC_heat_meds
+CV805,"ANGIOTENSIN II INHIBITOR",hypotension_reduced_thirst,heat,0.7,0,0,0,0,CDC_heat_meds
+CV300,"ANTIARRHYTHMICS",electrolyte_sensitive_narrow_ti,heat,0.6,0,0,0,1,CDC_heat_meds
+CN700,"ANTIPSYCHOTICS",impaired_sweating_and_thermoregulation,heat,1.0,2,0,0,0,CDC_heat_meds
+CN701,"PHENOTHIAZINE/RELATED ANTIPSYCHOTICS",impaired_sweating_and_thermoregulation,heat,1.0,3,0,0,0,CDC_heat_meds
+CN709,"ANTIPSYCHOTICS,OTHER",impaired_sweating_and_thermoregulation,heat,0.9,2,0,0,0,CDC_heat_meds
+CN750,"LITHIUM SALTS",electrolyte_imbalance_narrow_ti,heat,1.0,0,0,0,1,CDC_heat_meds
+CN601,"TRICYCLIC ANTIDEPRESSANTS",anticholinergic_decreased_sweating,heat,0.9,3,0,0,0,CDC_heat_meds
+CN600,"ANTIDEPRESSANTS",altered_sweating,heat,0.4,1,0,0,0,CDC_heat_meds
+CN602,"MONAMINE OXIDASE INHIBITOR ANTIDEPRESSANTS",altered_thermoregulation,heat,0.6,1,0,0,0,CDC_heat_meds
+CN609,"ANTIDEPRESSANTS,OTHER",altered_sweating,heat,0.4,1,0,0,0,CDC_heat_meds
+CN500,"ANTIPARKINSON AGENTS",anticholinergic_decreased_sweating,heat,0.8,3,0,0,0,CDC_heat_meds
+CN400,"ANTICONVULSANTS",variable_thermoregulation,heat,0.3,1,0,0,1,CDC_heat_meds
+CN800,"CNS STIMULANTS",increased_heat_production,heat,0.8,0,1,0,0,CDC_heat_meds
+CN802,"AMPHETAMINE LIKE STIMULANTS",increased_heat_production,heat,0.9,0,1,0,0,CDC_heat_meds
+CN809,"CNS STIMULANTS,OTHER",increased_heat_production,heat,0.7,0,0,0,0,CDC_heat_meds
+CN300,"SEDATIVES/HYPONTICS",sedation_reduced_heat_awareness,heat,0.5,1,0,0,0,CDC_heat_meds
+CN301,"BARBITURIC ACID DERIVATIVE SEDATIVES/HYPNOTICS",sedation_reduced_heat_awareness,heat,0.6,1,1,0,0,CDC_heat_meds
+CN302,"BENZODIAZEPINE DERIVATIVE SEDATIVES/HYPNOTICS",sedation_reduced_heat_awareness,heat,0.5,1,1,0,0,CDC_heat_meds
+CN101,"OPIOID ANALGESICS",sedation_and_not_retail_refillable,access_loss,0.6,1,1,0,0,VA_disaster_pharmacy
+CN102,"OPIOID ANTAGONIST ANALGESICS",not_retail_refillable,access_loss,0.5,0,1,0,0,VA_disaster_pharmacy
+AH000,"ANTIHISTAMINES",anticholinergic_decreased_sweating,heat,0.6,2,0,0,0,CDC_heat_meds
+AH100,"ANTIHISTAMINES,PHENOTHIAZINE",anticholinergic_decreased_sweating,heat,0.8,3,0,0,0,CDC_heat_meds
+AH102,"ANTIHISTAMINES,ETHANOLAMINE",anticholinergic_decreased_sweating,heat,0.8,3,0,0,0,CDC_heat_meds
+AH103,"ANTIHISTAMINES,ETHYLENEDIAMINE",anticholinergic_decreased_sweating,heat,0.7,2,0,0,0,CDC_heat_meds
+AH104,"ANTIHISTAMINES,ALKYLAMINE",anticholinergic_decreased_sweating,heat,0.7,3,0,0,0,CDC_heat_meds
+AH105,"ANTIHISTAMINES,PIPERAZINE",anticholinergic_decreased_sweating,heat,0.7,3,0,0,0,CDC_heat_meds
+AH106,"ANTIHISTAMINES,BUTYROPHENONE",anticholinergic_decreased_sweating,heat,0.7,2,0,0,0,CDC_heat_meds
+AH107,"ANTIHISTAMINES,PIPERIDINE",anticholinergic_decreased_sweating,heat,0.4,1,0,0,0,CDC_heat_meds
+AH109,"ANTIHISTAMINES,OTHER",anticholinergic_decreased_sweating,heat,0.5,1,0,0,0,CDC_heat_meds
+RE105,"BRONCHODILATORS,ANTICHOLINERGIC",anticholinergic,heat,0.4,1,0,0,0,CDC_heat_meds
+MS101,"SALICYLATES,ANTIRHEUMATIC",renal_injury_with_dehydration,heat,0.6,0,0,0,0,CDC_heat_meds
+MS102,"NONSALICYLATE NSAIs,ANTIRHEUMATIC",renal_injury_with_dehydration,heat,0.7,0,0,0,0,CDC_heat_meds
+HS501,"INSULIN",requires_refrigeration,outage,1.0,0,0,1,1,CDC_heat_meds
+HS500,"BLOOD GLUCOSE REGULATION AGENTS",some_require_refrigeration,outage,0.5,0,0,1,0,CDC_heat_meds
+BL110,"ANTICOAGULANTS",narrow_ti_requires_monitoring,access_loss,0.6,0,0,0,1,CDC_heat_meds
+HS851,"THYROID SUPPLEMENTS",narrow_ti,access_loss,0.3,0,0,0,1,CDC_heat_meds
+HS050,"ADRENAL CORTICOSTERIODS",cannot_stop_abruptly,access_loss,0.7,0,0,0,0,CDC_heat_meds
+HS051,"GLUCOCORTICOIDS",cannot_stop_abruptly,access_loss,0.7,0,0,0,0,CDC_heat_meds
+RE100,"ANTIASTHMA/BRONCHODILATORS",heat_degrades_inhaler_and_rescue_supply,breathing,0.8,0,0,0,0,CDC_heat_meds
+RE102,"BRONCHODILATORS,SYMPATHOMIMETIC,INHALATION",heat_degrades_inhaler_and_rescue_supply,breathing,0.8,0,0,0,0,CDC_heat_meds
+RE101,"ANTI-INFLAMMATORIES,INHALATION",controller_therapy_gap,breathing,0.6,0,0,0,0,CDC_heat_meds
+AN000,"ANTINEOPLASTICS",site_dependent_infusion,treatment_gap,1.0,0,0,1,1,VA_disaster_pharmacy
+AN300,"ANTINEOPLASTICS,ANTIMETABOLITES",site_dependent_infusion,treatment_gap,1.0,0,0,1,1,VA_disaster_pharmacy
