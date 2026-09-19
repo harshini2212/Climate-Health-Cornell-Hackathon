@@ -11,24 +11,17 @@ import numpy as np
 import polars as pl
 import pytest
 
-from leeward import schema
 from leeward.model import design
 from leeward.schema import NEEDS
+from tables import table
 
 D0 = date(2026, 7, 1)
 DAYS = [D0 + timedelta(days=i) for i in range(6)]
 
 
-def _table(name: str) -> pl.DataFrame:
-    path = schema.TABLES[name].path
-    if not path.exists():
-        pytest.skip(f"data/{name}.parquet missing -- run `make fixtures`")
-    return pl.read_parquet(path)
-
-
 def _vet(**overrides) -> pl.DataFrame:
     """One fixture veteran, with the fields a test cares about set by hand."""
-    base = _table("cohort").head(1)
+    base = table("cohort").head(1)
     return base.with_columns(**{k: pl.lit(v, dtype=base.schema[k]) for k, v in overrides.items()})
 
 
@@ -86,8 +79,8 @@ def _build(cohort, hazards, sites, **kw):
 # --------------------------------------------------------------------------- #
 
 def test_one_row_per_veteran_day_in_cohort_then_date_order() -> None:
-    cohort = _table("cohort").head(7)
-    hazards, sites = _table("hazards"), _table("site_status")
+    cohort = table("cohort").head(7)
+    hazards, sites = table("hazards"), table("site_status")
     dates = sorted(hazards["date"].unique().to_list())[:3]
     d = _build(cohort, hazards, sites, dates=dates)
 
@@ -262,8 +255,8 @@ def test_coef_matrix_rejects_typos(bad) -> None:
 
 
 def test_linear_predictor_and_contributions_agree() -> None:
-    cohort = _table("cohort").head(20)
-    hazards, sites = _table("hazards"), _table("site_status")
+    cohort = table("cohort").head(20)
+    hazards, sites = table("hazards"), table("site_status")
     dates = sorted(hazards["date"].unique().to_list())[10:14]
     d = _build(cohort, hazards, sites, dates=dates)
 
