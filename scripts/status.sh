@@ -66,7 +66,7 @@ else echo "  no scores yet"; fi
 echo
 echo "GATE"
 if .venv/bin/pytest -q -p no:cacheprovider >/tmp/lw_test.txt 2>&1; then
-  echo "  $(g '●') make check is GREEN — $(grep -oE '[0-9]+ passed[^)]*' /tmp/lw_test.txt | tail -1)"
+  echo "  $(g '●') make check is GREEN — $(grep -oE '[0-9]+ passed.*' /tmp/lw_test.txt | tail -1 | sed 's/ in .*//')"
 else
   echo "  $(r '●') make check is RED"
   grep -E "^FAILED" /tmp/lw_test.txt | sed 's/^/     /' | head -8
