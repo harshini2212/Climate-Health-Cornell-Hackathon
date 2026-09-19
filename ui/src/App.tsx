@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { IconChart, IconHome, IconList, IconMap, IconMessage, IconSearch, IconUser } from "./components/Icons";
+import { IconCalendar, IconChart, IconHome, IconList, IconMap, IconMessage, IconSearch, IconUser } from "./components/Icons";
 import { postActions, type Source } from "./lib/api";
 import { RUNG_LABEL } from "./lib/labels";
 import { DEFAULT_CAPACITY } from "./lib/types";
 import { CareTeam } from "./screens/CareTeam";
 import { Forecast } from "./screens/Forecast";
+import { MessageScreen } from "./screens/Message";
+import { VeteranScreen } from "./screens/VeteranCard";
 import { Map } from "./screens/Map";
+import { Week, type VeteranFocus } from "./screens/Week";
 
 /**
  * The shell, ported from the Brexify command-center template: a 230px sidebar with grouped
@@ -13,7 +16,7 @@ import { Map } from "./screens/Map";
  * demo's order: Forecast -> Map -> Care team -> Veteran card -> Message -> Model report.
  */
 
-export type ScreenKey = "forecast" | "map" | "careteam" | "veteran" | "message" | "report";
+export type ScreenKey = "week" | "forecast" | "map" | "careteam" | "veteran" | "message" | "report";
 
 interface Screen {
   key: ScreenKey;
@@ -25,6 +28,7 @@ interface Screen {
 }
 
 const SCREENS: Screen[] = [
+  { key: "week", group: "Overview", label: "Week board", icon: <IconCalendar />, title: "The week ahead", sub: "Who to reach, under the day it is due" },
   { key: "forecast", group: "Overview", label: "Forecast", icon: <IconHome />, title: "Forecast", sub: "Command center · next 7 days" },
   { key: "map", group: "Overview", label: "Map", icon: <IconMap />, title: "Map", sub: "Expected need by ZIP, VA sites, hazards" },
   { key: "careteam", group: "Care team", label: "Action list", icon: <IconList />, title: "Today's action list", sub: "Cut at the team's real capacity" },
@@ -51,11 +55,15 @@ function ComingSoon({ what, lane }: { what: string; lane: string }) {
 }
 
 export default function App() {
-  const [screen, setScreen] = useState<ScreenKey>("forecast");
+  const [screen, setScreen] = useState<ScreenKey>("week");
   const [scenario, setScenario] = useState(SCENARIOS[0].key);
   const [source, setSource] = useState<Source>("fixture");
   const [actNow, setActNow] = useState<number | null>(null);
   const [rung, setRung] = useState<number | null>(null);
+  /** Set when a day on the week ribbon is clicked, so the action list opens on that date. */
+  const [day, setDay] = useState<string | null>(null);
+  /** Set when a queue card is clicked, so the Veteran card and Message screens have a subject. */
+  const [focus, setFocus] = useState<{ veteranId: string; actionId: string; date: string } | null>(null);
   const onSource = useCallback((s: Source) => setSource(s), []);
 
   // The nav badge on "Action list" is today's Act-now count at default capacity.
@@ -67,6 +75,11 @@ export default function App() {
       })
       .catch(() => undefined);
   }, [scenario]);
+
+  const openDay = useCallback((d: string) => {
+    setDay(d);
+    setScreen("careteam");
+  }, []);
 
   const current = SCREENS.find((s) => s.key === screen)!;
   const groups = [...new Set(SCREENS.map((s) => s.group))];
@@ -134,11 +147,30 @@ export default function App() {
               <div className="sub">{current.sub}</div>
             </div>
           </div>
+          {screen === "week" && (
+            <Week
+              scenario={scenario}
+              onSource={onSource}
+              onOpenDay={openDay}
+              onOpenVeteran={(f: VeteranFocus) => {
+                setFocus(f);
+                setScreen("veteran");
+              }}
+            />
+          )}
           {screen === "forecast" && <Forecast scenario={scenario} onSource={onSource} onOpen={setScreen} />}
           {screen === "map" && <Map scenario={scenario} onSource={onSource} />}
-          {screen === "careteam" && <CareTeam scenario={scenario} onSource={onSource} />}
-          {screen === "veteran" && <ComingSoon what="Walter's card: five needs as 10–90% interval bars, drivers, medication panel, the plan" lane="api" />}
-          {screen === "message" && <ComingSoon what="The message the veteran gets, with the five mandatory elements as a visible checklist" lane="api" />}
+          {screen === "careteam" && <CareTeam scenario={scenario} date={day} onSource={onSource} />}
+          {screen === "veteran" && (
+            <VeteranScreen
+              focus={focus}
+              onOpenMessage={() => setScreen("message")}
+              onBack={() => setScreen("week")}
+            />
+          )}
+          {screen === "message" && (
+            <MessageScreen focus={focus} onBack={() => setScreen("veteran")} />
+          )}
           {screen === "report" && <ComingSoon what="Recovery dot-whisker, reliability curves, harm averted vs baselines, ablations, fairness table" lane="eval" />}
         </main>
       </div>

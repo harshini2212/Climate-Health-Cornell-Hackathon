@@ -5,7 +5,14 @@ import { lastSource, postActions, type Source } from "../lib/api";
 import { ACTION_LABEL, TIER_BADGE, TIER_LABEL } from "../lib/labels";
 import { DEFAULT_CAPACITY, TIERS, type ActionsResponse } from "../lib/types";
 
-export function CareTeam({ scenario, onSource }: { scenario: string; onSource: (s: Source) => void }) {
+interface Props {
+  scenario: string;
+  /** Set when the week board hands over a day; null means "whatever the API calls today". */
+  date?: string | null;
+  onSource: (s: Source) => void;
+}
+
+export function CareTeam({ scenario, date, onSource }: Props) {
   const [calls, setCalls] = useState(DEFAULT_CAPACITY.call);
   const [resp, setResp] = useState<ActionsResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -19,7 +26,7 @@ export function CareTeam({ scenario, onSource }: { scenario: string; onSource: (
       setError(null);
       const t0 = performance.now();
       try {
-        const r = await postActions({ date: "", capacity: { ...DEFAULT_CAPACITY, call: n }, scenario });
+        const r = await postActions({ date: date ?? "", capacity: { ...DEFAULT_CAPACITY, call: n }, scenario });
         setResp(r);
         setRoundTrip(Math.round(performance.now() - t0));
         onSource(lastSource());
@@ -29,7 +36,7 @@ export function CareTeam({ scenario, onSource }: { scenario: string; onSource: (
         setBusy(false);
       }
     },
-    [scenario, onSource],
+    [scenario, date, onSource],
   );
 
   useEffect(() => {

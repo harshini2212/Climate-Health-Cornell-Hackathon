@@ -125,3 +125,67 @@ export interface ActionsResponse {
   counts_by_tier: Record<string, number>;
   model_rung: number;
 }
+
+// GET /veteran/{id} --------------------------------------------------------
+
+export interface NeedScore {
+  need: string;
+  p_mean: number;
+  p_lo80: number;
+  p_hi80: number;
+  p_epistemic_share: number;
+  drivers: string[];
+  driver_contribs: number[];
+}
+
+export interface MedicationFlags {
+  n_active_meds: number;
+  thermoreg_score: number;
+  acb_score: number;
+  combo_raas_diuretic: boolean;
+  renal_triple: boolean;
+  cold_chain: boolean;
+  controlled: boolean;
+  narrow_ti: boolean;
+  mail_order_pharmacy: boolean;
+  days_supply_remaining: number;
+  notes: string[];
+}
+
+export interface VeteranCard {
+  veteran_id: string;
+  name_display: string;
+  age: number;
+  modzcta: string;
+  borough: string;
+  facility_id: string;
+  facility_name: string;
+  date: string;
+  tier: Tier;
+  why_this_tier: string;
+  needs: NeedScore[];
+  medications: MedicationFlags;
+  conditions: string[];
+  powered_equipment: string;
+  caregiver: string;
+  floor: string;
+  evac_zone: number;
+  planned_actions: string[];
+  is_synthetic: boolean;
+}
+
+// GET /message/{action_id} -------------------------------------------------
+
+export interface Message {
+  message_id: string;
+  action_id: string;
+  veteran_id: string;
+  channel: string;
+  addressed_to: string;
+  verification_phrase: string;
+  body: string;
+  includes_never_pay_line: boolean;
+  includes_vsafe: boolean;
+  includes_crisis_line: boolean;
+  scam_card_url?: string | null;
+}

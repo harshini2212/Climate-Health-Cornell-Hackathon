@@ -16,8 +16,10 @@ import type {
   BaselineResult,
   Capacity,
   ForecastResponse,
+  Message,
   ScoresResponse,
   Tier,
+  VeteranCard,
 } from "./types";
 
 export type Source = "api" | "fixture";
@@ -144,4 +146,40 @@ export async function postActions(req: ActionsRequest): Promise<ActionsResponse>
   if (live) return live;
   const fx = await fixture<ActionsFixture>("actions_candidates");
   return allocateFixture(fx, req.capacity);
+}
+
+// ---------------------------------------------------------------------------
+// The week. ActionsRequest is single-day and the api lane owns that shape, so a
+// week is seven requests in parallel rather than a new field. Offline each one
+// falls through to allocateFixture, so the board fills with the network off.
+
+export async function postActionsWeek(
+  dates: string[],
+  base: Omit<ActionsRequest, "date">,
+): Promise<ActionsResponse[]> {
+  const week = await Promise.all(dates.map((date) => postActions({ ...base, date })));
+  // Fixture mode answers from one modelled day and stamps it with that day's date.
+  // The board is keyed by the date it asked for, so put that back.
+  return week.map((r, i) => (r.date === dates[i] ? r : { ...r, date: dates[i] }));
+}
+
+// ---------------------------------------------------------------------------
+// The two detail views. Fixtures are keyed by id, so a click is a map lookup.
+
+export async function getVeteran(veteranId: string, date: string): Promise<VeteranCard> {
+  const live = await tryApi<VeteranCard>(`/veteran/${veteranId}?date=${date}`);
+  if (live) return live;
+  const all = await fixture<Record<string, VeteranCard>>("veterans");
+  const card = all[veteranId];
+  if (!card) throw new Error(`no veteran card for ${veteranId}`);
+  return card;
+}
+
+export async function getMessage(actionId: string): Promise<Message> {
+  const live = await tryApi<Message>(`/message/${actionId}`);
+  if (live) return live;
+  const all = await fixture<Record<string, Message>>("messages");
+  const msg = all[actionId];
+  if (!msg) throw new Error(`no message for action ${actionId}`);
+  return msg;
 }
