@@ -17,7 +17,7 @@ import pytest
 
 from leeward import schema
 from leeward.decision import eha, severity, tau, tiers
-from leeward.decision.allocate import allocate, total_eha
+from leeward.decision.allocate import allocate, compare, total_eha
 from leeward.schema import ACTION_COST_UNIT, ACTIONS, DEFAULT_CAPACITY, NEEDS
 
 DAY = date(2026, 7, 16)
@@ -241,6 +241,67 @@ def test_five_veterans_choice_is_the_brute_force_optimum() -> None:
 def test_five_veterans_more_of_any_bucket_never_averts_less(bucket: str) -> None:
     totals = [total_eha(_five(**{bucket: n})) for n in range(6)]
     assert totals == sorted(totals), f"{bucket}: {totals}"
+
+
+# --------------------------------------------------------------------------- #
+# Baselines: the same team and the same candidates, worked in a different order
+# --------------------------------------------------------------------------- #
+#
+# Same five veterans, same capacity, same values. A baseline visits veterans in its own order;
+# each takes their best actions that still have room. Worked by hand:
+#
+#   oldest first  V4 (99), V3 (88), V2 (77), V1 (66)
+#     V4  clean_air .15 takes the only ride slot
+#     V3  check_in .32 takes call 1 of 2
+#     V2  ride is gone; call .144 takes call 2 of 2; text .0504
+#     V1  alt_site 1.40 takes the booking; call is gone; text .036
+#     total .15 + .32 + .1944 + 1.436 = 2.1004
+#
+#   in the allocator's own veteran order  V1, V2, V3, V4
+#     V1  alt_site 1.40, call .24, text .036     V2  ride .72, call .144, text .0504
+#     V3  check_in and call are gone; text .08   V4  ride and call are gone; text .015
+#     total 1.676 + .9144 + .08 + .015 = 2.6854
+#
+# The allocator's own 2.7814 is higher because it gave V3 the check-in (.32) ahead of V2's
+# and V1's later calls; ranking by anything else cannot see that.
+
+FIVE_AGES = {"V1": 66, "V2": 77, "V3": 88, "V4": 99, "V5": 55}
+
+
+def _five_compare(rank_by: dict[str, str], ages: dict[str, int] = FIVE_AGES, **cap: int):
+    cohort = _cohort([{**c, "age": ages[c["veteran_id"]], "rank_key": 0}
+                      for c in FIVE_COHORT])
+    return compare(_scores(FIVE_RISK), cohort, _cap(**{**FIVE_CAP, **cap}), rank_by=rank_by)
+
+
+def test_baselines_hand_checked() -> None:
+    got, totals = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
+    assert total_eha(got) == pytest.approx(2.7814), "the allocator's own list must not change"
+    assert totals["rank_by_age"] == pytest.approx(2.1004)
+    assert totals["in_order"] == pytest.approx(2.6854), "all keys tied means veteran order"
+
+
+def test_compare_returns_exactly_what_allocate_returns() -> None:
+    got, _ = _five_compare({"rank_by_age": "age"})
+    assert got.equals(_five())
+
+
+def test_a_baseline_with_no_names_is_just_allocate() -> None:
+    got, totals = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP))
+    assert totals == {} and got.equals(_five())
+
+
+def test_a_baseline_on_a_missing_column_fails_loudly() -> None:
+    with pytest.raises(ValueError, match="rank_by"):
+        compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
+                rank_by={"by_shoe_size": "shoe_size"})
+
+
+def test_a_baseline_with_nothing_to_score_totals_zero() -> None:
+    cohort = _cohort([{**c, "age": 70} for c in FIVE_COHORT])
+    _, totals = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
+                        rank_by={"x": "age"}, date=date(2000, 1, 1))
+    assert totals == {"x": 0.0}
 
 
 # --------------------------------------------------------------------------- #

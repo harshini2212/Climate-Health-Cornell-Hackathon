@@ -564,6 +564,21 @@ Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or 
 
 Stub with fake data by hour 2 so Track D can build against it.
 
+### 9.1 What the routes do beyond the table
+
+`leeward/api/main.py` implements all eight. Every route reads cached parquets through
+`schema.read`; only `POST /actions` computes, and it answers in about 130 ms at 10,000 veterans.
+
+- **`day`** in `/forecast` is the offset from the scenario's first day; the window is seven days from there (shorter at the end), and a site is `site_down` if it is down on any day of the window.
+- **`scenario`** and **`prior_scale`** are accepted only for what is cached: `sandy_then_heat` and `1.0`. Anything else is a 422 that says so; it is never answered with other data under the requested name.
+- **`POST /actions`** merges a partial `capacity` onto `DEFAULT_CAPACITY` and echoes the merged dict. `counts_by_tier` counts action rows, not veterans. Unknown buckets, negative capacity and a bad `group_floor` are 422s.
+- **`baselines`** are the same team with the same capacity and the same candidate actions valued the same way, working the veterans in a different order: oldest first, most chronic conditions first, or a shuffle seeded by the date. Each veteran's own actions are still tried best first. So the gap to `leeward` is what risk-ranking who goes first is worth, not a strawman with fewer tools. Most of every total is the free `verified_text` bucket, which no ordering changes, so the gap is modest. Measured over every scored day (rung 0): 22-33% on the 500-veteran fixtures, and 0-17% (median 9%) on the 10,000-veteran run, where the days at 0% are the ones with no competition for a scarce slot. No baseline beat `leeward` on any day.
+- **`GET /message/{action_id}`** accepts the `action_id` or the `msg-` `message_id`, and finds any action from a recent `POST /actions` as well as the cached plan. 503 until `leeward.outreach.messages` exists.
+- **`POST /log`** is append-only, one row per `action_id`: a repeat is a 409. Unknown veteran is a 404.
+- **`GET /report`** returns `report/report.json` as-is, failed fairness rows included. Before `make report` has run it returns only `model_rung` with `generated_at: null`, and an empty fairness table then means "not audited", not "passed".
+- **`GET /export`** is `leeward.outreach.export.partner_sheet` on the cached plan: rows without consent are excluded, and the sheet carries no tier, risk or rationale.
+- Any table that is missing is a 503 that names what to run; one that no longer matches its contract is a 500 that names the table. A file rewritten under a live server is picked up on the next request.
+
 ---
 
 ## 10. UI — lane `ui`
