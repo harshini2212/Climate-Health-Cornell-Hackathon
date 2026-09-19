@@ -21,9 +21,8 @@ is typed against the contract and not against whatever this script happened to e
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
-from datetime import timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +30,7 @@ import polars as pl
 
 from leeward import schema
 from leeward.api import schemas as api
-from leeward.schema import ACTION_COST_UNIT
+from leeward.schema import DEFAULT_CAPACITY
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "ui" / "public" / "fixtures"
@@ -39,23 +38,6 @@ OUT = ROOT / "ui" / "public" / "fixtures"
 #: Severity weights w_k, the same defaults decision/severity.py will carry.
 SEVERITY = {"breathing": 3.0, "heat": 4.0, "mental": 4.0, "treatment_gap": 5.0, "access_loss": 3.0}
 
-#: A plausible action for the need that dominates a veteran's day.
-ACTION_FOR_NEED = {
-    "breathing": "clean_air_room",
-    "heat": "cooling_center_ride",
-    "mental": "care_team_call",
-    "treatment_gap": "early_refill",
-    "access_loss": "alt_site_booking",
-}
-RATIONALE_FIND_OUT = "Three-minute check-in: wide interval, we do not know the AC or the floor. Re-score today."
-RATIONALE_EVERYDAY = "Low risk this week: verified wellness text with the cooling-site list."
-RATIONALE = {
-    "breathing": "Clean-air room match before PM2.5 peaks; inhaler supply check today.",
-    "heat": "Book the cooling-center ride for the first heat-alert day; do not just suggest it.",
-    "mental": "Care-team call today; move Thursday's therapy to phone if the outage lands.",
-    "treatment_gap": "Early refill now: supply runs out inside the forecast window.",
-    "access_loss": "Pre-arrange the alternate site while the home station is down.",
-}
 
 
 def _dump(obj, path: Path) -> None:
@@ -121,53 +103,40 @@ def build_scores(cohort: pl.DataFrame, scores: pl.DataFrame, dates: list) -> dic
 
 
 def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int) -> dict:
-    """Rank every veteran by severity-weighted peak risk; keep enough to fill 100 calls."""
+    """The real allocator's list at the slider's maximum (100 calls), so the client can cut
+    it at any smaller capacity with the same rules and still match what /actions would say.
+    Baselines need age, n_chronic and a seeded random key per row, so those ride along."""
+    from leeward.decision.allocate import allocate
+
     r = np.random.default_rng(seed)
+    cap = dict(DEFAULT_CAPACITY, call=100)
+    acts = allocate(scores, cohort, cap, date=day)
     today = scores.filter(pl.col("date") == day)
-    w = pl.col("need").replace_strict(SEVERITY, return_dtype=pl.Float64)
-    per_vet = (today.with_columns((pl.col("p_mean") * w).alias("weighted"))
-                    .sort("weighted", descending=True)
-                    .group_by("veteran_id", maintain_order=True)
-                    .agg(pl.col("need").first().alias("top_need"),
-                         pl.col("weighted").sum().alias("eha_raw"),
-                         pl.col("p_mean").max().alias("peak"),
-                         pl.col("p_epistemic_share").mean().alias("epi"),
-                         pl.col("driver_1").first().alias("top_driver"))
-                    .join(cohort.select("veteran_id", "name_display", "modzcta", "borough",
-                                        "age", "n_chronic", "ckd_dialysis", "on_methadone_otp"),
-                          on="veteran_id")
-                    .sort("eha_raw", descending=True)
-                    .head(600))
+    top = (today.sort("p_mean", descending=True)
+                .group_by("veteran_id", maintain_order=True)
+                .agg(pl.col("driver_1").first().alias("top_driver")))
+    joined = (acts.join(cohort.select("veteran_id", "name_display", "modzcta", "borough",
+                                      "age", "n_chronic"), on="veteran_id", how="left")
+                  .join(top, on="veteran_id", how="left")
+                  .sort("rank"))
+    # Every costed action is kept; the free bucket (verified texts) is thousands of rows
+    # a day, so keep the first 300 of those to hold the file under half a megabyte.
+    n_free = 0
     rows = []
-    for i, v in enumerate(per_vet.to_dicts()):
-        tier = ("act_now" if v["peak"] >= 0.25 and v["epi"] < 0.4
-                else "find_out" if v["epi"] >= 0.4 and v["peak"] >= 0.10
-                else "self_serve" if v["peak"] >= 0.05 else "everyday")
-        # Most people get one action; act-now veterans get a call plus their need's action.
-        acts = [ACTION_FOR_NEED[v["top_need"]]]
-        if tier == "act_now" and "care_team_call" not in acts:
-            acts.append("care_team_call")
-        elif tier == "find_out":
-            acts = ["check_in_call"]
-        elif tier == "everyday":
-            acts = ["verified_text"]
-        for j, action in enumerate(acts):
-            aid = hashlib.sha1(f"{day}{v['veteran_id']}{action}".encode()).hexdigest()[:12]
-            rows.append({
-                "action_id": aid, "rank": i + 1, "veteran_id": v["veteran_id"],
-                "name_display": v["name_display"], "modzcta": v["modzcta"],
-                "borough": v["borough"], "action": action, "tier": tier,
-                "eha": round(float(v["eha_raw"]) * (0.7 if j else 1.0) * 0.6, 3),
-                "capacity_bucket": ACTION_COST_UNIT[action],
-                "owner": ("pharmacist" if action == "pharmacist_med_review"
-                          else "automated" if action == "verified_text" else "care_team"),
-                "rationale": (RATIONALE_FIND_OUT if action == "check_in_call"
-                              else RATIONALE_EVERYDAY if action == "verified_text"
-                              else RATIONALE[v["top_need"]]),
-                "top_driver": v["top_driver"], "message_id": f"msg-{aid}",
-                "age": int(v["age"]), "n_chronic": int(v["n_chronic"]),
-                "rand": float(r.random()),
-            })
+    for v in joined.to_dicts():
+        if v["capacity_bucket"] == "free":
+            n_free += 1
+            if n_free > 300:
+                continue
+        rows.append({
+            "action_id": v["action_id"], "rank": int(v["rank"]), "veteran_id": v["veteran_id"],
+            "name_display": v["name_display"], "modzcta": v["modzcta"], "borough": v["borough"],
+            "action": v["action"], "tier": v["tier"], "eha": round(float(v["eha"]), 4),
+            "capacity_bucket": v["capacity_bucket"], "owner": v["owner"],
+            "rationale": v["rationale"], "top_driver": v["top_driver"],
+            "message_id": v["message_id"],
+            "age": int(v["age"]), "n_chronic": int(v["n_chronic"]), "rand": float(r.random()),
+        })
     for row in rows:  # every candidate must be a legal ActionRow
         api.ActionRow(**{k: row[k] for k in api.ActionRow.model_fields})
     return {"date": str(day), "model_rung": int(scores["model_rung"][0]),
@@ -178,12 +147,17 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7, help="forecast window length")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--date", type=str, default=None,
+                    help="demo day (default: first day in actions.parquet). For Sandy use "
+                         "2026-08-03, landfall day")
     args = ap.parse_args(argv)
 
     cohort = schema.read("cohort")
     scores = schema.read("scores")
     actions = schema.read("actions")
-    day = actions["date"][0]
+    day = date.fromisoformat(args.date) if args.date else actions["date"][0]
+    if actions.filter(pl.col("date") == day).height == 0:
+        raise SystemExit(f"actions.parquet has no rows on {day}")
     dates = [day + timedelta(days=i) for i in range(args.days)]
     have = set(scores["date"].unique().to_list())
     dates = [d for d in dates if d in have]
