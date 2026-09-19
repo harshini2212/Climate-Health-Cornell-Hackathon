@@ -1,0 +1,31 @@
+# Ida. The remnants of Hurricane Ida dropped 3.15 inches of rain on Central Park in one
+# hour on the evening of 1 September 2021 -- the first flash flood emergency NWS ever
+# issued for New York City. Thirteen New Yorkers died, eleven of them in basement
+# apartments in Queens and Brooklyn.
+#
+# This is the pluvial scenario: no surge, no evacuation order, no lead time. The ZIPs that
+# flood are the ones the NYC Stormwater Flood Map says flood in a moderate-rain event,
+# and FloodNet trips there. Day 0 is 15 June 2021, so 1 September is day 78.
+
+name: ida_flash_flood
+start_date: 2021-06-15
+days: 120
+
+baseline:
+  seed: 1
+  heat_index_mean_f: 70
+  heat_index_amp_f: 16
+  heat_index_noise_f: 4
+  pm25_mean: 9.0
+
+events:
+  # A flood watch the afternoon before, citywide.
+  - {day: 77, type: flood_watch, duration_days: 2}
+
+  # The emergency itself. Every ZIP with meaningful stormwater exposure floods; FloodNet
+  # trips wherever the map shows more than a tenth of the ZIP under water.
+  - {day: 78, type: flash_flood_emergency, stormwater_min_frac: 0.08, floodnet_min_frac: 0.10}
+
+  # Localised outages the next day where water reached the vaults.
+  - {day: 79, type: outage, boroughs: [Queens, Brooklyn], stormwater_min_frac: 0.15,
+     frac: 0.3, duration_days: 1}

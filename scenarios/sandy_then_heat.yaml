@@ -1,0 +1,36 @@
+# Sandy, then heat. The demo's main scenario and the one that is never cut.
+#
+# A coastal storm surges into evacuation zones 1 and 2, knocks power out along the
+# waterfront, and closes station 630 -- the Manhattan VA, which sits in zone 1 and really
+# did evacuate on 28 October 2012 (its opioid treatment program stayed closed five months).
+# Three days after landfall a heat wave arrives while the lights are still out.
+#
+# Day 0 is 1 June 2026, so landfall (day 63) is 3 August and the heat wave runs 6-8 August.
+
+name: sandy_then_heat
+start_date: 2026-06-01
+days: 120
+
+baseline:
+  seed: 0
+  heat_index_mean_f: 70
+  heat_index_amp_f: 16
+  heat_index_noise_f: 4
+  pm25_mean: 9.0
+
+events:
+  # Three days of lead time: NWS issues the watch for the coastal zones.
+  - {day: 60, type: flood_watch, zones: [1, 2], duration_days: 3}
+
+  # Landfall. Nine feet of surge into zones 1-2; the city orders zones 1-2 to evacuate.
+  - {day: 63, type: coastal_flood_warning, zones: [1, 2], surge_ft: 9.0,
+     evacuate_zones: [1, 2], duration_days: 2}
+
+  # Con Ed loses the waterfront networks for four days.
+  - {day: 63, type: outage, zones: [1, 2], frac: 0.8, duration_days: 4}
+
+  # Station 630 -- Margaret Cochran Corbin VA Campus, Manhattan, evac zone 1 -- closes.
+  - {day: 63, type: site_down, facility: "630", duration_days: 45}
+
+  # The heat wave, while power is still being restored.
+  - {day: 66, type: heat_wave, heat_index_max_f: [96, 99, 97], heat_alert: true}
