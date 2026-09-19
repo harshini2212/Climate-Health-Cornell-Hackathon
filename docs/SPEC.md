@@ -1,6 +1,10 @@
 # Leeward — Build Spec and Claude Code Plan
 
-*Companion to Leeward_Proposal.md · 19 Sep 2026 · 26 working hours, 4 parallel tracks*
+*Companion to [proposal.md](proposal.md) · 19 Sep 2026 · v3*
+
+> **Scheduling lives in [`docs/BUILD_PLAN.md`](BUILD_PLAN.md) now.** This file kept a 26-hour, four-track schedule that does not survive contact with a two-person team. §12 has been replaced with a pointer. Everything else here — contracts, acceptance tests, per-module prompts — still holds.
+
+> **Ingest is done.** §4 was four hours of work; it is now a `data/reference/` directory committed to the repo. See [`data/README.md`](../data/README.md).
 
 This file is written to be dropped into the repo as `docs/SPEC.md` and pointed to from `CLAUDE.md`. Every section states a contract, an acceptance test, and the Claude Code prompt that builds it.
 
@@ -12,7 +16,9 @@ This file is written to be dropped into the repo as `docs/SPEC.md` and pointed t
 - **Contracts are frozen after hour 2.** `cohort.parquet`, `scores.parquet`, `posterior.nc`, and the API schemas. Changing one requires editing this file and pinging all tracks.
 - **Nothing runs inference in a request.** `make fit` produces a cached posterior; the API scores from cache.
 - **Every real number in the UI or slides is in `docs/sources.md` with a URL.**
-- **Cut list is respected in order** (section 12). Walter's card, the capacity slider, the calibration plot, and the SiteDown term are never cut.
+- **Cut list is respected in order** (`docs/BUILD_PLAN.md` §6). Walter's card, the capacity slider, the calibration plot, the SiteDown term and the verified-message screen are never cut.
+- **Geography key is `modzcta`**, not `zip` — NYC's 178 Modified ZCTAs. Everything joins on it.
+- **No API keys.** A clean clone with no `.env` must produce a working demo. Three upstream APIs now want keys; `docs/sources.md` §3 lists the keyless replacements the build uses.
 
 ---
 
@@ -20,9 +26,11 @@ This file is written to be dropped into the repo as `docs/SPEC.md` and pointed t
 
 ```
                  ┌──────────────┐
-  NWS / AirNow / │  ingest/     │  snapshot → data/raw/*.parquet (offline-safe)
-  FloodNet /     │  hazards.py  │
-  emPOWER / HVI  └──────┬───────┘
+  NWS / AirNow /  │ scripts/     │  DONE: 17 keyless fetchers →
+  FloodNet / NRI  │ fetch_       │  data/reference/*.parquet (committed, ~4 MB)
+  emPOWER / HVI / │ sources.py   │  + manifest.json with url, rows, sha256
+  PLACES / SVI /  └──────┬───────┘
+  ACS / VHA              │
                         ▼
   Synthea FHIR ─► cohort/  ─► cohort.parquet + truth.json + outcomes.parquet
                         │
@@ -58,8 +66,14 @@ leeward/
     SPEC.md                     # this file
     sources.md                  # every cited number with URL
     slides/                     # 8 slides
+  scripts/
+    fetch_sources.py            # DONE: vendors every public source into data/reference/
+    make_fixtures.py            # fake-but-correctly-shaped parquets; unblocks all lanes
+    clean_clone_test.sh
   data/
-    raw/                        # gitignored, fetched by `make data`
+    README.md                   # the data catalog: what each file is, and the augment priors
+    reference/                  # COMMITTED. 17 tables + manifest.json + nyc_modzcta.geojson
+    raw/                        # gitignored: synthea, stormwater GIS, ACS summary file
     cohort.parquet
     truth.json
     outcomes.parquet            # veteran × day × need, simulated
@@ -130,7 +144,7 @@ leeward/
 | age | int | synthea | |
 | sex | str | synthea | |
 | race, ethnicity | str | synthea | for fairness audit only |
-| zip | str | rehome | NYC ZCTA |
+| modzcta | str | rehome | NYC Modified ZCTA, one of 178. **The join key everywhere.** |
 | borough | str | rehome | |
 | facility_id | str | rehome | nearest of {NY_MANHATTAN, NY_BROOKLYN, NY_BRONX, NY_ST_ALBANS, CBOC_*} |
 | lives_alone | bool | synthea SDoH | |
@@ -144,22 +158,29 @@ leeward/
 | deployment_era | str | augment | vietnam / gulf / post911 / peacetime |
 | burn_pit_years | float | augment | latent truth; observed with noise |
 | ptsd_severity | int 0–4 | augment | |
-| home_ac | bool | augment | from HVI neighborhood AC rate |
+| home_ac | bool | augment | synthetic; no public per-person source |
 | floor | str | augment | basement / ground / upper |
 | evac_zone | int 0–6 | augment | 0 = none |
 | stormwater_depth_ft | float | augment | moderate-rain scenario, ZIP centroid |
 | mobility_impaired | bool | augment | |
 | caregiver | str | augment | none / informal_coresident / informal_remote / va_pcafc |
 | caregiver_contact_consent | bool | augment | may message caregiver as primary contact |
-| income_band | str | augment | low (<150% FPL) / mid / high; from ZIP ACS income and poverty, Synthea SDoH |
-| low_assets | bool | augment | cannot self-fund AC use, transport, hotel, med replacement |
+| income_band | str | augment | low / mid / high; from CDC SVI `EP_POV150` per tract → MODZCTA |
+| low_assets | bool | augment | **from PLACES `shututility_crudeprev`** — cannot self-fund AC use, transport, hotel, med replacement |
+| transport_barrier | bool | augment | **from PLACES `lacktrpt_crudeprev`**; gates suggest-vs-book for rides |
 | er_visits_12m, missed_refills_12m, missed_appts_12m | int | synthea | |
 | *_synthetic | bool | | one per augmented column |
 | *_observed | | | nullable copies after missingness |
 
-### 3.2 hazards.parquet — one row per zip × day
+### 3.2 hazards.parquet — one row per modzcta × day
 
-`zip, date, heat_index_max_f, hot_day(>=82F), heat_alert, pm25, smoke_alert, flood_watch, flood_warning, flash_flood_emergency, surge_ft, floodnet_trip, outage_frac, site_down: dict[facility_id, bool]`
+`modzcta, date, heat_index_max_f, hot_day(>=82F), heat_alert, pm25, smoke_alert, flood_watch, flood_warning, flash_flood_emergency, surge_ft, evac_zone_ordered, floodnet_trip, stormwater_flooded_frac, outage_frac`
+
+Plus `site_status.parquet`, one row per `facility_id × date` with `site_down: bool` — a
+separate table rather than a dict column, because 14 facilities × 120 days is small and a
+dict column does not survive a parquet round-trip cleanly.
+
+The 82 °F hot-day threshold is from NYC Health's 2026 mortality report, not a tuning choice.
 
 ### 3.3 outcomes.parquet — simulated truth
 
@@ -179,30 +200,60 @@ leeward/
 
 ---
 
-## 4. Ingest (Track A, hours 0–2)
+## 4. Ingest — **already done**
 
-Each module: `fetch() -> polars.DataFrame`, `snapshot()` writes `data/raw/<name>.parquet`. `make data` calls all; if the network fails, it loads the snapshot and prints a warning.
+This section used to describe nine modules to be written in the first two hours. They are
+written, they have been run, and their output is committed. `leeward/ingest/` is no longer
+on the critical path; if you build it at all, build it as a thin re-fetch wrapper.
 
-| module | endpoint | notes |
+`scripts/fetch_sources.py` holds 17 fetchers, every one keyless, each writing one table into
+`data/reference/` plus a row in `manifest.json` recording url, rows, bytes and a sha256
+prefix. The catalog and the column meanings are in [`data/README.md`](../data/README.md).
+
+```bash
+python scripts/fetch_sources.py --list      # what exists
+python scripts/fetch_sources.py             # refresh the small keyless sources
+python scripts/fetch_sources.py --heavy     # + stormwater GIS, ACS summary file, Synthea
+```
+
+**What you get, joined and checked:**
+
+| File | Rows | Use |
 | --- | --- | --- |
-| nws.py | `https://api.weather.gov/alerts/active?area=NY` and gridpoint forecasts for 5 borough points | no key; parse heat, coastal flood, flash flood, hurricane alerts |
-| airnow.py | AirNow API (free key) | daily PM2.5 by ZIP; fallback CSV for June 2023 |
-| floodnet.py | floodnet.nyc data API | sensor id, lat/lon, depth series; map sensor → ZIP |
-| empower.py | ArcGIS REST FeatureServer (public) | `where=STATE='NY'` , fields `ZIP, POWER_DEPENDENT, OXYGEN, ...`; pages of 2,000 |
-| hvi.py | NYC Health portal export | HVI 1–5 by NTA; NTA → ZIP crosswalk |
-| stormwater.py | NYC Open Data 9i7c-xyvv (GIS) | rasterize moderate-rain depth to ZIP mean and 90th pct |
-| evac_zones.py | NYC Open Data hurricane evacuation zones | zone per ZIP (area-weighted mode) |
-| acs.py | Census API S2101 | veteran count by ZCTA × age band |
-| facilities.py | VA Facilities API | NYC facilities with lat/lon; add `in_evac_zone` and `flood_depth_ft` by point lookup |
+| `nyc_modzcta.parquet` / `.geojson` | 178 | Join key and the deck.gl map base |
+| `hvi_by_zcta.parquet` | 184 | Heat prior, 1–5 |
+| `evac_zone_by_modzcta.parquet` | 178 | Surge exposure, area-weighted |
+| `stormwater_by_modzcta.parquet` | 178 | Pluvial flood exposure |
+| `places_zcta_nyc.parquet` | 186 | **Every augment prior** — see §5.3 |
+| `empower_ny_zip.parquet` | 1,702 | Powered-equipment prior |
+| `acs_veterans_by_zcta.parquet` | 259 | Re-homing weights by age band |
+| `va_facilities_nyc_hazard.parquet` | 14 | **The SiteDown input** |
+| `airnow_pm25_nyc_smoke2023.parquet` | 124 | The smoke replay scenario |
+| `floodnet_events.parquet` | 3,269 | Observed flood events, real depths |
+| `svi_nyc_tract.parquet`, `fema_nri_nyc_tract.parquet` | 2,324 each | Context and fairness strata |
+| `nws_forecast_nyc.parquet` | 70 | Forecast panel; re-run on demo morning |
 
-**Acceptance:** `make data` completes offline from snapshots; `tests/test_schema.py` validates every parquet against `schema.py`.
+**Acceptance:** `pytest -q tests/test_reference.py` loads every file in
+`data/reference/manifest.json`, asserts the row count matches, and asserts `modzcta` joins
+cleanly across the five ZIP-level tables. `make demo` must pass with the network off.
 
-**Claude Code prompt (Track A, first task):**
-> Read CLAUDE.md and docs/SPEC.md §3–4. Implement `leeward/ingest/empower.py`: fetch NY ZIP rows from the public HHS emPOWER ArcGIS FeatureServer with paging (2,000/page), keep ZIP, total beneficiaries, and each DME column, write `data/raw/empower.parquet`, and add `snapshot()` fallback. Add a test that loads the snapshot and checks ≥ 150 NYC ZIPs are present and all counts are non-negative. Do not touch other modules.
+**Still to write, and it is small:** `leeward/ingest/hazards.py`, which assembles
+`hazards.parquet` (modzcta × day) and `site_status.parquet` (facility × day) by combining the
+reference tables with a scenario YAML. That is one module, not nine.
+
+> **Claude Code prompt:**
+> Read `data/README.md` and `docs/SPEC.md` §3.2. Implement `leeward/ingest/hazards.py`:
+> given a scenario YAML and the tables in `data/reference/`, emit `data/hazards.parquet`
+> (one row per modzcta × day, 120 days) and `data/site_status.parquet` (facility × day).
+> Heat, smoke, flood, surge and outage come from the scenario; `evac_zone_min`,
+> `stormwater_flooded_frac` and `hvi` are static per-ZIP joins. For the smoke scenario, read
+> real PM2.5 from `airnow_pm25_nyc_smoke2023.parquet` by nearest monitor rather than
+> simulating it. Write the test first: every modzcta appears on every day, no nulls, and on
+> the scenario's smoke days the citywide mean PM2.5 exceeds 90 µg/m³.
 
 ---
 
-## 5. Cohort generator (Track A, hours 2–10)
+## 5. Cohort generator — lane `cohort`
 
 ### 5.1 fhir_reader.py
 Reads Synthea FHIR R4 bundles (the VA release ships CSV and FHIR; use FHIR so the same reader points at a real FHIR base later). Extract Patient, Condition, MedicationRequest, Device, Encounter, Observation (SDoH). Flag `--fhir-base URL --token` for a live server (stretch).
@@ -210,22 +261,51 @@ Reads Synthea FHIR R4 bundles (the VA release ships CSV and FHIR; use FHIR so th
 ### 5.2 rehome.py
 Sample ZIP for each veteran with `P(zip | age_band) ∝ ACS veteran count`. Assign `facility_id` = nearest VA by haversine, except dialysis and OTP patients are assigned to Manhattan or Brooklyn (the two with those services) by proximity.
 
-### 5.3 augment.py — rates to match public figures
+### 5.3 augment.py — draw every rate from a real per-ZIP source
+
+The previous version of this table invented most of these numbers. CDC PLACES publishes them
+per ZCTA, so do not invent them. `data/reference/places_zcta_nyc.parquet` is already joined to
+MODZCTA. **A rate that exists in `data/reference/` must be read, not assumed.**
+
+| field | draw from | column |
+| --- | --- | --- |
+| ZIP sampling weight | `acs_veterans_by_zcta.parquet` | `P(modzcta \| age_band) ∝ vet_<band>` |
+| `mobility_impaired` | PLACES | `mobility_crudeprev` |
+| `caregiver == none` | PLACES | `emotionspt_crudeprev` (lacks social/emotional support), tempered by `loneliness_crudeprev` |
+| `low_assets` | PLACES | `shututility_crudeprev` — the measured "owns an AC, cannot run it" |
+| `transport_barrier` | PLACES | `lacktrpt_crudeprev` |
+| `copd`, `asthma`, `active_cancer_tx`, `depression` base rates | PLACES | `copd_`, `casthma_`, `cancer_`, `depression_crudeprev` |
+| `powered_equipment` | emPOWER ÷ ACS 65+ | `dme_power_dependent`, `dme_oxygen`, `dme_esrd_dialysis`, capped |
+| `income_band` | SVI tract → MODZCTA | `EP_POV150` |
+| `evac_zone` | `evac_zone_by_modzcta.parquet` | `evac_zone_min`, `evac_frac_z1..z7` |
+| `stormwater_flooded_frac` | `stormwater_by_modzcta.parquet` | |
+| HVI band | `hvi_by_zcta.parquet` | `hvi` |
+
+The gradient these produce, across NYC's 178 MODZCTAs grouped by HVI band, is monotone in
+every column — which is a free sanity check that the joins are right:
+
+| HVI | Utility shutoff | Lacks emot. support | Mobility diff. | Lacks transport | COPD |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 5.3% | 24.8% | 9.3% | 6.0% | 3.9% |
+| 3 | 8.9% | 30.8% | 13.2% | 10.1% | 5.3% |
+| 5 | 17.2% | 35.0% | 18.8% | 16.6% | 6.7% |
+
+**Still genuinely synthetic** — no public source exists, so these keep parametric priors and a
+`_synthetic` flag:
 
 | field | how |
 | --- | --- |
 | deployment_era | by birth year; gulf/post911 share matches ACS era table |
 | burn_pit_years (truth) | era = gulf/post911: LogNormal(mean 0.8 yr); else 0. Observed proxy: `pact_presumptive` (true positive 0.6, false positive 0.05) |
 | ptsd_severity | ptsd=True → Categorical over 1–4; else 0 |
-| home_ac | Bernoulli(HVI-band AC rate: HVI5 0.76 … HVI1 0.95) |
-| powered_equipment | Multinomial with ZIP rate = emPOWER count / ACS 65+ population, capped |
-| floor | basement 0.06, ground 0.25, upper 0.69 citywide; basement up-weighted ×2 in high stormwater-depth ZIPs |
-| evac_zone, stormwater_depth_ft | ZIP lookup |
-| mobility_impaired | 0.18 for 65+, 0.08 under 65 |
+| home_ac | Bernoulli, rate declining across HVI band, correlated with `low_assets` |
+| floor | basement 0.06, ground 0.25, upper 0.69 citywide; basement up-weighted ×2 where `stormwater_flooded_frac` is high |
 | on_methadone_otp | 0.01 overall |
-| caregiver | 65+: none 0.35, informal_coresident 0.40, informal_remote 0.20, va_pcafc 0.05; under 65: none 0.55, coresident 0.30, remote 0.12, pcafc 0.03; `lives_alone=True` forces none or remote |
-| income_band | Bernoulli(low) = ZIP poverty rate × 1.3 (veterans 65+ skew lower), else mid/high 70/30 |
-| low_assets | P = 0.7 if income low, 0.2 if mid, 0.05 if high |
+| caregiver type, given present | coresident / remote / va_pcafc split 0.55 / 0.35 / 0.10; `lives_alone=True` forces remote |
+
+**Acceptance:** `test_cohort.py` asserts that for every PLACES-derived field, the cohort's
+realised rate is within 20 percent of the ZIP-weighted source rate, and that every augmented
+column has a `_synthetic` sibling set True.
 
 ### 5.4 simulate.py — the generative truth
 Implements exactly the model in §6 with coefficients from `truth.json` (committed). Loops 120 days under a scenario YAML; emits `outcomes.parquet`. **The simulator and the model share `design.py` so there is no feature-mapping drift.**
@@ -290,7 +370,23 @@ events:
 
 ---
 
-## 6. Model (Track B)
+## 6. Model — lanes `model` and `eval`
+
+### 6.0 The ladder — build this way, not all at once
+
+A hierarchical model with ICAR spatial effects, a latent exposure dose, distributed lags and
+five correlated needs is a two-day research task. Build it as four rungs. **Every rung writes
+the same `data/posterior.nc` contract**, so nothing downstream changes when you climb.
+
+| Rung | Contains | Time | Note |
+| --- | --- | --- | --- |
+| **0 — prior-only** | No MCMC. Coefficients drawn from `priors.py` means; risk is a matrix multiply; intervals from prior draws. | 30 min | **Build first.** It is the demo's floor, not a fallback. |
+| **1 — pooled NUTS** | Binomial cells, five needs, main effects, the 4-lag heat curve. No ICAR, no latent dose, no interactions. | 2 h | The realistic target |
+| **2 — interactions + SiteDown** | The six interaction terms and ψ_k. This is where the story lives. | 2 h | Strong finish |
+| **3 — ICAR + latent dose** | Spatial pooling, burn-pit measurement model. | stretch | Only if rung 2 merged early |
+
+Report the rung you reached, its r-hat and what did not converge. A model that silently
+failed to fit is worse than a simpler one that did.
 
 ### 6.1 design.py — shared by simulator and model
 Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)`, `lag stacks`, and **binomial cells**: group by `(zip, stratum, date)` where stratum = the tuple of binary vulnerability flags used in interactions, now including `no_caregiver` and `low_assets` (≤ 256 strata; still ~50× fewer rows than Bernoulli). Output `cells.parquet: zip, stratum_id, date, need, n, y`.
@@ -355,7 +451,7 @@ Driver contributions = each term's posterior-mean contribution to the linear pre
 
 ---
 
-## 7. Decision layer (Track C)
+## 7. Decision layer — lane `api`
 
 ### 7.1 severity.py — w_k (clinician-editable YAML)
 `breathing 3, heat 4, mental 4, treatment_gap 5, access_loss 3`
@@ -393,7 +489,7 @@ Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or 
 
 ---
 
-## 8. Outreach (Track C)
+## 8. Outreach — lane `api`
 
 - `messages.py`: templates per tier and hazard. Every message contains: channel tag (`VEText` / `MHV` / `care_team_phone`), a 4-word verification phrase from `verify.py` (deterministic per veteran-day from a seed; word list of 512 common words), the line *"The VA will never ask you to pay, wire money, or share bank details,"* `VSAFE 833-388-7233`, and `Veterans Crisis Line: dial 988, press 1`. Flood messages add the evacuation center with step-free access and a "pack list" (meds, equipment, chargers, IDs). Caregiver-addressed messages name the veteran, state the plan in second person to the caregiver, and never include diagnoses. Low-assets messages state what is free (HEAP, cooling centers, emergency refill voucher, VA transport) and never suggest a paid option.
 - `export.py`: partner sheet CSV with `consent_partner_check, consent_ride, consent_housing` flags; rows without consent are excluded, never redacted.
@@ -403,7 +499,7 @@ Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or 
 
 ---
 
-## 9. API (Track C)
+## 9. API — lane `api`
 
 | route | returns |
 | --- | --- |
@@ -420,7 +516,7 @@ Stub with fake data by hour 2 so Track D can build against it.
 
 ---
 
-## 10. UI (Track D)
+## 10. UI — lane `ui`
 
 Screens, in demo order: Forecast → Map → Care team list → Veteran card → Message → Model report.
 
@@ -437,7 +533,7 @@ Screens, in demo order: Forecast → Map → Care team list → Veteran card →
 
 ---
 
-## 11. Evaluation harness (Track B, overnight)
+## 11. Evaluation harness — lane `eval`
 
 | script | output | pass bar |
 | --- | --- | --- |
@@ -456,77 +552,48 @@ Screens, in demo order: Forecast → Map → Care team list → Veteran card →
 
 ---
 
-## 12. Schedule, tracks and cut list
+## 12. Schedule and cut list → [`docs/BUILD_PLAN.md`](BUILD_PLAN.md)
 
-**Hours (Sat 13:00 → Sun 15:00, sleep 01:00–07:00).**
+The four-track, 26-hour table that lived here assumed four builders. The real team is two
+people running six Claude Code terminals in six git worktrees over one day.
 
-| Hour | Track A: data + cohort | Track B: model + eval | Track C: decision + API + outreach | Track D: UI + pitch |
-| --- | --- | --- | --- | --- |
-| 0–2 | `schema.py`; ingest empower, hvi, nws, stormwater, evac zones; snapshots | `hazard.py` on toy cohort, end-to-end NUTS | Stub API matching contracts | Skeleton app on stub; ZIP map renders |
-| 2–6 | `fhir_reader`, `rehome`, `augment`; cohort of 10k | `design.py` cells; full fit; `posterior.nc` | `eha`, `allocate`, `tiers` on stub scores | Care-team list, veteran card, capacity slider |
-| 6–10 | `simulate.py`; three scenario YAMLs; missingness | `score.py`, `decompose.py`; latent dose block | Real scores wired; `/actions`; messages; verify | Message screen; scam card; forecast panel; SiteDown marker |
-| 10–16 (overnight jobs) | `sources.md`; data README | recovery, calibration, PPC, holdout, ablations; **SBC job**; 0.5×/2× prior fits | Baselines; decision-quality inputs; export; outcome log | Model report page; slides v1 |
-| 16–22 | Freeze cohort; tag `v1` | Fairness audit; prior-slider posteriors | Bug bash; `make demo` clean-clone test | Rehearse ×3; record 90-s video; two-pager |
-| 22–26 | Buffer | Final numbers into slides | Buffer | Final rehearsal; submission |
+[`docs/BUILD_PLAN.md`](BUILD_PLAN.md) carries: the 45-minute contract freeze that unblocks
+all six lanes, who owns which contract file, the merge protocol, hour-by-hour checkpoints,
+the re-ordered cut list, the model ladder, the demo-engineering checklist, and a first-message
+Claude Code prompt per lane.
 
-**Stretch (only if Track A is done by hour 10):** `--fhir-base` pointed at VA Lighthouse or Oracle Health sandbox; 200 synthetic patients pulled live to prove the path.
+The cut list, repeated here because it is the part people forget under pressure:
 
-**Cut list, in order:** SBC → ICAR (fall back to independent ZIP effects) → prior slider → partner export → deck.gl (fall back to Plotly) → Ida scenario (keep Sandy-then-heat). **Never cut:** Walter's card, the capacity slider, the calibration plot, the SiteDown term, the verified-message screen.
+**Cut in this order:** SBC → rung 3 (ICAR + latent dose) → prior slider → partner export →
+outcome-log write-back → Ida scenario → deck.gl (fall back to Plotly) → rung 2 interactions.
+
+**Never cut:** Walter's card · the capacity slider · the calibration plot · the SiteDown term ·
+the verified-message screen.
 
 ---
 
-## 13. CLAUDE.md (drop-in)
+## 13. CLAUDE.md
 
-```markdown
-# Leeward — veteran care continuity under climate events
-
-## What this is
-Bayesian daily-hazard model + capacity-aware decision layer for VA care teams, for the
-Health in Climate AI Hackathon NYC 2026. Synthetic data only. Never write code that could
-ingest real PHI. Full spec: docs/SPEC.md — read the section for your track before coding.
-
-## Contracts (frozen; change only by editing docs/SPEC.md §3 and telling all tracks)
-- data/cohort.parquet, hazards.parquet, outcomes.parquet, scores.parquet, actions.parquet,
-  outcome_log.parquet: columns in leeward/schema.py.
-- data/posterior.nc: ArviZ InferenceData; var names match leeward/model/priors.py.
-- API bodies/responses: pydantic models in leeward/api/schemas.py.
-- leeward/model/design.py is shared by the simulator and the model. Do not fork it.
-
-## Stack
-Python 3.11, NumPyro + JAX (CPU), polars, FastAPI, React + Vite + deck.gl. Makefile targets:
-data | cohort | fit | score | demo | report | test. Never run inference inside a request.
-
-## Rules
-- Every real number shown anywhere is in docs/sources.md with a URL. Synthetic numbers say so.
-- Drivers come from posterior contributions; no SHAP.
-- Fairness audit runs in `make report`; a failing audit is displayed, never suppressed.
-- Every outreach message includes: VA channel tag, 4-word verification phrase,
-  "The VA will never ask you to pay, wire money, or share bank details",
-  VSAFE 833-388-7233, and "Veterans Crisis Line: dial 988, press 1".
-- `pytest -q` passes before any merge; `make demo` boots in < 60 s from a clean clone.
-- One task per prompt; write the acceptance test first; ask before touching a contract file.
-
-## Tracks
-A data/cohort · B model/eval · C decision/api/outreach · D ui/docs. Branch per track,
-merge through Makefile targets, never by hand-copying files.
-```
+`CLAUDE.md` at the repo root is the live copy and is the one to edit. It is no longer
+duplicated here, because two copies of a project brief drift apart within hours.
 
 ---
 
 ## 14. Working with Claude Code, per session
 
-1. Open with: `Read CLAUDE.md, then docs/SPEC.md §<track section>. Run make test. Summarize what exists and what is missing for my next task.`
+1. Open with: `Read CLAUDE.md, then data/README.md, then docs/SPEC.md §<section>. Run make test. Summarize what exists and what is missing for my next task.` The `data/README.md` read matters — it is what stops an agent inventing a rate that is already in the repo.
 2. One task per prompt. State the acceptance test in the prompt. Prefer "add a test, then make it pass."
 3. For anything touching `schema.py`, `design.py`, or `api/schemas.py`: `Propose a plan and the diff to docs/SPEC.md first; do not edit until I say go.`
 4. Every 2 hours: `Run make test and make demo; report anything red; do not fix unrelated failures.`
-5. Sunday 09:00: `Do a clean-clone test in /tmp: git clone, make data (offline), make demo. Report time to boot.`
+5. Sunday 09:00: `Do a clean-clone test in /tmp: git clone, make demo with the network blocked. Report time to boot.`
 6. Last hour: `Freeze. Only fix crashes. Produce docs/sources.md from every URL in the repo and confirm each number in ui/ appears there.`
 
 ---
 
 ## 15. Definition of done
 
-- `make demo` from a clean clone boots in < 60 s and runs offline.
+- `make demo` from a clean clone boots in < 60 s and runs offline, with no `.env` and no API key.
+- The model rung actually fitted is written down, with r-hat.
 - Both scenarios play end to end; Walter's card, the capacity slider and the SiteDown marker work.
 - `report/report.json` shows recovery ≥ 90 pct, ECE < 0.03, harm averted vs baselines, ablation table, fairness table.
 - Every message passes `test_messages.py`.

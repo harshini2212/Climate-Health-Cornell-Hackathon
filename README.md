@@ -6,7 +6,7 @@ Leeward turns a climate forecast into a ranked action list for VA care teams: **
 
 Every veteran already has a care team. Leeward tells that team which 40 of its 1,200 patients to reach before Thursday's heat wave, and hands each one a plan that is verifiably from the VA.
 
-> **Synthetic data only.** Everything runs on public place-level data and a documented synthetic NYC cohort of 10,000 veterans. No real patient data is used anywhere in this repository, and no code path may ingest PHI.
+> **Synthetic people, real places.** Every neighbourhood-level rate in this repo is real, cited and committed under `data/reference/`; only the people are synthetic. No real patient data is used anywhere, and no code path may ingest PHI.
 
 ---
 
@@ -29,7 +29,9 @@ Every veteran already has a care team. Leeward tells that team which 40 of its 1
 
 ## The problem
 
-About 500 New Yorkers die of heat-exacerbated causes each year, nearly all indoors without air conditioning running (NYC Health). Veterans carry every heat risk factor the city counts, plus two it does not: deployment exposure (burn pits, PACT Act presumptive conditions) and trauma.
+About 500 New Yorkers die prematurely each summer because of hot weather — roughly 490 heat-exacerbated deaths a year plus about 7 heat-stress deaths, 19 of which came from the June 2025 heat wave alone. Deaths happen overwhelmingly at home, and the rise is driven not by more 95 °F days but by more **"non-extreme hot days," 82 °F up to the extreme-heat threshold** (NYC Health, 2026 Heat Mortality Report). That is why Leeward's heat term hinges at 82 °F: the hyperparameter is a citation.
+
+Veterans carry every heat risk factor the city counts, plus two it does not: deployment exposure (burn pits, PACT Act presumptive conditions) and trauma. And the hazard reaches the care site itself — VA station 630, the Manhattan campus that evacuated ahead of Sandy on 28 October 2012, sits in **hurricane evacuation zone 1**. That is a join in this repo, not a claim.
 
 Heat kills over one to three days, not a week. Smoke, coastal flooding, power outages, and a closed VA facility each hit a different group of veterans on a different timeline. A weekly risk score cannot time a Tuesday call, and a list of 10,000 risks is not a plan.
 
@@ -251,13 +253,24 @@ The full contracts (every parquet column, every API route) are in [docs/SPEC.md]
 ```bash
 git clone https://github.com/harshini2212/Climate-Health-Cornell-Hackathon.git
 cd Climate-Health-Cornell-Hackathon
+make setup      # venv + deps
+make test
+make demo       # must boot offline, with no .env and no API key
 ```
+
+**The public data is already in the repo.** `data/reference/` holds 17 joined and verified
+tables (~4 MB, committed): NYC MODZCTA polygons, the Heat Vulnerability Index, hurricane
+evacuation zones, stormwater flood extent, CDC PLACES and SVI, FEMA National Risk Index, HHS
+emPOWER, ACS veteran counts, the VHA facility registry, FloodNet events, and real EPA AirNow
+PM2.5 for the June 2023 smoke episode. `make sources` re-fetches them; nothing needs an API
+key, and `make demo` never touches the network. See [`data/README.md`](data/README.md).
 
 Makefile targets, in pipeline order:
 
 | Target | What it does |
 | --- | --- |
-| `make data` | Fetch every public feed and snapshot to `data/raw/`. Runs offline from snapshots if the network is down. |
+| `make sources` | Re-fetch the public data into `data/reference/`. Already done and committed; only needed to refresh. |
+| `make fixtures` | Fake-but-correctly-shaped parquets, so every lane can start before the real cohort exists. |
 | `make cohort` | Build the synthetic NYC cohort, plant `truth.json`, simulate 120 days of outcomes. |
 | `make fit` | Fit the NumPyro model on binomial cells and cache `posterior.nc` (about 5–10 min on 8 CPU cores). |
 | `make score` | Score the cohort against the scenario's hazards; write `scores.parquet` and `actions.parquet`. |
@@ -269,25 +282,41 @@ Makefile targets, in pipeline order:
 
 ## Team workflow
 
-Four parallel tracks meet at a single `posterior.nc` and a single `scores.parquet`. Contracts are frozen after hour 2.
+Two builders, six Claude Code terminals, six git worktrees, one `main`. The full plan —
+contract freeze, checkpoints, cut list, per-lane prompts — is in
+[`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md).
 
-| Track | Owns |
-| --- | --- |
-| **A** data + cohort | `schema.py`, ingest, FHIR reader, re-home, augment, simulate, scenarios, `sources.md` |
-| **B** model + eval | design, hazard model, fit, score, decompose, the whole evaluation harness |
-| **C** decision + API + outreach | EHA, allocation, tiers, messages, verification phrase, export, outcome log, FastAPI |
-| **D** UI + pitch | React screens, capacity and prior sliders, model report page, slides, video, two-pager |
+| Owner | Lanes | Ships |
+| --- | --- | --- |
+| **Rahul** — runs the live demo | `api`, `ui`, `demo` | A demo that never breaks |
+| **Partner** — owns the numbers | `cohort`, `model`, `eval` | Numbers that survive "how do you know?" |
+
+Two rules make two people work like four:
+
+1. **Spine before substance.** By T+2h there is a running end-to-end demo with fake numbers.
+   Every hour after that replaces one fake with one real thing. You are never in a state
+   where there is nothing to show.
+2. **Contracts before parallelism.** The first 45 minutes produce `schema.py`,
+   `api/schemas.py` and a fixture generator. After that no lane blocks another, and nobody
+   edits a contract file they do not own.
+
+The model is built as a **ladder** — prior-only, then pooled NUTS, then interactions and
+SiteDown, then ICAR and the latent dose — each rung writing the same posterior contract. Rung
+0 is built first and is the demo's floor, not a fallback.
 
 Rules everyone follows (see [CLAUDE.md](CLAUDE.md)):
 
-- Branch per track. Merge through Makefile targets, never by hand-copying files.
+- Branch per lane. Merge to `main` through a green `pytest -q`, every 60–90 minutes.
 - One task per prompt. Write the acceptance test first. Ask before touching a contract file.
+- Never invent a neighbourhood rate that already exists in `data/reference/`.
 - Every real number shown anywhere is in `docs/sources.md` with a URL. Synthetic numbers say so.
 - A failing fairness audit is displayed, never suppressed.
 
-**Cut list if time runs short, in order:** SBC → ICAR spatial prior (fall back to independent ZIP effects) → prior slider → partner export → deck.gl map (fall back to Plotly) → Ida scenario.
+**Cut in this order:** SBC → ICAR + latent dose → prior slider → partner export →
+outcome-log write-back → Ida scenario → deck.gl (fall back to Plotly) → rung-2 interactions.
 
-**Never cut:** Walter's card, the capacity slider, the calibration plot, the SiteDown term, the verified-message screen.
+**Never cut:** Walter's card, the capacity slider, the calibration plot, the SiteDown term,
+the verified-message screen.
 
 ## Limits and what we will not claim
 
@@ -308,19 +337,25 @@ Rules everyone follows (see [CLAUDE.md](CLAUDE.md)):
 
 ## Documents
 
-- [docs/Leeward_Proposal.pdf](docs/Leeward_Proposal.pdf) — the full proposal: reframe from the base proposal, model, validation plan, action catalog, demo script, pitch script, risks.
-- [docs/SPEC.md](docs/SPEC.md) — the build spec: architecture, data contracts, per-module acceptance tests, the hour-by-hour schedule, and the Claude Code prompt for each track's first task.
-- [CLAUDE.md](CLAUDE.md) — the drop-in project brief every coding session reads first.
+- [docs/proposal.md](docs/proposal.md) — the full proposal: problem, cohort, model, validation plan, action catalog, demo script, pitch script, risks.
+- [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) — the two-person one-day plan: lanes, contract freeze, checkpoints, cut list, model ladder, demo-engineering checklist, per-lane prompts.
+- [docs/SPEC.md](docs/SPEC.md) — the build spec: architecture, data contracts, per-module acceptance tests, Claude Code prompts.
+- [data/README.md](data/README.md) — the data catalog, and where every cohort rate comes from.
+- [docs/sources.md](docs/sources.md) — every cited number with a URL, plus the endpoints that moved.
+- [CLAUDE.md](CLAUDE.md) — the project brief every coding session reads first.
 
 ## Sources
 
-- Health in Climate 2025 Devpost rubric
-- VA Synthea synthetic veteran dataset, 10,000 records
-- HHS emPOWER public REST service
-- NYC Heat Vulnerability Index
-- NYC 2026 heat-related mortality report
-- VA disaster help and fraud line (VSAFE 833-388-7233)
-- VA News, natural-disaster fraud prevention, Aug 2026
-- Hackathon problem page
+Full citations, every fetched endpoint, and a record of which upstream APIs moved or started
+requiring keys are in [`docs/sources.md`](docs/sources.md). Headline numbers:
 
-Full citations with URLs will live in `docs/sources.md`.
+| Number | Source |
+| --- | --- |
+| ~500 premature heat deaths per NYC summer; the 82 °F threshold; 3× heat-stress death rate for Black New Yorkers | NYC Health, 2026 Heat-Related Mortality Report |
+| Ida: 3.15 in/hr rain against 1.75 in/hr sewer capacity; 11 basement deaths | NYC Health, flooding and health |
+| Manhattan VA evacuated 28 Oct 2012; OTP closed 5 months; ~100 veterans needed guest-dosing | Griffin et al. 2018; Lukowsky et al. 2019 |
+| **Station 630 is in evacuation zone 1** | Computed here: VHA facility registry × NYC hurricane evacuation zones |
+| **134,711 NYC veterans, 53.3% aged 65+** | Computed here: ACS 2023 5-year B21001 by ZCTA |
+| **36,146 electricity-dependent Medicare beneficiaries in NYC** | Computed here: HHS emPOWER |
+| **PM2.5 203.5 µg/m³, AQI 254, Queens, 7 June 2023** | Computed here: EPA AirNow daily files |
+| VSAFE fraud line 833-388-7233; Veterans Crisis Line 988 press 1 | VA |

@@ -1,0 +1,18 @@
+# Big, rebuildable downloads. data/reference/ IS committed; data/raw/ is not.
+data/raw/
+data/*.parquet
+data/*.nc
+data/truth.json
+report/
+
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+node_modules/
+ui/dist/
+.DS_Store
+.env

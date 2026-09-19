@@ -1,0 +1,172 @@
+{
+  "acs_veterans": {
+    "bytes": 15013,
+    "cols": 19,
+    "fetched_utc": "2026-09-19T20:02:21Z",
+    "file": "acs_veterans_by_zcta.parquet",
+    "note": "ACS 5-year B21001 (sex by age by veteran status) per ZCTA, used to weight where the synthetic cohort is re-homed. NOTE: api.census.gov now 302s to missing_key.html for every request, so the keyed API is NOT a demo-day dependency; this Summary File path is keyless.",
+    "rows": 259,
+    "sha256": "b82bd798dfae2e13",
+    "url": "https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b21001.dat"
+  },
+  "airnow_smoke": {
+    "bytes": 6607,
+    "cols": 13,
+    "days": [
+      "20230605",
+      "20230606",
+      "20230607",
+      "20230608",
+      "20230609",
+      "20230610",
+      "20230611"
+    ],
+    "fetched_utc": "2026-09-19T19:56:58Z",
+    "file": "airnow_pm25_nyc_smoke2023.parquet",
+    "note": "EPA AirNow daily files for the June 2023 Canadian-wildfire smoke episode plus a recent baseline week. NOTE: airnowapi.org needs a free key, but files.airnowtech.org is keyless and carries the same monitor data.",
+    "rows": 124,
+    "sha256": "2398a7abd4412393",
+    "url": "https://files.airnowtech.org/airnow/"
+  },
+  "cooling_sites": {
+    "bytes": 12981,
+    "cols": 10,
+    "fetched_utc": "2026-09-19T19:56:00Z",
+    "file": "nyc_cooling_sites.parquet",
+    "note": "NYC Parks Cool It! cooling sites (misting stations, spray showers, cool spots). Destination set for the cooling-center-ride action.",
+    "rows": 271,
+    "sha256": "7d0e4b1fd0ef8575",
+    "url": "https://data.cityofnewyork.us/d/h2bn-gu9k"
+  },
+  "empower": {
+    "bytes": 15589,
+    "cols": 10,
+    "fetched_utc": "2026-09-19T19:55:35Z",
+    "file": "empower_ny_zip.parquet",
+    "note": "HHS emPOWER: electricity-dependent Medicare beneficiaries per ZIP. Layer 1 = all DME, and it carries the O2 and ESRD-dialysis columns too.",
+    "rows": 1702,
+    "sha256": "caf1fc96e7006649",
+    "url": "https://services2.arcgis.com/ZQ4jTQn6k7VPXEwO/arcgis/rest/services/HHS_emPOWER_REST_Service_Public/FeatureServer"
+  },
+  "evac": {
+    "bytes": 12257,
+    "cols": 10,
+    "fetched_utc": "2026-09-19T19:56:26Z",
+    "file": "evac_zone_by_modzcta.parquet",
+    "note": "NYC Hurricane Evacuation Zones 1-6, area-weighted onto MODZCTA. This is the surge-exposure term and the join that would otherwise eat an hour of hackathon time.",
+    "rows": 178,
+    "sha256": "95effe98f7d3cdb0",
+    "url": "https://data.cityofnewyork.us/d/epne-qv9x"
+  },
+  "floodnet_events": {
+    "bytes": 106551,
+    "cols": 11,
+    "fetched_utc": "2026-09-19T19:55:59Z",
+    "file": "floodnet_events.parquet",
+    "note": "FloodNet street-flooding events with max depth and duration. Real observed pluvial floods, usable as a replay scenario instead of a scripted one.",
+    "rows": 3269,
+    "sha256": "75a469bdd7863c19",
+    "url": "https://data.cityofnewyork.us/d/aq7i-eu5q"
+  },
+  "floodnet_sensors": {
+    "bytes": 32778,
+    "cols": 12,
+    "fetched_utc": "2026-09-19T19:55:58Z",
+    "file": "floodnet_sensors.parquet",
+    "note": "FloodNet sensor deployments with ZIP, borough and lat/lon. NOTE: floodnet.nyc gates its own API behind a request form, but the same data is open on NYC Open Data. No form needed.",
+    "rows": 491,
+    "sha256": "bbfb66a2dafda97b",
+    "url": "https://data.cityofnewyork.us/d/kb2e-tjy3"
+  },
+  "hvi": {
+    "bytes": 1306,
+    "cols": 2,
+    "fetched_utc": "2026-09-19T19:55:34Z",
+    "file": "hvi_by_zcta.parquet",
+    "note": "NYC Heat Vulnerability Index 1-5, published per ZCTA20. The ZIP heat prior.",
+    "rows": 184,
+    "sha256": "6e46bbfa5e4434ad",
+    "url": "https://data.cityofnewyork.us/d/4mhf-duep"
+  },
+  "modzcta": {
+    "bytes": 8031,
+    "cols": 7,
+    "fetched_utc": "2026-09-19T19:55:55Z",
+    "file": "nyc_modzcta.parquet",
+    "note": "NYC Modified ZIP Code Tabulation Areas: the map base and the spatial-join unit.",
+    "rows": 178,
+    "sha256": "4d2e05f14c1c184e",
+    "url": "https://data.cityofnewyork.us/d/pri4-ifjk"
+  },
+  "nri": {
+    "bytes": 135982,
+    "cols": 19,
+    "fetched_utc": "2026-09-19T19:56:54Z",
+    "file": "fema_nri_nyc_tract.parquet",
+    "note": "FEMA National Risk Index, census tracts. Long-run heat-wave, hurricane, coastal-flood and riverine-flood hazard priors. NOTE: the old hazards.fema.gov static zip now 301s to a landing page; this FeatureServer is the live path.",
+    "rows": 2324,
+    "sha256": "c1a43c0c98cea9eb",
+    "url": "https://services.arcgis.com/XG15cJAlne2vxtgt/arcgis/rest/services/National_Risk_Index_Census_Tracts/FeatureServer"
+  },
+  "nws_snapshot": {
+    "active_alerts": 0,
+    "bytes": 5176,
+    "cols": 8,
+    "fetched_utc": "2026-09-19T19:57:01Z",
+    "file": "nws_forecast_nyc.parquet",
+    "note": "A live snapshot of NWS active alerts and the 7-day gridpoint forecast for the five borough points. Keyless. Re-run on demo morning; the snapshot is the offline fallback.",
+    "rows": 70,
+    "sha256": "2b0da6fad50ccce1",
+    "url": "https://api.weather.gov/"
+  },
+  "places": {
+    "bytes": 19288,
+    "cols": 24,
+    "fetched_utc": "2026-09-19T19:55:56Z",
+    "file": "places_zcta_nyc.parquet",
+    "note": "CDC PLACES 2025, ZCTA level. Supplies the augment priors that were previously invented: mobility, self-care, independent living, loneliness, emotional support, utility shutoff, transport barrier, plus COPD/asthma/cancer/depression prevalence.",
+    "rows": 186,
+    "sha256": "82a5a103d9b5cc74",
+    "url": "https://data.cdc.gov/d/kee5-23sr"
+  },
+  "stormwater": {
+    "bytes": 2586,
+    "cols": 2,
+    "fetched_utc": "2026-09-19T20:00:50Z",
+    "file": "stormwater_by_modzcta.parquet",
+    "note": "NYC Stormwater Flood Maps (moderate 2.13 in/hr, current sea level), summarised to MODZCTA as flooded-area fraction. The Ida / pluvial term.",
+    "rows": 178,
+    "sha256": "ba1aaa93ecbe5b69",
+    "url": "https://data.cityofnewyork.us/api/views/9i7c-xyvv/files/6ce7b252-a38c-47ae-a823-680f443227e5?filename=NYCFloodStormwaterFloodMaps.zip"
+  },
+  "svi": {
+    "bytes": 144503,
+    "cols": 30,
+    "fetched_utc": "2026-09-19T19:55:57Z",
+    "file": "svi_nyc_tract.parquet",
+    "note": "CDC/ATSDR Social Vulnerability Index 2022, NY census tracts. Feeds the ZIP random-effect prior and the fairness strata.",
+    "rows": 2324,
+    "sha256": "b6b2f48a9efcfb33",
+    "url": "https://svi.cdc.gov/Documents/Data/2022/csv/states/NewYork.csv"
+  },
+  "synthea_sample": {
+    "bytes": 29595199,
+    "cols": 0,
+    "fetched_utc": "2026-09-19T20:00:55Z",
+    "file": "synthea_sample_fhir.zip",
+    "note": "Synthea FHIR R4 sample bundles (~30 MB). The fixture the FHIR reader and its tests run against, so Track A is never blocked on the 4 GB VA release.",
+    "rows": 111,
+    "sha256": "",
+    "url": "https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip"
+  },
+  "va_facilities": {
+    "bytes": 7731,
+    "cols": 10,
+    "fetched_utc": "2026-09-19T19:55:59Z",
+    "file": "va_facilities_ny.parquet",
+    "note": "VHA medical facilities with station number, address and lat/lon. NOTE: api.va.gov/services/va_facilities needs an approved developer.va.gov key; this mirror is keyless, which is why the build uses it.",
+    "rows": 84,
+    "sha256": "f3bf20f695ce3834",
+    "url": "https://services2.arcgis.com/VFLAJVozK0rtzQmT/arcgis/rest/services/Veterans_Health_Administration_Medical_Facilities/FeatureServer"
+  }
+}
