@@ -205,6 +205,31 @@ Two coherent resolutions. Rahul picks:
 > Either way add a test asserting the chosen behaviour, and one asserting total EHA does not
 > fall by more than 15% versus today. Run `make check`; green; commit; push; stop.
 
+### `api` — the test suite breaks when you run the real pipeline  **(do this one first, it is cheap)**
+
+`make cohort && make score` leaves `make check` red, and neither failure is a product bug.
+The suite reads whatever happens to be in `data/*.parquet`, so it silently assumes fixtures.
+Anyone who runs the real pipeline and then runs the gate will chase a ghost at 2am.
+
+Two assertions in `tests/test_allocate.py` are simply wrong for real data:
+
+- `test_fixture_actions_match_the_contract` asserts every scored day gets a list. On the real
+  120-day Sandy run, **14 days correctly produce nothing**: max heat 81.9 °F (under the 82 °F
+  threshold), no smoke, no outage, no flood, peak risk 0.0476 — under the 0.05 self-serve
+  floor, so the whole panel is `everyday` tier. A care team doing nothing on a calm June day
+  is the right answer.
+- `test_group_floor_reserves_each_borough_its_share` fails only on mixed fixture/real state.
+  `group_floor` itself is fine: verified on the real cohort, `{"borough": 0.2}` gives each of
+  five boroughs exactly 4 of 20 calls.
+
+> Read `tests/test_allocate.py` and `tests/conftest.py` if one exists. Make the test suite
+> independent of whatever is sitting in `data/`: have tests build the frames they need, or
+> read from a dedicated `tests/fixtures/` directory that `make fixtures` does not touch.
+> Then fix the two assertions above — a day where the whole panel is `everyday` tier must be
+> allowed to produce zero actions, and assert that explicitly rather than by accident.
+> Acceptance: `make cohort && make score && make check` is green, and so is
+> `make fixtures && make check`. Run `make check`; green; commit; push; stop.
+
 ### `cohort` — three populations the story needs and the data does not have
 
 > Read `leeward/cohort/build.py` and `data/README.md`. Three fixes, one commit each.
