@@ -1,0 +1,23 @@
+# tau[a, k]: the fraction of need k that action a prevents, if it is done. SPEC §7.2.
+#
+# Literature priors, editable. Every row names all five needs, each between 0 and 1.
+# tau.load() refuses anything else.
+#
+# check_in_call is deliberately absent: it prevents nothing by itself, it finds out.
+# Its value is the information it buys -- see leeward/decision/eha.py.
+#
+# assign_buddy and heap_application (SPEC §7.4b) join this table with caregiver routing.
+
+#                             breathing   heat  mental  treatment_gap  access_loss   bucket
+care_team_call:              {breathing: 0.25, heat: 0.30, mental: 0.35, treatment_gap: 0.40, access_loss: 0.20}  # call
+early_refill:                {breathing: 0.15, heat: 0.10, mental: 0.05, treatment_gap: 0.60, access_loss: 0.00}  # refill
+cooling_center_ride:         {breathing: 0.05, heat: 0.60, mental: 0.05, treatment_gap: 0.00, access_loss: 0.10}  # ride
+clean_air_room:              {breathing: 0.50, heat: 0.05, mental: 0.00, treatment_gap: 0.00, access_loss: 0.00}  # ride
+backup_power_plan:           {breathing: 0.20, heat: 0.00, mental: 0.05, treatment_gap: 0.50, access_loss: 0.10}  # call
+alt_site_booking:            {breathing: 0.00, heat: 0.00, mental: 0.05, treatment_gap: 0.70, access_loss: 0.30}  # booking
+evacuation_assist:           {breathing: 0.05, heat: 0.10, mental: 0.10, treatment_gap: 0.30, access_loss: 0.75}  # evac
+verified_text:               {breathing: 0.05, heat: 0.15, mental: 0.10, treatment_gap: 0.10, access_loss: 0.05}  # free
+switch_to_local_pickup:      {breathing: 0.10, heat: 0.05, mental: 0.05, treatment_gap: 0.65, access_loss: 0.10}  # refill
+pharmacist_med_review:       {breathing: 0.15, heat: 0.45, mental: 0.10, treatment_gap: 0.20, access_loss: 0.00}  # pharmacist_slot
+cold_chain_plan:             {breathing: 0.05, heat: 0.10, mental: 0.00, treatment_gap: 0.55, access_loss: 0.05}  # call
+controlled_substance_bridge: {breathing: 0.00, heat: 0.00, mental: 0.20, treatment_gap: 0.70, access_loss: 0.20}  # va_fill
