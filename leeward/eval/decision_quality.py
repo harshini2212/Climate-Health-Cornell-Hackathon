@@ -65,13 +65,13 @@ Tau = Mapping[str, Mapping[str, float]]
 def decision_weights() -> tuple[Weights, Tau]:
     """`w_k` and `τ[a,k]` from the decision layer: the numbers the allocator optimises.
 
-    Expects `leeward.decision.severity.SEVERITY` (need -> w) and `leeward.decision.tau.TAU`
-    (action -> need -> τ). Actions with no τ row, like the information-only check_in_call,
-    avert no measured harm.
+    Both are YAML-backed so a clinician can retune them without touching code, which is
+    what `docs/SPEC.md` 7.1 and 7.2 ask for -- so read them through `load()` rather than
+    importing a module constant. Actions with no τ row, like the information-only
+    check_in_call, avert no measured harm.
     """
-    from leeward.decision.severity import SEVERITY
-    from leeward.decision.tau import TAU
-    return SEVERITY, TAU
+    from leeward.decision import severity, tau
+    return severity.load(), tau.load()
 
 
 def holdout_dates(scores: pl.DataFrame, outcomes: pl.DataFrame,

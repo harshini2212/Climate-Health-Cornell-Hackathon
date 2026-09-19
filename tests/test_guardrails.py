@@ -251,3 +251,60 @@ def test_seeds_are_fixed_everywhere_that_randomises() -> None:
         if re.search(r"\brandom\.(random|choice|randint|shuffle)\(", src) and "seed" not in src:
             offenders.append(f"{path.relative_to(ROOT)}: stdlib random with no seed")
     assert not offenders, "unseeded randomness: " + "; ".join(offenders)
+
+
+# --------------------------------------------------------------------------- #
+# Cross-lane interfaces.
+#
+# Lanes are built in parallel by agents that never see each other's code, so the
+# failure mode is not a bad function -- it is two correct functions that disagree
+# about a name. That surfaces at merge, which is the worst time. These tests pin
+# the public surface each lane promises the others, so drift fails in the lane
+# that caused it rather than in whoever merges last.
+# --------------------------------------------------------------------------- #
+
+DECISION_INTERFACE = {
+    "leeward.decision.severity": [("load", dict), ("vector", None)],
+    "leeward.decision.tau": [("load", dict), ("matrix", None)],
+    "leeward.decision.eha": [("eha_matrix", None), ("voi", None), ("needs_wide", None)],
+    "leeward.decision.allocate": [("allocate", None), ("total_eha", None)],
+    "leeward.decision.tiers": [("assign", None)],
+}
+
+
+@pytest.mark.parametrize("module,expected", sorted(DECISION_INTERFACE.items()))
+def test_decision_layer_public_interface(module: str, expected: list) -> None:
+    mod = _mod(module)
+    for name, returns in expected:
+        fn = getattr(mod, name, None)
+        assert callable(fn), (
+            f"{module}.{name}() is missing. Other lanes import it; renaming it breaks them "
+            f"at merge time. If the interface must change, change it here first.")
+        if returns is dict:
+            got = fn()
+            assert isinstance(got, dict) and got, f"{module}.{name}() must return a non-empty dict"
+
+
+def test_severity_and_tau_are_yaml_backed_not_hardcoded() -> None:
+    """SPEC 7.1 and 7.2: a clinician retunes these without touching code."""
+    for mod_name, fname in (("leeward.decision.severity", "severity.yaml"),
+                            ("leeward.decision.tau", "tau.yaml")):
+        mod = _mod(mod_name)
+        path = getattr(mod, "PATH", None)
+        assert path is not None and Path(path).name == fname, f"{mod_name}.PATH must point at {fname}"
+        assert Path(path).exists(), f"{path} is missing"
+
+
+def test_severity_covers_every_need_and_tau_every_action() -> None:
+    severity = _mod("leeward.decision.severity")
+    tau = _mod("leeward.decision.tau")
+    w = severity.load()
+    assert set(w) >= set(NEEDS), f"severity weights missing needs {set(NEEDS) - set(w)}"
+    assert all(v > 0 for v in w.values()), "a severity weight of zero silently drops a need"
+
+    t = tau.load()
+    unknown = set(t) - set(schema.ACTION_COST_UNIT)
+    assert not unknown, f"tau.yaml names actions the schema does not know: {sorted(unknown)}"
+    for action, row in t.items():
+        bad = {k: v for k, v in row.items() if not 0.0 <= v <= 1.0}
+        assert not bad, f"tau[{action}] has values outside [0,1]: {bad}"
