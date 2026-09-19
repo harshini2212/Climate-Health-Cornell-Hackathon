@@ -64,6 +64,8 @@ Don't hunt through this file to copy one — `make prompt N=4`, or
 | | `demo` | 11 · wire UI to API, offline proof | Rahul |
 | | `ui` | 12 · the model report screen | Rahul |
 | *stretch* | `api` | 13 · schedule actions by do-by day | Rahul |
+| **demo fix** | `api` | **14 · the board names diagnoses** — do first | Rahul |
+| **demo fix** | `demo` | **15 · open on a day with weather** | Rahul |
 
 **If you fall behind, 1, 2 and 4 are the ones that matter.** Everything else is upside.
 Drop rung 1 (8) before you drop any of those — a prior-only model you can explain beats a
@@ -401,6 +403,54 @@ This is what turns the board from a stack of daily lists into a schedule.
 > board can show the risk day and the do-by day as separate marks on the ribbon.
 >
 > Run `make check`; green; commit; push; two lines in `status/api.md`; stop.
+
+### 14 · `api` — the board de-identifies the handle but not the sentence next to it  ← do this before any clinical demo
+
+`tests/test_ui_fixtures.py::test_no_queue_card_line_names_a_diagnosis` is `xfail(strict=True)`
+right now, and the reason is exact: the queue card shows a de-identified handle
+("W.O. · 4471") and then a rationale line reading **"Book the alternate dialysis site."**
+The handle is anonymous; the sentence beside it is not. On a screen designed to hang in a
+shared clinical space, that defeats the whole point.
+
+`leeward.decision.allocate._rationale` names the service and embeds the driver phrase by
+design — which is right for the care-team drill-down, and wrong for a wall board.
+
+> Read `leeward/decision/allocate.py` (`_rationale`, `LEAD`, `NEED_PHRASE`) and
+> `tests/test_ui_fixtures.py` — the xfail marker states the two acceptable fixes.
+>
+> Keep the rich rationale for `CareTeam.tsx` and `VeteranCard.tsx`, which are a private
+> workroom drill-down, and give the board a **card-safe line** that carries urgency and
+> timing without naming a condition, a medicine or a service: "Treatment gap likely before
+> Thursday — act today" rather than "Book the alternate dialysis site."
+>
+> Prefer adding a `headline` column to the `actions` contract in `leeward/schema.py` over
+> weakening `rationale`; you own that file, so tell the other terminals. If you conclude a
+> second column is not worth it, the fallback is `Week.tsx` rendering `top_need` plus the
+> tier instead of `rationale`.
+>
+> **Remove the `xfail(strict=True)` marker when it passes** — strict means the suite goes red
+> if you leave it on a passing test, which is the point. Run `make check`; green; commit;
+> push; two lines in `status/api.md`; stop.
+
+### 15 · `demo` — open the demo on a day where something is happening
+
+> `GET /forecast?scenario=sandy_then_heat&day=0` returns "No active alerts in the 7-day
+> window", so the board opens on a quiet week and the first thing anyone sees is an empty
+> ribbon. The scenario's landfall is 3 August and the heat wave follows on the 8th.
+>
+> Make the demo open on a day that earns the screen: default the UI's start day to the
+> forecast window that contains landfall, and add a `--day` or scenario-relative default so
+> `make demo` lands there without anyone typing a date. Keep day 0 reachable, because "here
+> is a calm week, and here is the same team three days later" is a good beat if you want it.
+>
+> Also note for the deck: `POST /actions` reports Leeward at 747 versus 588 for rank-by-age
+> — 1.27x — while `decision_quality` reports 4.2x. Both are correct and they measure
+> different things: `/actions` compares **expected** harm averted under the model where only
+> the ordering changes, and `decision_quality` compares **realized** harm averted against the
+> simulated outcomes. Put a one-line label on each number in the UI and the slide so nobody
+> has to ask which is which.
+>
+> Run `make check`; green; commit; push; two lines in `status/demo.md`; stop.
 
 ---
 
