@@ -42,7 +42,7 @@ lane/<x>` → `make check` → push. Every 60–90 minutes, even if incomplete.
 
 ## What to run right now
 
-Wave 1 is merged. Twelve prompts remain, in two rounds of six. **One prompt per terminal.**
+Wave 1 is merged. Twelve prompts remain, in two rounds of six, plus one stretch. **One prompt per terminal.**
 Paste all six of a round at once; they are independent by construction.
 
 Don't hunt through this file to copy one — `make prompt N=4`, or
@@ -56,13 +56,14 @@ Don't hunt through this file to copy one — `make prompt N=4`, or
 | | `eval` | 3 · tests own their data | Harshini |
 | | `api` | 4 · the FastAPI app | Rahul |
 | | `demo` | 5 · verified messages | Rahul |
-| | `ui` | 6 · veteran card + message screen | Rahul |
+| | `ui` | 6 · the week-ahead dashboard | Rahul |
 | **Round B** | `cohort` | 7 · race, ethnicity, dialysis rate | Harshini |
 | | `model` | 8 · rung 1 NUTS | Harshini |
 | | `eval` | 9 · calibration, recovery, fairness | Harshini |
 | | `api` | 10 · the tier decision | Rahul |
 | | `demo` | 11 · wire UI to API, offline proof | Rahul |
 | | `ui` | 12 · the model report screen | Rahul |
+| *stretch* | `api` | 13 · schedule actions by do-by day | Rahul |
 
 **If you fall behind, 1, 2 and 4 are the ones that matter.** Everything else is upside.
 Drop rung 1 (8) before you drop any of those — a prior-only model you can explain beats a
@@ -182,25 +183,60 @@ Two assertions in `tests/test_allocate.py` are simply wrong for real data:
 > Do not touch `leeward/api/main.py`; another terminal owns it this round.
 > Run `make check`; green; commit; push; two lines in `status/demo.md`; stop.
 
-### 6 · `ui` — veteran card and message screen
+### 6 · `ui` — the week-ahead care-team dashboard
 
-> Read `leeward/api/schemas.py` — `VeteranCard`, `NeedScore`, `MedicationFlags`, `Message`.
-> Build `ui/src/screens/VeteranCard.tsx` and `ui/src/screens/Message.tsx`.
+Reframed after clinical review: the care team does not want a page they visit, they want a
+**board on a side screen that tells them what next week looks like and who to reach first.**
+Time is the primary axis, not risk.
+
+> Read `leeward/api/schemas.py` (`ForecastResponse`, `ZipHazard`, `FacilityStatus`,
+> `ActionsResponse`, `ActionRow`, `VeteranCard`, `MedicationFlags`, `Message`) and
+> `ui/src/lib/api.ts`. Build `ui/src/screens/Week.tsx` and make it the **default screen**.
 >
-> **VeteranCard** is the screen the whole pitch lands on: five needs as 10–90% interval bars
-> with the epistemic share shaded, drivers as plain-language chips, a medication panel
-> (thermoregulatory score, ACB, the CDC-named combination, cold-chain, controlled, days of
-> supply, mail order), the planned actions, and a single "why this tier" line.
+> `ActionsRequest` is single-day and another terminal owns `api/schemas.py` this round, so do
+> **not** change it: call `postActions` once per day for seven days, in parallel. Offline,
+> `allocateFixture` already allocates client-side from `actions_candidates.json` — run it
+> seven times the same way, so the board works with the network off.
 >
-> **Message** renders the outreach text with the five mandatory elements as a *visible
-> checklist*, so a judge can see at a glance that a scammer could not reproduce it.
+> **Layout, top to bottom. It must be readable from two metres away.**
 >
-> The live API is being built in another terminal. Read the fixture JSON in
-> `ui/public/fixtures/` for now and keep every type imported from the frozen schema shapes, so
-> the swap to real routes is a one-line base-URL change.
+> 1. **Week ribbon** — seven day columns, today → +6. Each carries the date, hazard glyphs
+>    (heat, smoke, flood, surge, outage) from `/forecast`, a marker when a facility is down,
+>    and a load bar of queued work against that day's capacity. This row answers "why is
+>    Thursday heavy" before anyone asks.
+> 2. **Standing banners** — team-wide events are not patient rows. "Manhattan VA (630) closed
+>    from Wed — 81 veterans on site-dependent care" belongs here once, not 81 times.
+> 3. **The queue** — the body. Work under the day it must be done, priority order within the
+>    day. Each card: a de-identified handle, **one plain-language line saying why**, an owner
+>    chip, and a tier stripe down the edge. Never show a bare EHA number as the reason.
+> 4. **Owner lanes** — used / remaining for care team (40 calls), pharmacist (12), partner
+>    (10), automated. The pharmacist lane is deliberately scarce; make that visible.
+> 5. **What does not fit** — "14 veterans not reached at this capacity" under each day.
+>    That is the honest half of the capacity story and it is more persuasive than the list.
 >
-> `npm run build` must be clean. Run `make check`; green; commit; push;
-> two lines in `status/ui.md`; stop.
+> **De-identify by default.** A screen on a wall in a shared clinical space must not show
+> names and diagnoses. Display an initial-plus-ID handle ("W.O. · 4471"); reveal the full
+> card only on click. Your teammates will ask about this, and so will a judge who has worked
+> in a clinic — build it in rather than defending it.
+>
+> **Glanceable, not interactive-first.** No information that only exists on hover. Colour
+> carries urgency, never decoration. It should be legible on a dim ward monitor.
+>
+> Clicking a day opens the existing `CareTeam.tsx` for that date — **keep it and keep the
+> capacity slider**, it is on the never-cut list and it is the best three seconds of the demo.
+> Clicking a card opens `VeteranCard.tsx`, which you also build this round: five needs as
+> 10–90% interval bars with the epistemic share shaded, drivers as plain-language chips, the
+> medication panel (thermoregulatory score, ACB, the CDC-named combination, cold-chain,
+> controlled, days of supply, mail order), planned actions, and one "why this tier" line.
+> Also build `Message.tsx`, rendering the outreach text with the five mandatory elements as a
+> **visible checklist**, so a judge can see a scammer could not reproduce it.
+>
+> The live API is being built in another terminal. Keep the existing fixture fallback in
+> `api.ts` so every screen works offline today and swaps to real routes with no code change.
+>
+> Acceptance: `npm run build` clean; the week board renders seven days from fixtures with the
+> network off; day click and card click both work; no name or diagnosis visible before a
+> reveal. Run `make check`; green; commit; push; two lines in `status/ui.md`; stop.
 
 ---
 
@@ -333,6 +369,38 @@ Two coherent resolutions. Rahul picks:
 >
 > `npm run build` clean. Run `make check`; green; commit; push;
 > two lines in `status/ui.md`; stop.
+
+### 13 · `api` — schedule actions by when they must be DONE  ← stretch, only if Round B is ahead
+
+The week board in prompt 6 shows seven daily lists side by side. That is useful, but it is
+not yet how a care team thinks. **An action has a day it must be done by, which is not the
+day the risk lands.** If the surge hits Wednesday, the alternate dialysis site has to be
+booked Monday; by Wednesday it is too late for that action to avert anything.
+
+`docs/proposal.md` §6 already has this structure — the action catalog is laid out in
+"5 days out / 2 days out / during-after" columns — and nothing in the code uses it.
+`leeward/decision/allocate.py` has a `LEAD` dict, but it holds rationale phrasing, not days.
+
+This is what turns the board from a stack of daily lists into a schedule.
+
+> Read `docs/proposal.md` §6, `leeward/decision/allocate.py` and `leeward/decision/tau.py`.
+> Give every action a **lead time in days** — how far ahead of the risk day it must happen to
+> work. `alt_site_booking` and `early_refill` are useless same-day; `care_team_call` and
+> `verified_text` are not. Put the numbers in `tau.yaml` beside τ, because they are the same
+> kind of clinician-editable judgement, and add a `lead_days` column to the `actions`
+> contract in `leeward/schema.py` (you own that file this round — tell the other terminals).
+>
+> Then allocate against the **do-by day**: an action for a Wednesday risk with a two-day lead
+> consumes Monday's capacity, not Wednesday's. An action whose do-by day has already passed
+> is not offered at all — and counting those is a real number worth showing: "9 actions were
+> already too late to book when the forecast arrived."
+>
+> **Write the test first.** With a surge on day T, an `alt_site_booking` for a dialysis
+> patient must appear on day T−2 and must not appear on day T. Total EHA must not fall by
+> more than 15% versus today. Then tell the `ui` terminal that `lead_days` exists so the week
+> board can show the risk day and the do-by day as separate marks on the ribbon.
+>
+> Run `make check`; green; commit; push; two lines in `status/api.md`; stop.
 
 ---
 
