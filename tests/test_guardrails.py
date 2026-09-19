@@ -59,8 +59,19 @@ def test_no_test_reads_a_contract_table_out_of_data() -> None:
     # regenerates them into a contract table -- so reading those is stable and allowed.
     banned = re.compile(r"""schema\.TABLES\[[^\]]+\]\.path"""
                         r"""|schema\.DATA\s*/\s*["'][^"'/]+\.parquet["']""")
-    offenders = sorted(p.name for p in (ROOT / "tests").glob("*.py")
-                       if banned.search(p.read_text(encoding="utf-8")))
+    # A file that monkeypatches `schema.DATA` has redirected the data root to a tmp_path,
+    # so those writes never touch the real directory -- that is the isolation this guardrail
+    # is asking for, not a violation of it. Exempting per file rather than per line is
+    # coarse, but the alternative is parsing scope, and the failure it would miss (a file
+    # that isolates in one test and reads the real data/ in another) is caught by the rest
+    # of the suite going red depending on which make target ran last.
+    isolates = re.compile(r"monkeypatch\.setattr\(\s*schema\s*,\s*[\"']DATA[\"']"
+                          r"|mp\.setattr\(\s*schema\s*,\s*[\"']DATA[\"']")
+    offenders = []
+    for path in sorted((ROOT / "tests").glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        if banned.search(src) and not isolates.search(src):
+            offenders.append(path.name)
     assert not offenders, (
         f"{offenders} read a contract table out of data/; use `from tables import table`")
 

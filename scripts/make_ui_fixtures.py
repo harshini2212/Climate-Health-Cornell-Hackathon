@@ -141,17 +141,28 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
                                         "age", "n_chronic", "ckd_dialysis", "on_methadone_otp"),
                           on="veteran_id")
                     .sort("eha_raw", descending=True)
-                    .head(600))
+                    # The slider goes to 100 calls, and on a real run most candidates fall
+                    # in the free `verified_text` bucket -- 600 rows yielded only 60 calls.
+                    # Keep enough that the top of the slider is still a real cut, not a
+                    # list that has run out.
+                    .head(2000))
     rows = []
     for i, v in enumerate(per_vet.to_dicts()):
         tier = ("act_now" if v["peak"] >= 0.25 and v["epi"] < 0.4
                 else "find_out" if v["epi"] >= 0.4 and v["peak"] >= 0.10
                 else "self_serve" if v["peak"] >= 0.05 else "everyday")
         # Most people get one action; act-now veterans get a call plus their need's action.
+        #
+        # Self-serve veterans are call candidates too. That is not a shortcut to fill the
+        # slider -- it is what `allocate.py` actually does: selection is by expected harm
+        # averted, and tier does not reserve a scarce call slot, so on a real run most calls
+        # land on self-serve veterans. A fixture that offered calls only to act-now would
+        # cap the slider at however many act-now veterans that day happened to have (60),
+        # and would misrepresent the allocator the board is standing in for.
         acts = [ACTION_FOR_NEED[v["top_need"]]]
-        if tier == "act_now" and "care_team_call" not in acts:
+        if tier in ("act_now", "self_serve") and "care_team_call" not in acts:
             acts.append("care_team_call")
-        elif tier == "find_out":
+        if tier == "find_out":
             acts = ["check_in_call"]
         elif tier == "everyday":
             acts = ["verified_text"]
