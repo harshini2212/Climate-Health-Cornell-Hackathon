@@ -311,19 +311,38 @@ resolves each to a VA drug class with `va_drug_class_members.parquet` (committed
 call at demo time) and then joins `med_climate_risk.csv` for the mechanism and weight:
 
 ```
+classes(drug)            = the drug's MOST SPECIFIC VA class only     # see the note below
 med_thermoreg_score      = Σ weight    over classes where hazard == 'heat'
 acb_score                = Σ acb       over all classes          # ACB scale, >=3 is meaningful
 med_combo_raas_diuretic  = any(CV800, CV805) and any(CV70*)      # the CDC-named combination
 med_renal_triple         = med_combo_raas_diuretic and any(MS101, MS102)
 med_cold_chain           = any(cold_chain == 1)                  # insulin -> outage term
 med_controlled           = any(controlled == 1)                  # excluded from retail refill
+med_narrow_ti            = any(narrow_ti == 1)                   # lithium, warfarin, insulin
 ```
 
-Expected prevalence, measured on the Synthea FHIR sample and reproduced in
-`tests/test_cohort.py`: **77 percent** on ≥1 heat-impairing medication, **16 percent** on the
-CDC-named pair, 10 percent controlled, 9 percent cold-chain, 5 percent at ACB ≥ 3. The
-veteran 65+ cohort should come out higher on all of them; if it comes out lower, the class
-mapping is broken.
+**Most specific class wins.** RxNav puts a drug in its VA class *and* that class's parent:
+hydrochlorothiazide is CV701 THIAZIDES and CV700 DIURETICS, insulin is HS501 and HS500,
+alprazolam is CN302 and CN300. Summing over both scores one mechanism twice — doubling the
+weight and the ACB of every parented drug. So each drug contributes its most specific class
+and nothing else, which is also the class a pharmacist would say out loud. The hierarchy is
+**not hand-written**: it is read off the crosswalk, where a child class's members are a
+strict subset of its parent's (27 such pairs, all clean).
+
+Expected prevalence among the **77** sample patients who have an active medication,
+measured and reproduced in `tests/test_medications.py`: **77 percent** on ≥1 crosswalk
+medication of any hazard, **65 percent** on a heat-mechanism one, **16 percent** on the
+CDC-named pair, 10 percent controlled, 9 percent cold-chain, 8 percent narrow-TI, 12 percent
+at ACB ≥ 3. (An earlier draft of this paragraph put 77 percent on the heat row and 5 percent
+on ACB; both are corrected here and pinned by the test.) The veteran 65+ cohort comes out
+higher on all of them — 72 percent heat-impairing, 18 percent on the CDC pair, 11 percent
+cold-chain — and a test asserts the direction. If it ever comes out lower, the class mapping
+is broken.
+
+Prescriptions reach a synthetic veteran by bootstrap: `cohort/medications.py` draws a whole
+active list from `synthea_med_profiles.parquet` (109 rows, one per bundle, committed)
+stratified by age band, 18–54 against 55+, because the sample's burden triples at 55+. Whole
+lists, so real co-prescribing survives; never assembled drug by drug.
 
 **Still genuinely synthetic** — no public source exists, so these keep parametric priors and a
 `_synthetic` flag:
@@ -337,6 +356,7 @@ mapping is broken.
 | floor | basement 0.06, ground 0.25, upper 0.69 citywide; basement up-weighted ×2 where `stormwater_flooded_frac` is high |
 | on_methadone_otp | 0.01 overall |
 | caregiver type, given present | coresident / remote / va_pcafc split 0.55 / 0.35 / 0.10; `lives_alone=True` forces remote |
+| med_rxcuis (the *assignment*) | a whole active list bootstrapped from `synthea_med_profiles.parquet` within the veteran's age band. Every list is a real one; which veteran carries it is not. The draw ignores the diagnosis list — six diabetics in the sample is too few to condition on — so a cold-chain medication does not imply `diabetes`. Closes with the Synthea swap. |
 | mail_order_pharmacy | Bernoulli(0.80), from VA's published ~80 percent CMOP share. Synthea's FHIR export has no `dispenseRequest`, so this cannot be read. |
 | days_supply_remaining | 90-day fill if mail order else 30-day; phase drawn uniform, so on any given day the cohort is spread across its refill cycle |
 

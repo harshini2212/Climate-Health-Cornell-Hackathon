@@ -23,6 +23,7 @@ import pytest
 
 from leeward import schema
 from leeward.schema import DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
+from tables import table
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -35,25 +36,38 @@ def _mod(name: str):
         pytest.skip(f"{name} not built yet -- this guardrail activates the moment it lands")
 
 
-def _table(name: str) -> pl.DataFrame:
-    path = schema.TABLES[name].path
-    if not path.exists():
-        pytest.skip(f"data/{name}.parquet missing -- run `make fixtures`")
-    return pl.read_parquet(path)
-
-
 # --------------------------------------------------------------------------- #
-# Contracts. These never skip: the fixtures exist from minute one.
+# Contracts. These never skip: the suite builds its own frames (tests/tables.py).
 # --------------------------------------------------------------------------- #
 
-@pytest.mark.parametrize("table", sorted(schema.TABLES))
-def test_every_table_matches_its_contract(table: str) -> None:
-    schema.validate(_table(table), table)
+@pytest.mark.parametrize("name", sorted(schema.TABLES))
+def test_every_table_matches_its_contract(name: str) -> None:
+    schema.validate(table(name), name)
+
+
+def test_no_test_reads_a_contract_table_out_of_data() -> None:
+    """`data/` is pipeline state, not test input, and the gate must not depend on it.
+
+    `make fixtures` leaves 500 fake veterans there; `make cohort` replaces some of it with
+    10,000 real ones; in between it is a mix. A suite that reads it goes red depending on
+    which target ran last, and the next person spends the night hunting a product bug that
+    was never there. Frames come from `tests/tables.py`; `data/reference/` stays fair game,
+    because it is committed input rather than anything a make target regenerates.
+    """
+    # A contract table is `data/<name>.parquet` at the top level, or TABLES[...].path.
+    # `data/reference/` and `data/raw/` are committed or upstream input -- no make target
+    # regenerates them into a contract table -- so reading those is stable and allowed.
+    banned = re.compile(r"""schema\.TABLES\[[^\]]+\]\.path"""
+                        r"""|schema\.DATA\s*/\s*["'][^"'/]+\.parquet["']""")
+    offenders = sorted(p.name for p in (ROOT / "tests").glob("*.py")
+                       if banned.search(p.read_text(encoding="utf-8")))
+    assert not offenders, (
+        f"{offenders} read a contract table out of data/; use `from tables import table`")
 
 
 def test_synthetic_columns_all_carry_their_flag() -> None:
     """'Only the people are synthetic' is the central claim. It has to be enforced."""
-    cohort = _table("cohort")
+    cohort = table("cohort")
     for col in schema.TABLES["cohort"].columns:
         if not col.synthetic:
             continue
@@ -63,13 +77,13 @@ def test_synthetic_columns_all_carry_their_flag() -> None:
 
 
 def test_intervals_are_ordered() -> None:
-    s = _table("scores")
+    s = table("scores")
     bad = s.filter((pl.col("p_lo80") > pl.col("p_mean")) | (pl.col("p_mean") > pl.col("p_hi80")))
     assert bad.height == 0, f"{bad.height} scores where lo80 <= mean <= hi80 is violated"
 
 
 def test_every_veteran_day_has_all_five_needs() -> None:
-    s = _table("scores")
+    s = table("scores")
     per = s.group_by("veteran_id", "date").agg(pl.col("need").n_unique().alias("k"))
     assert per["k"].min() == len(NEEDS), (
         "some veteran-days are missing needs; the care-team list would silently under-rank them")
@@ -78,18 +92,18 @@ def test_every_veteran_day_has_all_five_needs() -> None:
 def test_geography_key_is_real_nyc() -> None:
     """A cohort in ZIPs that do not exist renders an empty map and nobody notices until demo."""
     real = set(pl.read_parquet(schema.REFERENCE / "nyc_modzcta.parquet")["modzcta"].to_list())
-    for table in ("cohort", "hazards"):
-        got = set(_table(table)["modzcta"].unique().to_list())
-        assert got <= real, f"{table} references ZIPs not in nyc_modzcta: {sorted(got - real)[:5]}"
+    for name in ("cohort", "hazards"):
+        got = set(table(name)["modzcta"].unique().to_list())
+        assert got <= real, f"{name} references ZIPs not in nyc_modzcta: {sorted(got - real)[:5]}"
 
 
 def test_facilities_are_real_stations() -> None:
     real = set(pl.read_parquet(
         schema.REFERENCE / "va_facilities_nyc_hazard.parquet")["station_no"].to_list())
-    for table in ("cohort", "site_status"):
+    for name in ("cohort", "site_status"):
         col = "facility_id"
-        got = set(_table(table)[col].unique().to_list())
-        assert got <= real, f"{table}.{col} has unknown stations: {sorted(got - real)[:5]}"
+        got = set(table(name)[col].unique().to_list())
+        assert got <= real, f"{name}.{col} has unknown stations: {sorted(got - real)[:5]}"
 
 
 # --------------------------------------------------------------------------- #
@@ -98,7 +112,7 @@ def test_facilities_are_real_stations() -> None:
 
 def test_capacity_is_never_exceeded() -> None:
     """The whole pitch is 'cut at the team's real capacity'. Overfilling it is a lie."""
-    actions = _table("actions")
+    actions = table("actions")
     for day, grp in actions.group_by("date"):
         used = grp.group_by("capacity_bucket").agg(pl.len().alias("n"))
         for bucket, n in zip(used["capacity_bucket"], used["n"], strict=False):
@@ -108,7 +122,7 @@ def test_capacity_is_never_exceeded() -> None:
 
 
 def test_one_action_per_veteran_unless_act_now() -> None:
-    actions = _table("actions")
+    actions = table("actions")
     counts = (actions.group_by("date", "veteran_id")
                      .agg(pl.len().alias("n"), pl.col("tier").min().alias("tier")))
     over = counts.filter((pl.col("n") > 1) & (pl.col("tier") != "act_now"))
@@ -117,7 +131,7 @@ def test_one_action_per_veteran_unless_act_now() -> None:
 
 
 def test_ranks_are_dense_and_ordered_by_eha() -> None:
-    actions = _table("actions")
+    actions = table("actions")
     for _, grp in actions.group_by("date"):
         g = grp.sort("rank")
         assert g["rank"].to_list() == list(range(1, g.height + 1)), "ranks must be 1..n, no gaps"
@@ -136,7 +150,7 @@ def test_more_capacity_never_averts_less_harm() -> None:
     total = getattr(allocate, "total_eha", None)
     if total is None:
         pytest.skip("allocate.total_eha(actions) not exposed yet")
-    scores, cohort = _table("scores"), _table("cohort")
+    scores, cohort = table("scores"), table("cohort")
     prev = None
     for calls in (10, 20, 40, 80):
         cap = dict(DEFAULT_CAPACITY, call=calls)
@@ -155,7 +169,7 @@ def test_every_message_carries_all_mandatory_elements() -> None:
     render = getattr(messages, "render", None)
     assert render is not None, "leeward.outreach.messages must expose render(...)"
 
-    actions, cohort = _table("actions"), _table("cohort")
+    actions, cohort = table("actions"), table("cohort")
     checked = 0
     for row in actions.head(40).to_dicts():
         vet = cohort.filter(pl.col("veteran_id") == row["veteran_id"])
@@ -189,7 +203,7 @@ def test_partner_export_excludes_rather_than_redacts() -> None:
     fn = getattr(export, "partner_sheet", None)
     if fn is None:
         pytest.skip("export.partner_sheet(...) not exposed yet")
-    cohort, actions = _table("cohort"), _table("actions")
+    cohort, actions = table("cohort"), table("actions")
     sheet = fn(actions=actions, cohort=cohort)
     ids = set(sheet["veteran_id"].to_list()) if hasattr(sheet, "to_list") or hasattr(
         sheet, "columns") else set()
@@ -213,7 +227,7 @@ def test_fairness_audit_is_never_suppressed() -> None:
 
 def test_model_rung_is_recorded() -> None:
     """You have to be able to say on stage which rung actually fitted."""
-    s = _table("scores")
+    s = table("scores")
     assert s["model_rung"].n_unique() == 1, "scores mix model rungs; that cannot be explained"
     assert s["model_rung"][0] in (0, 1, 2, 3)
 

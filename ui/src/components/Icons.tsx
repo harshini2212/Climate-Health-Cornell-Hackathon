@@ -41,3 +41,9 @@ export const IconMail = () => (
 export const IconArrow = () => (
   <svg {...base}><path d="M5 12h14M13 6l6 6-6 6" /></svg>
 );
+export const IconCalendar = () => (
+  <svg {...base}><rect x="3" y="5" width="18" height="16" rx="2" /><path d="M3 10h18M8 3v4M16 3v4" /></svg>
+);
+export const IconShield = () => (
+  <svg {...base}><path d="M12 3l8 3v6c0 5-3.4 8.3-8 9-4.6-.7-8-4-8-9V6z" /><path d="M9 12l2 2 4-4" /></svg>
+);

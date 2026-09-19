@@ -1,8 +1,9 @@
 # Big, rebuildable downloads. data/reference/ IS committed; data/raw/ is not.
+# data/truth.json is committed too: it is the world the simulator generates and the model
+# is scored against, so it is an input to the build, not an output of it.
 data/raw/
 data/*.parquet
 data/*.nc
-data/truth.json
 report/
 
 .venv/

@@ -87,7 +87,7 @@ These are not quotes. They are joins you can re-run; the script is `scripts/fetc
 | Veterans in NYC | **131,195**, of whom **53.5% are 65+** | `acs_veterans_by_zcta.parquet` — ACS 2023 5-year B21001, summed over NYC ZCTAs |
 | Electricity-dependent Medicare beneficiaries in NYC | **36,146**; **3,165** on oxygen; **1,948** facility ESRD dialysis | `empower_ny_zip.parquet` — HHS emPOWER, five-borough ZIPs |
 | June 2023 smoke peak | **203.5 µg/m³ PM2.5, AQI 254**, Queens monitor, 7 June 2023 | `airnow_pm25_nyc_smoke2023.parquet` — EPA AirNow daily files |
-| Veterans on ≥1 heat-impairing medication | **77%** of Synthea patients with active meds; **16%** on the CDC-named ACE-inhibitor/ARB-plus-diuretic pair; 10% on a controlled substance; 9% cold-chain | `med_climate_risk.csv` × `va_drug_class_members.parquet` × Synthea FHIR sample |
+| Patients on ≥1 heat-impairing medication | **65%** of the 77 Synthea patients with active meds (**77%** are on a crosswalk medication of *some* hazard); **16%** on the CDC-named ACE-inhibitor/ARB-plus-diuretic pair; 10% on a controlled substance; 9% cold-chain; 12% at ACB ≥ 3 | `med_climate_risk.csv` × `va_drug_class_members.parquet` × `synthea_med_profiles.parquet`, re-derived from the bundles in `tests/test_medications.py` |
 | Vulnerability stacks along the heat gradient | Utility-shutoff threat rises **5.3% → 17.2%** from HVI band 1 to 5; mobility difficulty **9.3% → 18.8%**; lacks transport **6.0% → 16.6%** | `places_zcta_nyc.parquet` × `hvi_by_zcta.parquet` |
 | Most flood-exposed ZIPs | Rockaways 11692 (**59%** of area), 11693, 11694, 11697; Coney Island 11224; Lower Manhattan 10004 | `stormwater_by_modzcta.parquet` |
 
@@ -202,6 +202,7 @@ prefix for each in `data/reference/manifest.json`.
 | `acs_veterans` | https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/ | `acs_veterans_by_zcta.parquet` |
 | `va_drug_classes` | https://rxnav.nlm.nih.gov/REST/rxclass/ | `va_drug_class_members.parquet` |
 | `synthea_sample` | https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip | `data/raw/synthea_sample_fhir.zip` |
+| `synthea_med_profiles` | derived from `synthea_sample` | `synthea_med_profiles.parquet` |
 
 ### Synthetic cohort
 

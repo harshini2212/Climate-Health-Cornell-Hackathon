@@ -2,12 +2,14 @@
 
 The five-veteran case is small enough to check by hand against the SPEC §7.1 and §7.2
 tables, and small enough to brute-force, so it is checked both ways. Everything else runs
-against the `data/*.parquet` fixtures (`make fixtures`) and seeded random instances.
+against the panel the suite builds for itself (`tests/tables.py`) and seeded random
+instances -- never against `data/`, whose contents depend on which make target ran last.
 """
 
 from __future__ import annotations
 
 import itertools
+import math
 from collections import Counter
 from datetime import date
 
@@ -19,6 +21,7 @@ from leeward import schema
 from leeward.decision import eha, severity, tau, tiers
 from leeward.decision.allocate import allocate, total_eha
 from leeward.schema import ACTION_COST_UNIT, ACTIONS, DEFAULT_CAPACITY, NEEDS
+from tables import table
 
 DAY = date(2026, 7, 16)
 
@@ -69,23 +72,16 @@ def _cap(**kw: int) -> dict[str, int]:
     return {b: kw.get(b, 0) for b in DEFAULT_CAPACITY}
 
 
-def _fixture(name: str) -> pl.DataFrame:
-    path = schema.TABLES[name].path
-    if not path.exists():
-        pytest.skip(f"data/{name}.parquet missing -- run `make fixtures`")
-    return pl.read_parquet(path)
-
-
 # --------------------------------------------------------------------------- #
 # The editable tables
 # --------------------------------------------------------------------------- #
 
 def test_weights_and_tau_match_the_spec_tables() -> None:
     assert severity.load() == {k: float(v) for k, v in SPEC_W.items()}
-    table = tau.load()
-    assert set(table) == set(SPEC_TAU), "tau.yaml rows must be the SPEC §7.2 prevention actions"
+    loaded = tau.load()
+    assert set(loaded) == set(SPEC_TAU), "tau.yaml rows must be the SPEC §7.2 prevention actions"
     for a, row in SPEC_TAU.items():
-        assert tuple(table[a][k] for k in NEEDS) == row, f"tau.yaml disagrees with SPEC for {a}"
+        assert tuple(loaded[a][k] for k in NEEDS) == row, f"tau.yaml disagrees with SPEC for {a}"
 
 
 def test_every_action_has_an_eligibility_rule() -> None:
@@ -285,12 +281,12 @@ def test_random_instances_more_of_any_bucket_never_averts_less(seed: int) -> Non
 
 
 # --------------------------------------------------------------------------- #
-# Against the data/*.parquet fixtures
+# Against the full panel the suite builds for itself (tests/tables.py)
 # --------------------------------------------------------------------------- #
 
 @pytest.fixture(scope="module")
 def fixtures() -> tuple[pl.DataFrame, pl.DataFrame]:
-    return _fixture("scores"), _fixture("cohort")
+    return table("scores"), table("cohort")
 
 
 @pytest.fixture(scope="module")
@@ -299,10 +295,45 @@ def default_actions(fixtures) -> pl.DataFrame:
     return allocate(scores, cohort, DEFAULT_CAPACITY)
 
 
-def test_fixture_actions_match_the_contract(default_actions) -> None:
+def test_panel_actions_match_the_contract(default_actions) -> None:
     schema.validate(default_actions, "actions")
-    assert default_actions["date"].n_unique() == _fixture("scores")["date"].n_unique(), (
-        "every scored day gets its own list")
+
+
+def test_a_day_gets_a_list_exactly_when_someone_is_above_the_everyday_floor(
+        fixtures, default_actions) -> None:
+    """Not "every scored day gets a list" -- a day can correctly produce nothing.
+
+    On the real 120-day Sandy run, 14 days do: max heat 81.9F under the 82F threshold, no
+    smoke, no outage, no flood, peak risk 0.0476 under the 0.05 self-serve floor. The whole
+    panel is Everyday tier, and a care team doing nothing on a calm June day is the right
+    answer. What must hold is the biconditional, not the count.
+    """
+    scores, _ = fixtures
+    graded = tiers.assign(scores)
+    actionable = set(graded.filter(pl.col("tier") != "everyday")["date"].to_list())
+    assert set(default_actions["date"].to_list()) == actionable
+
+
+def test_a_day_where_the_whole_panel_is_everyday_produces_no_actions() -> None:
+    """That calm day, pinned on purpose instead of left to whatever the panel happens to hold."""
+    vets = ["V1", "V2", "V3"]
+    calm = _scores({v: {k: (0.001, 0.1) for k in NEEDS} for v in vets})
+    cohort = _cohort([{"veteran_id": v} for v in vets])
+    assert (tiers.assign(calm)["tier"] == "everyday").all(), "this day was meant to be calm"
+    got = allocate(calm, cohort, DEFAULT_CAPACITY)
+    schema.validate(got, "actions")            # an empty list is still a legal actions table
+    assert got.height == 0, "a panel with nobody above the floor was given something to do"
+    assert total_eha(got) == 0.0
+
+
+def test_a_calm_day_drops_out_of_a_multi_day_list_and_a_busy_one_does_not() -> None:
+    calm, busy = date(2026, 6, 12), date(2026, 6, 13)
+    scores = pl.concat([
+        _scores({v: {k: (0.001, 0.1) for k in NEEDS} for v in ("V1", "V2")}, day=calm),
+        _scores({"V1": {"heat": (0.30, 0.1)}, "V2": {"breathing": (0.10, 0.1)}}, day=busy)])
+    cohort = _cohort([{"veteran_id": "V1"}, {"veteran_id": "V2"}])
+    got = allocate(scores, cohort, DEFAULT_CAPACITY)
+    assert got["date"].unique().to_list() == [busy], "the calm day should simply not appear"
 
 
 def test_fixture_capacity_is_per_day_and_never_exceeded(default_actions) -> None:
@@ -384,17 +415,24 @@ def test_fixture_more_of_any_bucket_never_averts_less(fixtures, bucket: str) -> 
 # --------------------------------------------------------------------------- #
 
 def test_group_floor_reserves_each_borough_its_share(fixtures) -> None:
+    """A fifth of the calls reserved per borough: floor(0.2 x 20) = 4 each, five boroughs."""
     scores, cohort = fixtures
     day = scores["date"].min()
+    share = 0.2
     cap = dict(DEFAULT_CAPACITY, call=20)
+    reserved = math.floor(share * cap["call"])
+    boroughs = sorted(cohort["borough"].unique().to_list())
+    assert len(boroughs) == 5, f"the floor is sized for five boroughs, not {boroughs}"
+
     plain = allocate(scores, cohort, cap, date=day)
-    floored = allocate(scores, cohort, cap, group_floor={"borough": 0.2}, date=day)
+    floored = allocate(scores, cohort, cap, group_floor={"borough": share}, date=day)
     calls = floored.filter(pl.col("capacity_bucket") == "call").join(
         cohort.select("veteran_id", "borough"), on="veteran_id")
     by_boro = Counter(calls["borough"].to_list())
-    for boro in cohort["borough"].unique().to_list():
-        assert by_boro[boro] >= 4, f"{boro} got {by_boro[boro]} of 20 calls; floor is 4"
-    assert calls.height == 20
+    for boro in boroughs:
+        assert by_boro[boro] >= reserved, (
+            f"{boro} got {by_boro[boro]} of {cap['call']} calls; floor is {reserved}")
+    assert calls.height == cap["call"]
     assert total_eha(floored) <= total_eha(plain) + 1e-9, "a floor is a constraint; it costs EHA"
 
 
