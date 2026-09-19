@@ -45,6 +45,10 @@ lane/<x>` → `make check` → push. Every 60–90 minutes, even if incomplete.
 Wave 1 is merged. Twelve prompts remain, in two rounds of six. **One prompt per terminal.**
 Paste all six of a round at once; they are independent by construction.
 
+Don't hunt through this file to copy one — `make prompt N=4`, or
+`bash scripts/prompt.sh 4 | pbcopy` to put it straight on the clipboard.
+`make prompt` with no argument lists all twelve.
+
 | | Terminal | Prompt | Owner |
 | --- | --- | --- | --- |
 | **Round A** | `cohort` | 1 · medications | Harshini |

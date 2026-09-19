@@ -26,6 +26,9 @@ check:              ## THE GATE: lint + every test + the guardrail to-do list
 status:             ## where the build actually is, without reading any code
 	@bash scripts/status.sh
 
+prompt:             ## print a prompt to paste:  make prompt N=4   (no N lists them)
+	@bash scripts/prompt.sh $(N)
+
 test:               ## pytest only
 	@.venv/bin/pytest -q
 
