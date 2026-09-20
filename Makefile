@@ -61,11 +61,24 @@ cohort: hazards     ## 10k synthetic veterans + truth.json + 120 days of outcome
 	$(PY) -m leeward.cohort.build
 	$(PY) -m leeward.cohort.simulate
 
-fit:                ## NumPyro NUTS -> data/posterior.nc  (see SPEC 6.0 for the rung)
-	$(PY) -m leeward.model.fit
+# Scoring is whichever scorer exists, and `scripts/baseline.py` records the same two stages.
+# `model/score.py` -- the posterior scorer -- takes over from the rung-0 `model/score_prior.py`
+# the day it lands, and neither this target nor `make baseline` needs an edit for that.
+SCORER := $(if $(wildcard leeward/model/score.py),leeward.model.score,leeward.model.score_prior)
 
-score:              ## posterior x hazards -> scores.parquet, actions.parquet
-	$(PY) -m leeward.model.score
+# `make fit` has nothing to run until the model lane lands `model/fit.py` (SPEC 6.0, rung 1).
+# It still fails -- a target that claims success without fitting anything is worse -- but it
+# fails saying which rung is built, instead of `No module named` at 2am.
+fit:                ## NumPyro NUTS -> data/posterior.nc  (see SPEC 6.0 for the rung)
+ifeq ($(wildcard leeward/model/fit.py),)
+	@echo "make fit: nothing to fit. The model is at rung 0 (prior-only), so leeward/model/fit.py has to land before there is a posterior to cache; until then \`make score\` is the whole model." >&2
+	@exit 1
+else
+	$(PY) -m leeward.model.fit
+endif
+
+score:              ## hazards x the model that exists -> scores.parquet, actions.parquet
+	$(PY) -m $(SCORER)
 	$(PY) -m leeward.decision.allocate
 
 baseline:           ## run the pipeline and record one row in docs/BASELINES.md

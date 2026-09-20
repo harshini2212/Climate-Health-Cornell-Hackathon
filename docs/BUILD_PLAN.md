@@ -174,7 +174,7 @@ a veteran card driven by rung-0 scores, you are on schedule. If not, cut UI poli
 
 | Lane | Task |
 | --- | --- |
-| `model` | Rung 2: interactions + SiteDown. Start `make fit` in the third terminal and leave it. |
+| `model` | Rung 2: interactions + SiteDown. `make fit` refuses until `model/fit.py` lands; the moment it does, start it in the third terminal and leave it. |
 | `eval` | Parameter recovery, calibration on days 91–120, PPC, ablations, **fairness audit**. |
 | `api` | `GET /report`, `GET /export`, `POST /log`. Caregiver routing in `allocate.py`. |
 | `ui` | Model report screen: recovery dot-whisker, reliability curve, harm-averted bars, fairness table. |
