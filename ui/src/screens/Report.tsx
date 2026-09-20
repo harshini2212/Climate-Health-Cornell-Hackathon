@@ -39,6 +39,10 @@ import {
 /** leeward/eval/fairness.py's FNR_GAP. The ratio column draws the band it tests. */
 const FNR_GAP = 0.2;
 
+/** leeward/eval/fairness.py's CALL_BUDGET, itself DEFAULT_CAPACITY["call"]. The coverage
+ *  column counts events that got one of these, so the label has to name the same number. */
+const CALL_BUDGET = 40;
+
 const NUM = (v: number, d = 2) => v.toFixed(d);
 const PCT = (v: number, d = 1) => `${(100 * v).toFixed(d)}%`;
 
@@ -685,8 +689,35 @@ interface Verdict { tone: string; icon: "shield" | "alert"; headline: string; de
  * separate state from "passed" on purpose: an empty fairness table is the absence of
  * evidence, and must never be shown as the presence of a clean bill.
  */
+/**
+ * The pooled rates every ratio in the table was taken against, recovered from the rows.
+ * Each stratum covers the same veteran-days, so summing across all of them scales
+ * numerator and denominator alike and the rate holds.
+ */
+function pooled(rows: ReportResponse["fairness"]) {
+  const events = rows.reduce((a, f) => a + f.n_events, 0);
+  const reached = rows.reduce((a, f) => a + f.n_events * f.reach, 0);
+  const measured = rows.every((f) => f.n_called !== null);
+  const called = rows.reduce((a, f) => a + (f.n_called ?? 0), 0);
+  const perStratum = new Set(rows.map((f) => f.stratum)).size || 1;
+  return {
+    events: Math.round(events / perStratum),
+    fnr: events ? 1 - reached / events : 0,
+    coverage: measured && events ? called / events : null,
+  };
+}
+
+/**
+ * Could *any* group have been flagged? At a pooled FNR of f, clearing the bar takes a group
+ * FNR of f × 1.2, and an FNR above 1 does not exist. Above f = 0.833 the answer is no,
+ * whatever the model does — which is the single most important thing to say next to a
+ * report where nothing is flagged. `leeward/eval/fairness.py:flag_is_reachable`.
+ */
+const flagIsReachable = (fnr: number) => fnr * (1 + FNR_GAP) <= 1;
+
 function auditVerdict(report: ReportResponse): Verdict {
   const flagged = report.fairness.filter((f) => f.flagged);
+  const more = report.fairness.filter((f) => f.direction === "reached_more");
   if (!report.fairness.length) {
     return {
       tone: "warn", icon: "alert", headline: "Fairness audit not audited in this report",
@@ -703,21 +734,43 @@ function auditVerdict(report: ReportResponse): Verdict {
         + "them. A failing audit is displayed, never suppressed.",
     };
   }
+  const { fnr } = pooled(report.fairness);
+  // "0 flagged" is only a pass if the bar could have been cleared. When it could not, the
+  // banner says so in its headline rather than burying it in a footnote, because that is
+  // the sentence that stops a reader concluding the model is fair from this screen.
+  if (!flagIsReachable(fnr)) {
+    return {
+      tone: "warn", icon: "alert",
+      headline: `Fairness audit · 0 of ${report.fairness.length} groups flagged, but no group could be`,
+      detail: `The cohort misses ${PCT(fnr)} of its events, so flagging a group would take a `
+        + `false-negative rate of ${NUM(fnr * (1 + FNR_GAP), 3)} — which is not a rate. This `
+        + "is not a clean bill of health; it is a bar that cannot be crossed. Read the reach "
+        + `and coverage columns instead, where ${more.length} group${more.length === 1 ? " is" : "s are"} `
+        + "reached more than the cohort.",
+    };
+  }
   return {
     tone: "ok", icon: "shield",
     headline: `Fairness audit passed · 0 of ${report.fairness.length} groups flagged`,
     detail: `No group's false-negative rate is more than ${PCT(FNR_GAP, 0)} away from the `
-      + "cohort's. Every group audited is in the table below, flagged or not.",
+      + `cohort's ${NUM(fnr, 3)}, and a group would have to reach ${NUM(fnr * (1 + FNR_GAP), 3)} `
+      + "to be flagged. Every group audited is in the table below, flagged or not.",
   };
 }
 
-/** The FNR ratio against the cohort, centred on 1.00, with the ±20 % band it is judged by. */
-function RatioBar({ ratio, flagged }: { ratio: number; flagged: boolean }) {
-  // 0.75..1.25 rather than 0..2: every ratio the audit has ever produced lives within a
-  // few points of 1, and on a wider axis the whole column would be one flat line of dots.
-  const lo = 0.75, hi = 1.25;
-  const x = (v: number) => 5 + ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * 108;
-  const ink = flagged ? "var(--crit)" : "var(--accent)";
+/**
+ * A ratio against the cohort, centred on 1.00, with the ±20 % band it is judged by.
+ *
+ * The axis is log-scaled and runs 0.25×..4×. The FNR ratios all sit within a few points of
+ * 1 and would be one flat line of dots on any axis; the reach and coverage ratios they are
+ * shown beside span a factor of fifty, and clipping those to ±25 % would hide the entire
+ * finding. A dot on the rail means the value is past the end of the axis, not at it.
+ */
+function RatioBar({ ratio, tone }: { ratio: number; tone: "crit" | "more" | "plain" }) {
+  const lo = Math.log(0.25), hi = Math.log(4);
+  const clamped = Math.max(0.25, Math.min(4, ratio || 0.25));
+  const x = (v: number) => 5 + ((Math.log(v) - lo) / (hi - lo)) * 108;
+  const ink = tone === "crit" ? "var(--crit)" : tone === "more" ? "var(--green)" : "var(--accent)";
   return (
     <svg className="ratiobar" viewBox="0 0 118 16" aria-hidden="true">
       <rect x={x(1 - FNR_GAP)} y="4" width={x(1 + FNR_GAP) - x(1 - FNR_GAP)} height="8" rx="2" fill="var(--panel2)" />
@@ -725,23 +778,31 @@ function RatioBar({ ratio, flagged }: { ratio: number; flagged: boolean }) {
         <line key={t} x1={x(t)} x2={x(t)} y1="2" y2="14" stroke="var(--amber)" strokeWidth="1" strokeDasharray="2 2" />
       ))}
       <line x1={x(1)} x2={x(1)} y1="1.5" y2="14.5" stroke="var(--faint)" strokeWidth="1" />
-      <rect x={Math.min(x(1), x(ratio))} y="6" width={Math.max(1, Math.abs(x(ratio) - x(1)))} height="4" rx="2" fill={ink} />
-      <circle cx={x(ratio)} cy="8" r="3.4" fill={ink} stroke="var(--panel)" strokeWidth="1" />
+      <rect x={Math.min(x(1), x(clamped))} y="6" width={Math.max(1, Math.abs(x(clamped) - x(1)))} height="4" rx="2" fill={ink} />
+      <circle cx={x(clamped)} cy="8" r="3.4" fill={ink} stroke="var(--panel)" strokeWidth="1" />
     </svg>
   );
 }
 
+/** A rate that may never have been measured. Null renders as a word, never as 0.0 %. */
+const RATE = (v: number | null) => (v === null ? "not measured" : PCT(v, 2));
+const TIMES = (v: number | null) => (v === null ? "—" : `${NUM(v)}×`);
+
+const DIRECTION_LABEL: Record<string, string> = {
+  reached_more: "reached more",
+  reached_less: "reached less",
+  on_par: "on par",
+};
+
 function Fairness({ report }: { report: ReportResponse }) {
   const v = auditVerdict(report);
-  // Every row carries its own FNR and its ratio to the cohort, so the cohort's own rate is
-  // whichever row you divide -- no row has to happen to sit exactly at 1.00 for this to work.
-  const ref = report.fairness.find((f) => f.fnr_ratio_to_cohort > 0);
-  const cohortFnr = ref ? ref.fnr / ref.fnr_ratio_to_cohort : undefined;
+  const { events, fnr: cohortFnr, coverage: cohortCoverage } = pooled(report.fairness);
+  const unreachable = report.fairness.length > 0 && !flagIsReachable(cohortFnr);
   let previous = "";
   return (
     <div className="card">
       <div className="ch">
-        <h3>Fairness audit: calibration and missed events by group</h3>
+        <h3>Fairness audit: calibration, missed events and coverage by group</h3>
         <span className="sp" />
         <span className="pillbadge">simulated outcomes · synthetic cohort</span>
       </div>
@@ -754,12 +815,28 @@ function Fairness({ report }: { report: ReportResponse }) {
           <div className="muted" style={{ marginTop: 2 }}>{v.detail}</div>
         </span>
       </div>
-      {report.model_rung === 0 && report.fairness.length > 0 && (
+      {/*
+        The one line that has to be on screen. A judge who reads FNR 0.96 and nothing else
+        concludes the model does not work; a judge who reads "0 flagged" and nothing else
+        concludes it is fair. Both are wrong, and the arithmetic that makes them wrong is
+        the same sentence, so it renders whenever there are rows — not only on a pass.
+      */}
+      {report.fairness.length > 0 && (
         <p className="lede">
-          Read the ratio column, not the level: at rung 0 the model is prior-only, so the
-          false-negative rate is near 1 in every group — almost nothing is caught anywhere.
-          What this table can tell you today is whether the misses fall evenly
-          {cohortFnr === undefined ? "" : `, against a cohort rate of ${PCT(cohortFnr)}`}.
+          The false-negative rate is near 1 in every group because{" "}
+          {report.model_rung === 0 ? "the model is prior-only at rung 0 and " : ""}
+          the window holds <b>{fmtInt(events)} veteran-days with a need</b> and there are{" "}
+          <b>{CALL_BUDGET} care-team calls a day</b> to spend on them.
+          {cohortCoverage !== null && <> Those calls reached <b>{PCT(cohortCoverage, 2)}</b> of
+            the events that happened.</>}{" "}
+          {unreachable
+            ? <>At a cohort rate of {NUM(cohortFnr, 3)}, being flagged would take a
+              false-negative rate of {NUM(cohortFnr * (1 + FNR_GAP), 3)} — so the flag column
+              cannot fire, and an empty one is not a result.</>
+            : <>The cohort rate is {NUM(cohortFnr, 3)}.</>}{" "}
+          <b>Read reach and coverage.</b> Reach asks whether anyone looked; coverage asks
+          whether anyone phoned. They disagree, and where they disagree is where a care team
+          would spend its next hire.
         </p>
       )}
       <div className="tablewrap">
@@ -768,11 +845,15 @@ function Fairness({ report }: { report: ReportResponse }) {
             <tr>
               <th>Stratum</th>
               <th>Group</th>
-              <th className="n">Veteran-days</th>
+              <th className="n">Events</th>
               <th className="n">ECE</th>
               <th className="n">FNR</th>
-              <th style={{ width: 130 }}>FNR vs cohort</th>
+              <th className="n" title="The ratio the flag is computed from. It stays within a few points of 1 whatever the model does, which is why it is not the column to read.">FNR ×</th>
+              <th className="n">Reach</th>
+              <th style={{ width: 130 }}>Reach vs cohort</th>
               <th className="n">Ratio</th>
+              <th className="n">Coverage @{CALL_BUDGET}</th>
+              <th className="n">vs cohort</th>
               <th>Audit</th>
             </tr>
           </thead>
@@ -780,23 +861,33 @@ function Fairness({ report }: { report: ReportResponse }) {
             {report.fairness.map((f) => {
               const head = f.stratum !== previous;
               previous = f.stratum;
+              const more = f.direction === "reached_more";
               return (
-                <tr key={`${f.stratum}/${f.group}`} className={f.flagged ? "flagrow" : ""}>
+                <tr key={`${f.stratum}/${f.group}`}
+                    className={f.flagged ? "flagrow" : more ? "morerow" : ""}>
                   <td className="muted">{head ? f.stratum.replace(/_/g, " ") : ""}</td>
                   <td>{f.group.replace(/_/g, " ")}</td>
-                  <td className="n">{fmtInt(f.n)}</td>
+                  <td className="n">{fmtInt(f.n_events)}</td>
                   <td className="n">{NUM(f.ece, 4)}</td>
                   <td className="n">{PCT(f.fnr)}</td>
-                  <td><RatioBar ratio={f.fnr_ratio_to_cohort} flagged={f.flagged} /></td>
-                  <td className="n">{NUM(f.fnr_ratio_to_cohort)}×</td>
+                  <td className="n muted">{NUM(f.fnr_ratio_to_cohort)}×</td>
+                  <td className="n">{PCT(f.reach, 2)}</td>
+                  <td><RatioBar ratio={f.reach_ratio_to_cohort}
+                                tone={f.flagged ? "crit" : more ? "more" : "plain"} /></td>
+                  <td className="n">{NUM(f.reach_ratio_to_cohort)}×</td>
+                  <td className="n">{RATE(f.coverage)}
+                    {f.n_called !== null && <span className="muted"> ({fmtInt(f.n_called)})</span>}</td>
+                  <td className="n">{TIMES(f.coverage_ratio_to_cohort)}</td>
                   <td>{f.flagged
                     ? <span className="rb rb-critical">flagged</span>
-                    : <span className="muted">within {PCT(FNR_GAP, 0)}</span>}</td>
+                    : more
+                      ? <span className="rb rb-low">{DIRECTION_LABEL[f.direction]}</span>
+                      : <span className="rb rb-quiet">{DIRECTION_LABEL[f.direction] ?? f.direction}</span>}</td>
                 </tr>
               );
             })}
             {!report.fairness.length && (
-              <tr><td colSpan={8} className="muted">
+              <tr><td colSpan={12} className="muted">
                 No group was audited in this report — not audited is not the same as passed.
               </td></tr>
             )}
@@ -804,8 +895,10 @@ function Fairness({ report }: { report: ReportResponse }) {
         </table>
       </div>
       <div className="legend">
-        <span>Shaded band: the ±{PCT(FNR_GAP, 0)} relative gap the audit tests</span>
-        <span><i style={{ background: "var(--crit)", height: 9, width: 9, borderRadius: 9 }} /> flagged group</span>
+        <span>Shaded band: the ±{PCT(FNR_GAP, 0)} relative gap the audit tests, on a log axis</span>
+        <span><i style={{ background: "var(--crit)", height: 9, width: 9, borderRadius: 9 }} /> flagged: misses more events than the cohort</span>
+        <span><i style={{ background: "var(--green)", height: 9, width: 9, borderRadius: 9 }} /> reached more than the cohort — a result, not a pass</span>
+        <span>Coverage @{CALL_BUDGET} counts the events that got one of the {CALL_BUDGET} daily calls; the figure in brackets is how many.</span>
       </div>
     </div>
   );
@@ -840,9 +933,18 @@ export function Report({ onSource }: { onSource: (s: Source) => void }) {
     .sort((a, b) => b.harm_averted - a.harm_averted)[0];
   const lift = leeward && bestBaseline?.harm_averted ? leeward / bestBaseline.harm_averted : null;
 
+  // "0 of 33 flagged" is a pass only when a group could have been flagged. On this cohort
+  // it cannot -- see `flagIsReachable` -- so the tile says which of the two it is showing
+  // rather than colouring an unfalsifiable number green.
+  const cohort = pooled(report.fairness);
+  const barUnreachable = audited > 0 && !flagged && !flagIsReachable(cohort.fnr);
+  const reachedMore = report.fairness.filter((f) => f.direction === "reached_more").length;
+
   let auditTile = "pillbadge pill-healthy";
-  if (!audited) auditTile = "pillbadge pill-watch";
-  else if (flagged) auditTile = "pillbadge pill-critical";
+  let auditWord = "passed";
+  if (!audited) { auditTile = "pillbadge pill-watch"; auditWord = "not audited"; }
+  else if (flagged) { auditTile = "pillbadge pill-critical"; auditWord = "failed"; }
+  else if (barUnreachable) { auditTile = "pillbadge pill-watch"; auditWord = "bar unreachable"; }
 
   return (
     <div className="page dash">
@@ -909,9 +1011,13 @@ export function Report({ onSource }: { onSource: (s: Source) => void }) {
           <div className="k">Fairness audit</div>
           <div className="vrow">
             <div className="v">{flagged}/{audited}</div>
-            <span className={auditTile}>{!audited ? "not audited" : flagged ? "failed" : "passed"}</span>
+            <span className={auditTile}>{auditWord}</span>
           </div>
-          <div className="s">groups flagged at a {PCT(FNR_GAP, 0)} relative FNR gap</div>
+          <div className="s">
+            {barUnreachable
+              ? `no group can clear a ${PCT(FNR_GAP, 0)} gap at a cohort FNR of ${NUM(cohort.fnr, 2)} · ${reachedMore} reached more`
+              : `groups flagged at a ${PCT(FNR_GAP, 0)} relative FNR gap`}
+          </div>
         </div>
       </div>
 

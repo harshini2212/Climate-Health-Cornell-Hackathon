@@ -94,11 +94,13 @@ def test_the_fairness_table_is_the_audit_row_for_row(report: rep.Report) -> None
 def test_a_failing_audit_reaches_the_json_rather_than_being_filtered(monkeypatch) -> None:
     """The one thing we will not ship is a report that looks clean because the audit was
     dropped on the way out."""
+    row = {"stratum": "borough", "group": "Bronx", "n": 10, "n_events": 5, "n_missed": 5,
+           "n_called": 0, "ece": 0.4, "fnr": 1.0, "fnr_ratio_to_cohort": 2.0,
+           "reach": 0.0, "reach_ratio_to_cohort": 0.0, "coverage": 0.0,
+           "coverage_ratio_to_cohort": 0.0, "direction": fair.REACHED_LESS, "flagged": True}
+
     def fake_audit(*a, **kw):
-        return pl.DataFrame(
-            [{"stratum": "borough", "group": "Bronx", "n": 10, "n_events": 5, "n_missed": 5,
-              "ece": 0.4, "fnr": 1.0, "fnr_ratio_to_cohort": 2.0, "flagged": True}],
-            schema=fair.AUDIT_SCHEMA)
+        return pl.DataFrame([row], schema=fair.AUDIT_SCHEMA)
 
     monkeypatch.setattr(rep.fair, "audit", fake_audit)
     scores, outcomes, cohort = table("scores"), table("outcomes"), table("cohort")
@@ -106,8 +108,10 @@ def test_a_failing_audit_reaches_the_json_rather_than_being_filtered(monkeypatch
     out = rep.assemble(scores=scores, outcomes=outcomes, cohort=cohort, dates=days,
                        ks=(20,), n_draws=64).payload
     assert out["fairness_failed"] is True
-    assert out["fairness"] == [{"stratum": "borough", "group": "Bronx", "n": 10, "ece": 0.4,
-                                "fnr": 1.0, "fnr_ratio_to_cohort": 2.0, "flagged": True}]
+    assert out["fairness"] == [{k: row[k] for k in fair.REPORT_COLUMNS}]
+    # The direction survives the trip too: a flagged row that arrived as "reached less" must
+    # not land on the screen as the neutral default.
+    assert out["fairness"][0]["direction"] == fair.REACHED_LESS
     ReportResponse.model_validate(out)
 
 
