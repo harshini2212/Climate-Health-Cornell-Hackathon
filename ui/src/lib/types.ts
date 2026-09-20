@@ -104,7 +104,11 @@ export interface ActionRow {
   eha: number;
   capacity_bucket: string;
   owner: string;
+  /** Card-safe: urgency and timing only. The one reason line the wall board may show. */
+  headline: string;
+  /** Names the service and the driver. Drill-down screens only, never the board. */
   rationale: string;
+  /** Names a condition or a medicine. Drill-down screens only, never the board. */
   top_driver?: string | null;
   message_id?: string | null;
 }

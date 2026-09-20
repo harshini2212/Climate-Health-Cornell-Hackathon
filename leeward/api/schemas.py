@@ -157,8 +157,13 @@ class ActionRow(Base):
     eha: float
     capacity_bucket: str
     owner: str
-    rationale: str
-    top_driver: str | None = None
+    headline: str = Field(
+        description="Card-safe reason line: urgency and timing, no condition, medicine or "
+                    "service. The only one of these three a wall-mounted board may render.")
+    rationale: str = Field(
+        description="The full sentence, naming the service and the driver. Drill-down only.")
+    top_driver: str | None = Field(
+        default=None, description="Names a condition or a medicine. Drill-down only.")
     message_id: str | None = None
 
 

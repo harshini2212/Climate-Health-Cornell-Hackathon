@@ -106,7 +106,28 @@ NEED_PHRASE = {
     "access_loss": "losing access to care",
 }
 
+#: The whole vocabulary the wall board gets for *why*. A need is a thing that may happen to
+#: someone; a condition, a medicine and a service are things that are true of them. Only the
+#: first kind may sit beside a de-identified handle in a room other people walk through.
+NEED_HEADLINE = {
+    "breathing": "Breathing trouble",
+    "heat": "Heat illness",
+    "mental": "A mental-health crisis",
+    "treatment_gap": "A gap in treatment",
+    "access_loss": "Loss of access to care",
+}
+
+#: What the tier asks of whoever is reading the board, and by when. Deliberately says
+#: nothing about *which* action: the card shows that above the headline already.
+TIER_URGENCY = {
+    "act_now": "act today",
+    "find_out": "confirm today",
+    "self_serve": "this week",
+    "everyday": "no action today",
+}
+
 OUT_SCHEMA = {c.name: c.dtype for c in schema.TABLES["actions"].columns} | {
+    "headline": pl.Utf8,      # the card-safe line the wall board shows (see `_headline`)
     "top_need": pl.Utf8,      # the need this action does the most for
     "top_driver": pl.Utf8,    # that need's first driver, for ActionRow.top_driver
 }
@@ -265,6 +286,7 @@ def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float
             "tier": tier[i], "eha": value_, "rank": 0, "capacity_bucket": bucket[a],
             "rationale": _rationale(act, need, p[i, k], lo[i, k], hi[i, k], share[i, k],
                                     drivers[i][k], service[i]),
+            "headline": _headline(need, p[i, k], tier[i]),
             "owner": OWNER.get(act, "care_team"), "message_id": f"msg-{aid}",
             "top_need": need, "top_driver": drivers[i][k],
         })
@@ -299,9 +321,24 @@ def _values(risk: np.ndarray, info: np.ndarray, T: np.ndarray, open_: np.ndarray
     return gain.sum(axis=2), gain.argmax(axis=2)
 
 
+def _headline(need: str, p: float, tier: str) -> str:
+    """The one line a wall-mounted board may show beside a de-identified handle.
+
+    Urgency and timing, and nothing a passer-by could turn back into a chart: no condition,
+    no medicine, no service, no name. "A gap in treatment, 34% chance -- act today".
+
+    `_rationale` below is the other half of the same row and keeps all three, because the
+    care-team drill-down is a private screen and cannot be acted on without them. Splitting
+    them is the point: weakening `rationale` to fit the board would leave the person who
+    picks up the phone with a sentence they cannot use.
+    """
+    return f"{NEED_HEADLINE[need]}, {p:.0%} chance — {TIER_URGENCY[tier]}"
+
+
 def _rationale(action: str, need: str, p: float, lo: float, hi: float, share: float,
                driver: str | None, service: str) -> str:
-    """One sentence a care-team member can read aloud."""
+    """One sentence a care-team member can read aloud. Names the service, the medicine and
+    the driver on purpose -- so it is a drill-down line, never a board line (`_headline`)."""
     if action == CHECK_IN:
         return (f"Three-minute check-in to find out: {p:.0%} chance of {NEED_PHRASE[need]}, "
                 f"and {share:.0%} of the uncertainty is what we do not know about them.")

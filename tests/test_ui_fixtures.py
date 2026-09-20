@@ -8,6 +8,7 @@ in fixture mode obeys the same rules the real allocator must obey.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -144,23 +145,48 @@ def test_message_fixture_carries_every_mandatory_element() -> None:
         assert not any(bad in m["body"] for m in fx.values()), f"shortener {bad!r} in outreach"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Cross-lane conflict, owner: Rahul (api + ui). The fixtures now carry the real allocator's "
-    "rationale, and leeward.decision.allocate._rationale names the service ('alternate dialysis "
-    "site') and embeds the driver phrase by design, so the live /actions response will show the "
-    "same words on the week board. Either _rationale drops the service and driver clause "
-    "(top_driver already carries the driver), or Week.tsx stops rendering rationale on the card. "
-    "strict=True: this marker must be removed when the source is fixed."))
+#: Words that turn a de-identified handle back into a person's chart. A queue card may
+#: not carry any of them: not a condition, not a medicine, not the service someone is
+#: booked into. `rationale` says all three on purpose and stays in the drill-down.
+CLINICAL_WORDS = ("copd", "asthma", "ptsd", "dialysis", "insulin", "cancer", "depression",
+                  "diabetes", "inhaler", "therapy", "methadone", "infusion", "opioid",
+                  "oxygen", "refrigerat")
+
+
 def test_no_queue_card_line_names_a_diagnosis() -> None:
-    """Week.tsx shows `rationale` on the de-identified queue card and keeps `top_driver`
-    behind the reveal, because driver phrases name conditions and medicines by design."""
-    words = ("copd", "asthma", "ptsd", "dialysis", "insulin", "cancer", "depression",
-             "diabetes", "inhaler", "therapy", "methadone")
-    for row in _load("actions_candidates")["candidates"]:
-        low = row["rationale"].lower()
-        assert not any(w in low for w in words), (
-            f"rationale for {row['action_id']} names a condition: {row['rationale']!r}. "
-            "It is rendered on a wall-mounted board next to a de-identified handle.")
+    """`headline` is the only reason line Week.tsx puts on the de-identified queue card.
+
+    It carries urgency and timing; the condition, the medicine and the service stay in
+    `rationale` and `top_driver`, which only VeteranCard.tsx and CareTeam.tsx open.
+    """
+    rows = _load("actions_candidates")["candidates"]
+    assert rows, "no candidates to check"
+    for row in rows:
+        line = row["headline"]
+        assert line and len(line) <= 90, (
+            f"headline for {row['action_id']} is unreadable at two metres: {line!r}")
+        low = line.lower()
+        assert not any(w in low for w in CLINICAL_WORDS), (
+            f"headline for {row['action_id']} names a condition, medicine or service: "
+            f"{line!r}. It is rendered on a wall-mounted board next to a de-identified handle.")
+
+
+def test_the_drilldown_keeps_the_rich_rationale() -> None:
+    """The card-safe headline is an addition, not a weakening. CareTeam.tsx and
+    VeteranCard.tsx are a private workroom and still get the sentence that names the
+    service and the driver -- otherwise nobody can act on the queue at all."""
+    rows = _load("actions_candidates")["candidates"]
+    assert any(r["rationale"] != r["headline"] for r in rows), (
+        "every rationale equals its headline; the drill-down lost its detail")
+    named = [r for r in rows if any(w in r["rationale"].lower() for w in CLINICAL_WORDS)]
+    assert named, "no rationale names a service any more; _rationale was weakened, not split"
+
+
+def _uncommented(src: str) -> str:
+    """`src` with its comments blanked out. The test below asks what Week.tsx *renders*,
+    and a comment naming a banned field to explain why it is banned renders nothing."""
+    src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", src, flags=re.M)
 
 
 def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
@@ -171,7 +197,7 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
     `handleFor`, and the clinical fields -- driver phrases, conditions, medicines -- stay
     in VeteranCard.tsx behind a click.
     """
-    src = (ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8")
+    src = _uncommented((ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8"))
     body = src.split("export function Week(", 1)[1]
 
     for banned, why in [
@@ -179,8 +205,11 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
         ("conditions", "the condition list belongs behind the reveal"),
         (".eha", "never show a bare expected-harm number as the reason"),
         ("medications", "the medication panel belongs behind the reveal"),
+        ("rationale", "it names the service and the driver; the board gets `headline`"),
     ]:
         assert banned not in body, f"Week.tsx renders {banned!r}: {why}"
+
+    assert "a.headline" in body, "the queue card must still say why it is there"
 
     uses = [ln.strip() for ln in src.splitlines() if "name_display" in ln]
     assert uses, "Week.tsx no longer builds a handle at all"

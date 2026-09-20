@@ -347,7 +347,9 @@ export function Week({ scenario, onSource, onOpenDay, onOpenVeteran }: Props) {
                     <span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span>
                   </div>
                   <div className="qc-action">{ACTION_LABEL[a.action] ?? a.action}</div>
-                  <div className="qc-why">{a.rationale}</div>
+                  {/* `headline`, never `rationale`: the rich sentence names the service
+                      and the driver, and this card is two metres from the corridor. */}
+                  <div className="qc-why">{a.headline}</div>
                   <div className="qc-owner">{a.owner.replace(/_/g, " ")}</div>
                 </button>
               ))}

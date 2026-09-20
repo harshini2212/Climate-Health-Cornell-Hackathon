@@ -138,7 +138,8 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
             "name_display": v["name_display"], "modzcta": v["modzcta"], "borough": v["borough"],
             "action": v["action"], "tier": v["tier"], "eha": round(float(v["eha"]), 4),
             "capacity_bucket": v["capacity_bucket"], "owner": v["owner"],
-            "rationale": v["rationale"], "top_driver": v["top_driver"],
+            "headline": v["headline"], "rationale": v["rationale"],
+            "top_driver": v["top_driver"],
             "message_id": v["message_id"],
             "age": int(v["age"]), "n_chronic": int(v["n_chronic"]), "rand": float(r.random()),
         })
