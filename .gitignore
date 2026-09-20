@@ -19,3 +19,6 @@ node_modules/
 ui/dist/
 .DS_Store
 .env
+
+# Agent worktrees: real git worktrees, never content of this repo.
+.claude/worktrees/
