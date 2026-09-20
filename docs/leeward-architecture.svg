@@ -1,0 +1,138 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2220" height="1043" viewBox="0 0 2220 1043" style="background:#fff">
+<defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6" fill="none" stroke="#1e1e1e" stroke-width="1.2"/></marker></defs>
+<style>text{font-family:ui-monospace,Consolas,monospace;white-space:pre}.hand{font-family:"Segoe UI",system-ui;font-weight:700}</style>
+<text class="hand" x="40" y="60" font-size="30" fill="#1e1e1e">Leeward — how a climate forecast becomes a verified call</text>
+<text class="" x="40" y="86" font-size="14" fill="#0d9488">Every number on screen is either public and cited, or synthetic and flagged. Nothing runs inference in a request.</text>
+<text class="" x="40" y="123" font-size="11" fill="#5c5c5c">P U B L I C   D A T A</text>
+<text class="" x="360" y="123" font-size="11" fill="#5c5c5c">C O H O R T   &amp;   M O D E L</text>
+<text class="" x="780" y="123" font-size="11" fill="#5c5c5c">D E C I S I O N   L A Y E R</text>
+<text class="" x="1130" y="123" font-size="11" fill="#5c5c5c">A P I</text>
+<text class="" x="1470" y="123" font-size="11" fill="#5c5c5c">C A R E   T E A M   U I</text>
+<rect x="40" y="140" width="280" height="170" rx="12" fill="#f8f9fa" stroke="#868e96" stroke-width="1.5"/>
+<circle cx="60" cy="166" r="4" fill="#868e96"/>
+<text class="hand" x="74" y="175" font-size="19" fill="#1e1e1e">data/reference/</text>
+<text class="" x="74" y="199" font-size="13" fill="#5c5c5c">22 tables, committed, ~4 MB</text>
+<text class="" x="74" y="215" font-size="13" fill="#5c5c5c">NWS · AirNow · FloodNet</text>
+<text class="" x="74" y="232" font-size="13" fill="#5c5c5c">emPOWER · HVI · PLACES · SVI</text>
+<text class="" x="74" y="248" font-size="13" fill="#5c5c5c">ACS B21001 · VHA facilities</text>
+<text class="" x="74" y="264" font-size="13" fill="#5c5c5c">fetch_sources.py, 18 keyless</text>
+<rect x="40" y="328" width="280" height="105" rx="12" fill="#f8f9fa" stroke="#868e96" stroke-width="1.5"/>
+<circle cx="60" cy="354" r="4" fill="#868e96"/>
+<text class="hand" x="74" y="363" font-size="19" fill="#1e1e1e">Synthea</text>
+<text class="" x="74" y="387" font-size="13" fill="#5c5c5c">VA release, RxNorm on every</text>
+<text class="" x="74" y="403" font-size="13" fill="#5c5c5c">prescription · no real PHI</text>
+<rect x="40" y="451" width="280" height="127" rx="12" fill="#fff9db" stroke="#f08c00" stroke-width="1.5"/>
+<circle cx="60" cy="478" r="4" fill="#f59f00"/>
+<text class="hand" x="74" y="486" font-size="19" fill="#1e1e1e">scenarios/*.yaml</text>
+<text class="" x="74" y="510" font-size="13" fill="#5c5c5c">sandy_then_heat · ida · smoke</text>
+<text class="" x="74" y="526" font-size="13" fill="#5c5c5c">smoke replays real AirNow</text>
+<text class="" x="74" y="543" font-size="13" fill="#5c5c5c">station 630 sits in evac zone 1</text>
+<rect x="360" y="140" width="360" height="170" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="380" cy="166" r="4" fill="#e64980"/>
+<text class="hand" x="394" y="175" font-size="19" fill="#1e1e1e">cohort/</text>
+<text class="" x="394" y="199" font-size="13" fill="#5c5c5c">10,000 synthetic NYC veterans</text>
+<text class="" x="394" y="215" font-size="13" fill="#5c5c5c">ZIP weights from ACS (r = 0.97)</text>
+<text class="" x="394" y="232" font-size="13" fill="#5c5c5c">every rate from PLACES/emPOWER</text>
+<text class="" x="394" y="248" font-size="13" fill="#5c5c5c">medications → VA drug classes</text>
+<text class="" x="394" y="264" font-size="13" fill="#5c5c5c">72% heat-impairing · 18% CDC pair</text>
+<rect x="360" y="328" width="360" height="192" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="380" cy="354" r="4" fill="#1971c2"/>
+<text class="hand" x="394" y="363" font-size="19" fill="#1e1e1e">model/ — the ladder</text>
+<text class="" x="394" y="387" font-size="13" fill="#5c5c5c">design.py shared with the simulator</text>
+<text class="" x="394" y="403" font-size="13" fill="#5c5c5c">rung 0  prior-only, no MCMC</text>
+<text class="" x="394" y="420" font-size="13" fill="#5c5c5c">rung 1  pooled NUTS on binomial cells</text>
+<text class="" x="394" y="436" font-size="13" fill="#5c5c5c">rung 2  interactions + SiteDown</text>
+<text class="" x="394" y="452" font-size="13" fill="#5c5c5c">→ scores.parquet  p, 10–90 band,</text>
+<text class="" x="394" y="468" font-size="13" fill="#5c5c5c">   epistemic share, top-3 drivers</text>
+<rect x="360" y="538" width="360" height="105" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="380" cy="564" r="4" fill="#7048e8"/>
+<text class="hand" x="394" y="573" font-size="19" fill="#1e1e1e">simulate.py</text>
+<text class="" x="394" y="597" font-size="13" fill="#5c5c5c">truth.json planted, 120 days</text>
+<text class="" x="394" y="613" font-size="13" fill="#5c5c5c">the ground truth eval recovers</text>
+<rect x="780" y="140" width="290" height="336" rx="12" fill="#141414" stroke="#141414" stroke-width="1.5"/>
+<circle cx="802" cy="166" r="4" fill="#0d9488"/>
+<text class="hand" x="818" y="173" font-size="19" fill="#ffffff">Decision layer</text>
+<text class="" x="818" y="205" font-size="13" fill="#c9c9c9">EHA(i,a) = Σ w · p · τ</text>
+<text class="" x="818" y="221" font-size="13" fill="#c9c9c9"></text>
+<text class="" x="818" y="238" font-size="13" fill="#c9c9c9">severity w from clinicians</text>
+<text class="" x="818" y="254" font-size="13" fill="#c9c9c9">τ from published outreach</text>
+<text class="" x="818" y="270" font-size="13" fill="#c9c9c9"></text>
+<text class="" x="818" y="286" font-size="13" fill="#c9c9c9">greedy under real capacity:</text>
+<text class="" x="818" y="302" font-size="13" fill="#c9c9c9">40 calls · 15 rides · 12</text>
+<text class="" x="818" y="319" font-size="13" fill="#c9c9c9">pharmacist slots a day</text>
+<text class="" x="818" y="335" font-size="13" fill="#c9c9c9"></text>
+<text class="" x="818" y="351" font-size="13" fill="#c9c9c9">tiers: act now / find out /</text>
+<text class="" x="818" y="368" font-size="13" fill="#c9c9c9">self-serve / everyday</text>
+<text class="" x="818" y="384" font-size="13" fill="#c9c9c9"></text>
+<text class="" x="818" y="400" font-size="13" fill="#c9c9c9">A ranked list, not a risk score.</text>
+<text class="" x="818" y="454" font-size="12" fill="#0d9488">cut at capacity</text>
+<rect x="1130" y="140" width="300" height="213" rx="12" fill="#ebfbee" stroke="#2f9e44" stroke-width="1.5"/>
+<circle cx="1150" cy="166" r="4" fill="#2f9e44"/>
+<text class="hand" x="1164" y="175" font-size="19" fill="#1e1e1e">FastAPI</text>
+<text class="" x="1164" y="199" font-size="13" fill="#5c5c5c">/forecast   /scores</text>
+<text class="" x="1164" y="215" font-size="13" fill="#5c5c5c">/veteran/{id}   POST /actions</text>
+<text class="" x="1164" y="232" font-size="13" fill="#5c5c5c">/message/{id}   POST /log</text>
+<text class="" x="1164" y="248" font-size="13" fill="#5c5c5c">/report   /export</text>
+<text class="" x="1164" y="264" font-size="13" fill="#5c5c5c"></text>
+<text class="" x="1164" y="280" font-size="13" fill="#5c5c5c">scores from cache · never fits</text>
+<text class="" x="1164" y="296" font-size="13" fill="#5c5c5c">in a request · no API keys</text>
+<rect x="1130" y="371" width="300" height="127" rx="12" fill="#ebfbee" stroke="#2f9e44" stroke-width="1.5"/>
+<circle cx="1150" cy="398" r="4" fill="#2f9e44"/>
+<text class="hand" x="1164" y="406" font-size="19" fill="#1e1e1e">outreach/</text>
+<text class="" x="1164" y="430" font-size="13" fill="#5c5c5c">VA channel only · 4-word phrase</text>
+<text class="" x="1164" y="446" font-size="13" fill="#5c5c5c">never-pay line · VSAFE · 988</text>
+<text class="" x="1164" y="463" font-size="13" fill="#5c5c5c">export excludes, never redacts</text>
+<rect x="1470" y="140" width="330" height="170" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="1490" cy="166" r="4" fill="#0d9488"/>
+<text class="hand" x="1504" y="175" font-size="19" fill="#1e1e1e">Dashboard</text>
+<text class="" x="1504" y="199" font-size="13" fill="#5c5c5c">severity · countdown · NY map</text>
+<text class="" x="1504" y="215" font-size="13" fill="#5c5c5c">live update feed</text>
+<text class="" x="1504" y="232" font-size="13" fill="#5c5c5c">at-risk patients in 3 tiers</text>
+<text class="" x="1504" y="248" font-size="13" fill="#5c5c5c">risk factors + actions at a glance</text>
+<text class="" x="1504" y="264" font-size="13" fill="#5c5c5c">Ask Leeward · resource library</text>
+<rect x="1470" y="328" width="330" height="105" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="1490" cy="354" r="4" fill="#1971c2"/>
+<text class="hand" x="1504" y="363" font-size="19" fill="#1e1e1e">Week board</text>
+<text class="" x="1504" y="387" font-size="13" fill="#5c5c5c">storm band · 7-day timeline</text>
+<text class="" x="1504" y="403" font-size="13" fill="#5c5c5c">de-identified queue · Present</text>
+<rect x="1470" y="451" width="330" height="148" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="1490" cy="478" r="4" fill="#e64980"/>
+<text class="hand" x="1504" y="486" font-size="19" fill="#1e1e1e">Veteran card · Message</text>
+<text class="" x="1504" y="510" font-size="13" fill="#5c5c5c">5 needs with their intervals</text>
+<text class="" x="1504" y="526" font-size="13" fill="#5c5c5c">the hatched part is what we do</text>
+<text class="" x="1504" y="543" font-size="13" fill="#5c5c5c">not know · drivers · meds · plan</text>
+<text class="" x="1504" y="559" font-size="13" fill="#5c5c5c">the message + its 5-point check</text>
+<rect x="1470" y="618" width="330" height="105" rx="12" fill="#e7f5ff" stroke="#1971c2" stroke-width="1.5"/>
+<circle cx="1490" cy="644" r="4" fill="#7048e8"/>
+<text class="hand" x="1504" y="653" font-size="19" fill="#1e1e1e">Model report</text>
+<text class="" x="1504" y="677" font-size="13" fill="#5c5c5c">harm averted vs 3 baselines</text>
+<text class="" x="1504" y="693" font-size="13" fill="#5c5c5c">recovery · calibration · fairness</text>
+<polyline points="328,210 350,230" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#a)"/>
+<polyline points="728,290 768,290" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#a)"/>
+<text class="" x="736" y="274" font-size="12" fill="#5c5c5c">scores</text>
+<polyline points="1078,290 1118,260" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#a)"/>
+<text class="" x="1084" y="274" font-size="12" fill="#0d9488">actions</text>
+<polyline points="1438,250 1458,250" fill="none" stroke="#1e1e1e" stroke-width="1.5" marker-end="url(#a)"/>
+<polyline points="328,538 350,603" fill="none" stroke="#5c5c5c" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<text class="" x="334" y="524" font-size="12" fill="#5c5c5c">hazards</text>
+<rect x="40" y="697" width="1390" height="160" rx="12" fill="#fff9db" stroke="#f08c00" stroke-width="1.5"/>
+<circle cx="62" cy="723" r="4" fill="#f59f00"/>
+<text class="hand" x="78" y="730" font-size="19" fill="#1e1e1e">eval/ — the gate that decides whether any of it is true</text>
+<text class="" x="78" y="756" font-size="13" fill="#5c5c5c">parameter recovery against the planted truth · calibration (ECE) · posterior</text>
+<text class="" x="78" y="772" font-size="13" fill="#5c5c5c">predictive checks · ablations</text>
+<text class="" x="78" y="788" font-size="13" fill="#5c5c5c">decision quality: harm averted at K = 20/40/80 calls, vs rank-by-age,</text>
+<text class="" x="78" y="805" font-size="13" fill="#5c5c5c">rank-by-chronic and random</text>
+<text class="" x="78" y="821" font-size="13" fill="#5c5c5c">fairness audit by borough, HVI band, evacuation zone, income, caregiver status</text>
+<text class="" x="78" y="837" font-size="13" fill="#5c5c5c">and race — a failing audit is displayed, never suppressed</text>
+<polyline points="480,657 510,687" fill="none" stroke="#f08c00" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<polyline points="1250,512 1190,687" fill="none" stroke="#f08c00" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<text class="" x="1240" y="683" font-size="12" fill="#f08c00">the honest half</text>
+<rect x="1470" y="787" width="330" height="104" rx="12" fill="#ebfbee" stroke="#2f9e44" stroke-width="1.5"/>
+<circle cx="1490" cy="813" r="4" fill="#2f9e44"/>
+<text class="hand" x="1506" y="818" font-size="17" fill="#1e1e1e">Outcome log</text>
+<text class="" x="1506" y="840" font-size="13" fill="#5c5c5c">done · reached · need occurred</text>
+<text class="" x="1506" y="856" font-size="13" fill="#5c5c5c">20–30 rows a week, no retrain</text>
+<polyline points="1470,833 760,833 760,663" fill="none" stroke="#2f9e44" stroke-width="1.5" stroke-dasharray="6 4" marker-end="url(#a)"/>
+<text class="" x="720" y="819" font-size="12" fill="#2f9e44">what actually happened</text>
+<text class="" x="40" y="920" font-size="13" fill="#5c5c5c">Synthetic people, real places.  ·  make demo boots offline in under 60 s.  ·  Health in Climate AI Hackathon, NYC 2026</text>
+</svg>
