@@ -5,6 +5,8 @@ import react from "@vitejs/plugin-react";
 // reference directory as an asset, so there is exactly one copy in git and a clean clone
 // still builds. `server.fs.allow` lets the dev server read one level above ui/.
 export default defineConfig({
+  // Relative, so the built bundle works served from any sub-path, not just a domain root.
+  base: "./",
   plugins: [react()],
   assetsInclude: ["**/*.geojson"],
   server: {

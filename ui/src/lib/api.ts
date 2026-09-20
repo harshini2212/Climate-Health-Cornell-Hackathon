@@ -37,7 +37,15 @@ const FIXTURES = `${import.meta.env.BASE_URL}fixtures`;
  */
 const TIMEOUT_MS = 30_000;
 
+/**
+ * A build with no API behind it: `VITE_STATIC=1 npm run build`. Every call goes straight
+ * to the committed fixtures, so a published bundle never waits on a request that cannot
+ * succeed, and the badge honestly reads "Offline fixtures".
+ */
+const STATIC_ONLY = import.meta.env.VITE_STATIC === "1";
+
 async function tryApi<T>(path: string, init?: RequestInit): Promise<T | null> {
+  if (STATIC_ONLY) return null;
   try {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);

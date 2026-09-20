@@ -15,7 +15,7 @@
   "ui/src/components/CapacitySlider.tsx": "391c933920e11ec46b4a20b15e4ba353b829a0bfb962123c401ee27fbf90cb11",
   "ui/src/components/Charts.tsx": "7bdef4f5fe9e9c0a7a9808ebfadf025ee6360430d8efd08ba94eec98cd75b165",
   "ui/src/components/CountUp.tsx": "3f4cf1a68c79340b86408284c47922b683b0ddaccbf39f67d8b6ab154fcaf04a",
-  "ui/src/components/EventFeed.tsx": "9eb486adf55baf57b1e371e3626e4a86117c0e38062edb2919724e25d3f2ca08",
+  "ui/src/components/EventFeed.tsx": "515a8eb32311037805fb603304c16968699ce8abf096d15b284b14080b9e8ed9",
   "ui/src/components/HarmCounter.tsx": "efc5e1b9baac176919ad26910a26f9386075e32950473adc909dc3cb02aacbef",
   "ui/src/components/Icons.tsx": "b970b85a9fb25b46d8727bbf1185a3cd1978fd5def0d975a8f784d8a5c44cd48",
   "ui/src/components/NeedMap.tsx": "02ead3eb2efa50cb9918b496a508de9194f865310e94ca5430865c77d0b0319c",
@@ -25,7 +25,7 @@
   "ui/src/design/leeward.css": "f0d4ee71ed484f0015ff167fae30ca1239c4ffe281d95d6b58c3360c6e21c1d8",
   "ui/src/design/storm.css": "4bf8e60497454db1d1e532ea348cc25c30a9eb8271a11a59964fb307668d293d",
   "ui/src/design/template.css": "b424829b2e6f096499270afa79d0526ee21c42ddfe7c31761db29c7b9911f7f7",
-  "ui/src/lib/api.ts": "7268eedca7387e3d3b46223fd539a51dcbf165a634441b79b762dc2aa3ee6c92",
+  "ui/src/lib/api.ts": "ff4da86f7b89a49e67e5bfbcbfa29ec288a4f6166ed67d6909d754cae94f068d",
   "ui/src/lib/ask.ts": "05c45c7b0fbdb7d2a58f8abdf8dd38805231a85549da442c992131bc5572e0b6",
   "ui/src/lib/colors.ts": "ed080c8fccf3d49994df182dc223eedf9b572426b4cfef278dd2a6e76c7e300d",
   "ui/src/lib/config.ts": "965dc21b4d1016fd7288b24c7bb57de577dd2508f5abde38264650b7614a1efa",
@@ -35,10 +35,10 @@
   "ui/src/lib/risk.ts": "7388a67cabdca17c67241962edc0507ae830e5bfb4e73147507a11b1681ccc28",
   "ui/src/lib/types.ts": "037fce70290c17dd8158b1deda506635e5193ad1a7e8f25726491b54d126895c",
   "ui/src/main.tsx": "1aeb625a73ada14650208d6ac1a73081071dfec4819d665d9a6592f416590303",
-  "ui/src/screens/Ask.tsx": "d08ef66d1b2425aa87c16c62327fa9a7ebcc04f4a971498de88c3af5454eaadd",
-  "ui/src/screens/CareTeam.tsx": "45ccaecfc48a2d785c49b3ce23486befa62c8f059b3385659d5556fa749e65b3",
-  "ui/src/screens/CommandCenter.tsx": "8079bda35fd5cc21267bdac5e5b94a8b0282bade60b4365df2c8a9d4d2a9da8f",
-  "ui/src/screens/Forecast.tsx": "82c619e6381ca7765775140682a5c4a663ab883db4d8816e3e44f0788e9e3700",
+  "ui/src/screens/Ask.tsx": "2a6c077dd8f67e46655c48352100f82e52677578815c381fe3068d72d27583fb",
+  "ui/src/screens/CareTeam.tsx": "7fa8ef8894f4898366caa6d6224f5d4341a009231dcfac94f9267f06727ad332",
+  "ui/src/screens/CommandCenter.tsx": "aa31a34cbb32b697af3998159c3bf218892d43c8df77a6d90393b9d6b0602969",
+  "ui/src/screens/Forecast.tsx": "704a008bacf8127fedd2fe5a57b0c2990c3e3c30834bbefe0829f4569f1a813c",
   "ui/src/screens/Library.tsx": "6d9fba5c9b71666c17d2f355325666bcade3f301ae9101c4987c49639d13be83",
   "ui/src/screens/Map.tsx": "3fb471b0b28d5d7c88139c73729b694139264cf851b7a4de0e8f9282c2228705",
   "ui/src/screens/Message.tsx": "1372b7f1c0f0812ff124f043f1bf457c14ce5acb49b2cf311ae16229a0751e4f",
@@ -46,6 +46,6 @@
   "ui/src/screens/VeteranCard.tsx": "5aef86f4815848934ddab2d46ad599c0a58c3d47c76319b90b802da0fb32b92a",
   "ui/src/vite-env.d.ts": "095cd17ad9f595d8db3ef9f342bb5896e385a0f17b1314aa8857c66a096e1898",
   "ui/tsconfig.json": "492069a4eca6c0eaeaaf14361665486924f3502a9496a81a8eeb62147c22a6e6",
-  "ui/vite.config.ts": "95df9dd571447944cb082a39c2749c6bc6d4fa3212e75b76f7149cce8f52c347"
+  "ui/vite.config.ts": "f00ed935c5c69f0137d9ca3b8d010f3cbab687eb923226fdfb6c099f42a8b215"
  }
 }
