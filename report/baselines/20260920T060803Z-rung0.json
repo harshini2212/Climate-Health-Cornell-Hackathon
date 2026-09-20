@@ -1,0 +1,74 @@
+{
+  "act_now_share": 7.05,
+  "calls_available_k40": 1200,
+  "calls_spent_k40": 934,
+  "divergences": null,
+  "ece_by_need": {
+    "access_loss": 0.0067,
+    "breathing": 0.0011,
+    "heat": 0.0076,
+    "mental": 0.0044,
+    "treatment_gap": 0.0055
+  },
+  "ece_max": 0.0076,
+  "ece_mean": 0.0051,
+  "fairness_flagged": 0,
+  "fairness_groups": 33,
+  "fairness_max_fnr_ratio": 1.048,
+  "find_out_share": 9.197,
+  "git_dirty": false,
+  "git_sha": "dcd1e3c",
+  "harm_averted_baselines_k40": {
+    "random": 3.74,
+    "rank_by_age": 3.37,
+    "rank_by_chronic": 6.79
+  },
+  "harm_averted_k40": 16.31,
+  "harm_per_call_baselines_k40": {
+    "random": 0.0935,
+    "rank_by_age": 0.0843,
+    "rank_by_chronic": 0.1698
+  },
+  "harm_per_call_k40": 0.5239,
+  "harm_total_k40": 489.3,
+  "lift_per_call_k40": 3.09,
+  "lift_vs_best_baseline_k40": 2.4,
+  "machine": "arm64",
+  "medication": {
+    "cdc_pair_pct": 18.4,
+    "cold_chain_pct": 10.8,
+    "controlled_pct": 5.5,
+    "heat_impairing_pct": 72.0,
+    "n_active_meds_mean": 4.37
+  },
+  "model_rung": 0,
+  "n_actions": 326966,
+  "n_score_rows": 6000000,
+  "n_veterans": 10000,
+  "n_zips": 175,
+  "outcome_base_rate_pct": {
+    "access_loss": 0.437,
+    "breathing": 0.669,
+    "heat": 5.837,
+    "mental": 0.537,
+    "treatment_gap": 1.859
+  },
+  "python": "3.11.14",
+  "recorded_utc": "2026-09-20T06:08:03Z",
+  "recovery_coverage": 0.9833,
+  "rhat_max": null,
+  "tier_mix": {
+    "act_now": 23038,
+    "find_out": 30072,
+    "self_serve": 273856
+  },
+  "timings_seconds": {
+    "allocate": 16.73,
+    "cohort": 0.79,
+    "hazards": 0.36,
+    "report": 37.09,
+    "score": 49.63,
+    "simulate": 6.46
+  },
+  "total_seconds": 111.1
+}

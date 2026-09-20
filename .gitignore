@@ -4,7 +4,10 @@
 data/raw/
 data/*.parquet
 data/*.nc
-report/
+# Generated eval output is rebuildable; recorded baselines are the one thing that is not.
+# Exclude the contents rather than the directory, or the negation cannot re-include them.
+report/*
+!report/baselines/
 
 .venv/
 *.egg-info/
@@ -16,7 +19,8 @@ __pycache__/
 .ipynb_checkpoints/
 
 node_modules/
-ui/dist/
+# ui/dist/ is deliberately NOT ignored: it is committed so a clean clone can boot the demo with
+# no npm and no network. `make ui` regenerates it; `scripts/ui_dist.py check` catches it going stale.
 .DS_Store
 .env
 

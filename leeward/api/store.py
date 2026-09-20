@@ -35,7 +35,7 @@ REPORT_DIR = schema.ROOT / "report"
 ISSUED_KEEP = 16
 
 _LOCK = threading.RLock()
-_CACHE: dict[Path, tuple[tuple[int, int], Any]] = {}
+_CACHE: dict[tuple[Path, str], tuple[tuple[int, int], Any]] = {}
 _ISSUED: deque[pl.DataFrame] = deque(maxlen=ISSUED_KEEP)
 
 
@@ -47,18 +47,19 @@ class AlreadyLogged(ValueError):
     """The outcome log is append-only and keyed by action_id; this one is already in it."""
 
 
-def _cached(path: Path, load: Callable[[], T], missing: str) -> T:
+def _cached(path: Path, load: Callable[[], T], missing: str, key: str = "") -> T:
+    """`load()`'s value, kept until `path` changes. `key` separates two readings of one file."""
     try:
         st = path.stat()
     except FileNotFoundError:
         raise DataUnavailable(missing) from None
     sig = (st.st_mtime_ns, st.st_size)
     with _LOCK:
-        hit = _CACHE.get(path)
+        hit = _CACHE.get((path, key))
         if hit is not None and hit[0] == sig:
             return hit[1]
         value = load()
-        _CACHE[path] = (sig, value)
+        _CACHE[(path, key)] = (sig, value)
         return value
 
 
@@ -90,6 +91,16 @@ def weights() -> dict[str, float]:
 
 def tau() -> dict[str, dict[str, float]]:
     return _cached(tau_table.PATH, tau_table.load, f"{tau_table.PATH.name} is missing")
+
+
+def leads() -> dict[str, int]:
+    """Lead days per action, from the same file as `tau()` and invalidated with it.
+
+    A second entry for one file: `POST /actions` wants both readings, and parsing tau.yaml
+    twice a request is 20 ms the capacity slider does not have.
+    """
+    return _cached(tau_table.PATH, tau_table.leads, f"{tau_table.PATH.name} is missing",
+                   key="leads")
 
 
 def report() -> dict | None:

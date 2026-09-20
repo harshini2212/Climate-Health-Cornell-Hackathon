@@ -506,6 +506,74 @@ both scales, and it is the chart the deck opens on.
 >
 > Run `make check`; green; commit; push; two lines in `status/api.md`; stop.
 
+### 16 · `cohort` — honest missingness, and the find-out tier that depends on it  ← cheapest fix with the biggest pitch payoff
+
+"A wide interval earns a cheap three-minute check-in call" is one of the five things the
+pitch is built on, and it does not demo: the find-out tier fires on **0.144%** of actions.
+
+The reason is not the model. It is that **`leeward/cohort/missingness.py` was never built.**
+`docs/SPEC.md` §5.5 says to hide 20% of the AC, floor and deployment fields at random, and
+nothing is hidden — every one of the 10,000 veterans has complete data. So every veteran's
+epistemic variance comes from the same prior spread, the share is flat, and no one is ever
+uncertain enough to earn a check-in.
+
+Fixing this is an hour and the payoff is certain. Rung 1 NUTS is four hours and the payoff
+is not. Do this one first.
+
+> Read `docs/SPEC.md` §5.5 and `leeward/model/score_prior.py` (the `p_epistemic_share`
+> derivation). Implement `leeward/cohort/missingness.py`: hide a seeded 20% of `home_ac`,
+> `floor` and `deployment_era`, writing `<col>_observed` siblings that are null where the
+> value is hidden and equal to the value where it is not. The truth stays in the cohort —
+> the simulator needs it — but scoring may only read the `_observed` copy.
+>
+> Then make `score_prior.py` marginalise over a hidden field rather than assuming it:
+> draw the unknown value from its population rate on each posterior draw, so a veteran with
+> a hidden floor in a high-stormwater ZIP gets a genuinely wider interval than one whose
+> floor is known. That is the whole claim — uncertainty about *this person*, not about the
+> world.
+>
+> **Write the test first.** Veterans with a hidden field must have a strictly higher mean
+> `p_epistemic_share` than veterans with none; the find-out tier must fire on at least 2% of
+> actions; and `make baseline-diff` must show `find_out_share` up and `ece_max` not
+> materially worse.
+>
+> Record a baseline when it lands: `make baseline LABEL="missingness"`.
+> Run `make check`; green; commit; push; two lines in `status/cohort.md`; stop.
+
+### 17 · `model` — rebase rung 1 onto main, which now has honest missingness  ← blocking, and time-boxed
+
+Rung 1 is done and it converged: **r-hat max 1.0082, 0 divergences, ESS min 1,390 bulk /
+1,069 tail**, on 106,661 binomial cells. It is not on `main` because it cannot be merged
+mechanically, and nobody should hand-merge it.
+
+`lane/model` refactored the scoring machinery out of `score_prior.py` into a new `score.py`,
+which is the right structure. In parallel `lane/cohort-missingness` added `p_gap_lo` and
+`p_gap_hi` to `score_prior.py` — the p_mean a veteran would be scored at if the fields the
+VA does not have on file turned out to be their least- and most-risky values. Your
+`score.py` has no idea that exists. Merging picks one and silently drops the other.
+
+> Rebase `lane/model` onto current `main`. Keep your `score.py` structure — one matrix
+> multiply, not two — and port the missingness marginalisation into it: the
+> `missingness.HIDDEN_FIELDS` loop, `missingness.stream(seed, ...)`, and the two gap columns,
+> which currently live in `leeward/model/score_prior.py` on main. `score_prior.py` stays the
+> prior-only entry point.
+>
+> Both must hold afterwards: `tests/test_ablate.py::test_an_empty_ablation_reproduces_the_shipped_scorer`
+> (ablate delegates to `score()` when nothing is dropped, so the columns must match) and the
+> missingness tests that assert a veteran with a hidden field scores a wider interval.
+>
+> Also fix the CI failure already on the branch: `score_prior.DAYS_PER_BUILD` no longer
+> exists where a test still reaches for it.
+>
+> **Do not change what `make demo` serves.** A clean clone has no `posterior.nc` and must
+> stay rung 0 with every driver chip lit — switching the board to rung 1 is Rahul's call.
+>
+> Run `make check`; green; push; two lines in `status/model.md`; stop.
+
+**If this is not green within 90 minutes, ship without it.** Rung 1 on a branch with those
+diagnostics is a true and checkable sentence, and the Model report can say so. What it must
+not do is arrive unverified in the path that scores every screen.
+
 ---
 
 ## Merge 2 → Round C is rehearsal only

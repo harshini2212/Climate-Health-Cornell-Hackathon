@@ -1,4 +1,4 @@
-.PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo report \
+.PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo demo-dev ui report ablate \
         test check status smoke clean-clone lanes
 PY  ?= .venv/bin/python
 PIP ?= .venv/bin/python -m pip
@@ -61,15 +61,41 @@ cohort: hazards     ## 10k synthetic veterans + truth.json + 120 days of outcome
 	$(PY) -m leeward.cohort.build
 	$(PY) -m leeward.cohort.simulate
 
-fit:                ## NumPyro NUTS -> data/posterior.nc  (see SPEC 6.0 for the rung)
-	$(PY) -m leeward.model.fit
+# Scoring is two stages, the same two `scripts/baseline.py` records. `model/score.py` -- the
+# posterior scorer -- takes over from the rung-0 `model/score_prior.py` the day it lands, with
+# no edit here. baseline.py names its stages outright, so that one does need an edit; whoever
+# lands score.py should make the two agree, or a recorded row describes a run nobody made.
+SCORER := $(if $(wildcard leeward/model/score.py),leeward.model.score,leeward.model.score_prior)
 
-score:              ## posterior x hazards -> scores.parquet, actions.parquet
-	$(PY) -m leeward.model.score
+# `make fit` has nothing to run until the model lane lands `model/fit.py` (SPEC 6.0, rung 1).
+# It still fails -- a target that claims success without fitting anything is worse -- but it
+# fails saying which rung is built, instead of `No module named` at 2am.
+fit:                ## NumPyro NUTS -> data/posterior.nc  (see SPEC 6.0 for the rung)
+ifeq ($(wildcard leeward/model/fit.py),)
+	@echo "make fit: nothing to fit. The model is at rung 0 (prior-only), so leeward/model/fit.py has to land before there is a posterior to cache; until then \`make score\` is the whole model." >&2
+	@exit 1
+else
+	$(PY) -m leeward.model.fit
+endif
+
+score:              ## hazards x the model that exists -> scores.parquet, actions.parquet
+	$(PY) -m $(SCORER)
 	$(PY) -m leeward.decision.allocate
+
+baseline:           ## run the pipeline and record one row in docs/BASELINES.md
+	$(PY) scripts/baseline.py $(if $(LABEL),--label "$(LABEL)",)
+
+baseline-diff:      ## diff the two most recent baselines, record nothing
+	$(PY) scripts/baseline.py --compare
 
 report:             ## full eval harness incl. the fairness audit -> report/report.json
 	$(PY) -m leeward.eval.report
+
+# Separate from `report` on purpose: six models over the real cohort is about 30 seconds,
+# and `make report` is run every few edits. It caches report/ablations.json, which the next
+# `make report` picks up. Re-run it whenever the model or the decision layer moves.
+ablate:             ## what each block of the model is worth -> report/ablations.{csv,json,html}
+	$(PY) -m leeward.eval.ablate
 
 # --------------------------------------------------------------------------- #
 # Demo
@@ -80,14 +106,33 @@ report:             ## full eval harness incl. the fairness audit -> report/repo
 # to replay a different beat by hand: `make demo DAY=0` is the calm week nine weeks earlier.
 DAY ?=
 
-demo:               ## boot API + UI, offline. `make demo DAY=0` opens on the calm week.
+demo:               ## boot API + UI, offline: the built ui/dist if there is one, else Vite. DAY=0 = calm week
+ifeq ($(wildcard ui/dist/index.html),)
+	@echo "make demo: ui/dist is not built, so this boots the Vite dev server (needs node_modules). \`make ui\` builds the bundle."
+	@$(MAKE) --no-print-directory demo-dev
+else
+	@$(PY) scripts/ui_dist.py check || echo "make demo: booting the bundle anyway, but it is out of date. \`make ui\` rebuilds it."
+	@echo "make demo: serving the built UI (ui/dist) from the API, one process -> http://127.0.0.1:8000/$(if $(DAY),?day=$(DAY))"
+	$(PY) -m uvicorn leeward.api.main:app --port 8000
+endif
+
+demo-dev:           ## boot API + Vite dev server (HMR), for working on ui/src. DAY=0 = calm week
 	$(PY) -m uvicorn leeward.api.main:app --port 8000 & \
+	  API=$$!; trap 'kill $$API 2>/dev/null' EXIT INT TERM; \
 	  cd ui && VITE_DEMO_DAY="$(DAY)" npm run dev
+
+# `ui/dist` is committed, so a clean clone with the wifi off can boot the demo without `npm ci`.
+# `make ui` is what regenerates it; the stamp it writes is what `make demo`, `make clean-clone`
+# and the gate check the bundle against, so a `ui/src` edit that was never rebuilt gets caught.
+ui:                 ## rebuild the committed ui/dist bundle after editing ui/src, then commit it
+	@test -d ui/node_modules || (cd ui && npm ci)
+	cd ui && npm run build
+	$(PY) scripts/ui_dist.py stamp
 
 smoke:              ## boot the API and hit every route; fails if any shape is wrong
 	@bash scripts/smoke_demo.sh
 
-clean-clone:        ## prove a fresh clone boots offline in under 60s
+clean-clone:        ## prove a fresh clone boots and serves the UI offline in under 60s
 	@bash scripts/clean_clone_test.sh
 
 lanes:              ## create the six git worktrees, each with its own venv

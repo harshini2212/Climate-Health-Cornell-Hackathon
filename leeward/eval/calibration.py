@@ -19,6 +19,15 @@ together in one bin, so a constant predictor gives one bin rather than ten copie
 The fairness audit reuses `bin_edges` so that every group is scored on the whole window's
 bins; a per-group re-bin would make two groups' ECEs incomparable.
 
+**What this module cannot tell you** is in `constant_ece`, and it is reported beside the
+model's own number rather than left for a reviewer to work out. A single number equal to the
+base rate scores ECE 0.0000 here -- exactly, for any data, under any binning -- which is
+better than Leeward's 0.001-0.008. That is not a flaw in the binning; it is what a
+calibration-only measure is, and no unbinned replacement escapes it (see `constant_ece`). So
+this chart alone cannot separate the model from one that has never met anyone. The separation
+is discrimination, in `leeward/eval/discrimination.py`. Both go on the Model report screen;
+the reliability curve carries the control as labelled markers on the diagonal.
+
     python -m leeward.eval.calibration     # -> report/calibration.{csv,html}
 """
 
@@ -167,6 +176,62 @@ def ece_overall(rel: pl.DataFrame) -> float:
 
 
 # --------------------------------------------------------------------------- #
+# The control nobody had run
+# --------------------------------------------------------------------------- #
+
+def constant_pairs(pairs: pl.DataFrame) -> pl.DataFrame:
+    """`pairs` with every prediction replaced by that need's base rate on this window.
+
+    The predictor that has never met anyone: it knows how often the need happens and nothing
+    about who it happens to.
+    """
+    return pairs.with_columns(pl.col("y").mean().over("need").alias("p_mean"))
+
+
+def constant_ece(pairs: pl.DataFrame, *, n_bins: int = BINS) -> dict[str, float]:
+    """ECE per need for a single number equal to the base rate, scored on the same bins.
+
+    **It is 0.0000, and this is not a binning artifact.** The tempting reading -- "every row
+    ties, so there is one bin, so predicted equals observed" -- is the right mechanism for
+    *this estimator* but the wrong diagnosis, and the wrong diagnosis invites the wrong fix
+    ("then use an unbinned calibration metric"). There is no such fix. For a constant
+    predictor f ≡ π, the conditional event rate P(Y | f(X) = π) is π by definition, so the
+    population calibration error is exactly zero under any binning, any number of bins, and
+    any smoother. Austin & Steyerberg's ICI, which replaces bins with a LOESS fit, returns 0
+    here too.
+
+    The reason is structural: calibration error is *proper but not strictly proper*. Under the
+    Murphy/Brocker decomposition a proper score splits into calibration and **sharpness**, and
+    a calibration-only measure drops the sharpness term -- so it is minimised by the constant
+    at the base rate as surely as by the truth (Gruber & Buettner, "Better Uncertainty
+    Calibration via Proper Scores", NeurIPS 2022). In van Calster's calibration hierarchy the
+    constant satisfies the two weakest rungs, mean and weak calibration, and has zero
+    resolution. Run through `reliability()` rather than short-circuited to 0.0, because the
+    point is that the honest procedure returns it.
+
+    This is the control for `ece(...)`, and it is displayed beside it rather than hidden:
+    Leeward's 0.001-0.008 is *worse* than what a constant scores. At base rates under 2.5%
+    calibration is not the discriminating question, and the question it does answer --
+    "when Leeward says 8 percent, does it happen 8 percent of the time?" -- is worth keeping
+    and worth not overselling. What separates the model from this number is discrimination,
+    which `leeward/eval/discrimination.py` reports.
+    """
+    return ece(reliability(constant_pairs(pairs), n_bins=n_bins))
+
+
+def constant_reference(pairs: pl.DataFrame) -> pl.DataFrame:
+    """One row per need: the base rate, and the ECE a constant at it scores. Chart input."""
+    by_need = constant_ece(pairs)
+    rates = {r["need"]: float(r["base_rate"])
+             for r in pairs.group_by("need").agg(pl.col("y").mean().alias("base_rate"))
+                           .to_dicts()}
+    return pl.DataFrame(
+        [{"need": need, "base_rate": rates[need], "ece": by_need.get(need, 0.0)}
+         for need in NEEDS if need in rates],
+        schema={"need": pl.Utf8, "base_rate": pl.Float64, "ece": pl.Float64})
+
+
+# --------------------------------------------------------------------------- #
 # Outputs
 # --------------------------------------------------------------------------- #
 
@@ -179,11 +244,30 @@ INK, INK_2, MUTED = "#0b0b0b", "#52514e", "#898781"
 SURFACE, GRID, AXIS = "#fcfcfb", "#e1e0d9", "#c3c2b7"
 
 
+def base_rates(rel: pl.DataFrame) -> dict[str, float]:
+    """Each need's event rate on the window, recovered from the bins: Σ(n · observed) / Σ n.
+
+    Read off the reliability table so that the chart can place the constant-predictor control
+    without being handed the pairs again -- the bins already contain every outcome.
+    """
+    per = (rel.group_by("need")
+              .agg(((pl.col("n") * pl.col("observed")).sum() / pl.col("n").sum()).alias("rate")))
+    got = {r["need"]: float(r["rate"]) for r in per.to_dicts()}
+    return {need: got[need] for need in NEEDS if need in got}
+
+
 def reliability_curve(rel: pl.DataFrame) -> go.Figure:
     """Predicted against observed, one line per need, with the perfectly-calibrated diagonal.
 
     The axes are log-scaled: rung-0 risks span two orders of magnitude, and on a linear axis
     every bin but the last would sit on top of the origin.
+
+    The open diamonds are the control: a single number equal to each need's base rate. They
+    sit *exactly* on the diagonal at ECE 0.000, which is the honest half of the calibration
+    claim -- a predictor that has never met anyone is perfectly calibrated here, so this chart
+    cannot by itself be the case for the model. See `constant_ece` and the discrimination
+    chart beside it. Showing it costs one legend row and buys the answer to the first question
+    a reviewer asks.
     """
     by_need = ece(rel)
     # A log axis has no room for zero, and an all-zero bin is ordinary at the bottom of a
@@ -209,14 +293,28 @@ def reliability_curve(rel: pl.DataFrame) -> go.Figure:
             hovertemplate=(f"<b>{NEED_LABELS[need]}</b><br>predicted %{{x:.3f}}<br>"
                            "observed %{y:.3f}<br>%{customdata:,} veteran-days<extra></extra>"),
         )
+    # The control, last so it draws over the curves: one open diamond per need at its own
+    # base rate, on the diagonal by construction.
+    rates = base_rates(rel)
+    if rates:
+        fig.add_scatter(
+            x=list(rates.values()), y=list(rates.values()), mode="markers",
+            name="Constant at the base rate · ECE 0.000",
+            marker={"symbol": "diamond-open", "size": 13, "color": INK_2,
+                    "line": {"width": 2}},
+            customdata=[NEED_LABELS[n] for n in rates],
+            hovertemplate=("<b>%{customdata}</b>: a single number, the base rate<br>"
+                           "%{x:.3%} predicted, %{y:.3%} observed<br>"
+                           "perfectly calibrated and useless<extra></extra>"),
+        )
     axis = {"type": "log", "range": [np.log10(lo), np.log10(hi)], "gridcolor": GRID,
             "gridwidth": 1, "zerolinecolor": AXIS, "linecolor": AXIS,
             "tickfont": {"color": MUTED}, "tickformat": ".1%"}
     fig.update_layout(
         title={"text": "Reliability: predicted risk against what happened",
                "subtitle": {"text": (f"Held-out window · equal-mass bins · pooled ECE "
-                                     f"{ece_overall(rel):.3f} · simulated outcomes, "
-                                     "synthetic cohort"),
+                                     f"{ece_overall(rel):.3f} · a constant at the base rate "
+                                     "scores 0.000 · simulated outcomes, synthetic cohort"),
                             "font": {"color": INK_2, "size": 13}},
                "font": {"color": INK, "size": 18}, "x": 0.02, "xanchor": "left"},
         width=760, height=520, margin={"l": 70, "r": 24, "t": 96, "b": 64},
@@ -251,11 +349,20 @@ def run(scores: pl.DataFrame, outcomes: pl.DataFrame, *,
 
 
 def main() -> int:
-    rel = run(schema.read("scores"), schema.read("outcomes"))
+    pairs = paired(schema.read("scores"), schema.read("outcomes"))
+    rel = reliability(pairs)
     csv, html = write_outputs(rel)
+    control, rates = constant_ece(pairs), base_rates(rel)
     for need, value in ece(rel).items():
-        print(f"  {need:14s} ECE {value:.4f}  {'ok' if value < ECE_BAR else 'over the bar'}")
+        print(f"  {need:14s} ECE {value:.4f}  {'ok' if value < ECE_BAR else 'over the bar'}"
+              f"   · constant at {rates.get(need, 0):.2%} scores {control.get(need, 0):.4f}")
     print(f"  {'pooled':14s} ECE {ece_overall(rel):.4f}  (SPEC §11 bar is {ECE_BAR})")
+    print("  the control is 0.0000 by definition, under any binning: calibration error is "
+          "proper but not strictly")
+    print("  proper, so it is minimised by a constant at the base rate as surely as by the "
+          "truth.")
+    print("  calibration is necessary and not sufficient at these base rates; "
+          "discrimination.py is the other half.")
     print(f"wrote {csv.relative_to(schema.ROOT)} and {html.relative_to(schema.ROOT)}")
     return 0
 

@@ -74,6 +74,24 @@ nobody re-discovers it at 03:00.
 - The **Brooklyn campus absorbed the largest increase in dialysis encounters**; VA patients'
   dialysis encounters at non-VA facilities also rose.
 
+> Wang V, Maciejewski ML, Patel UD, Stechuchak KM, Hynes DM, Weinberger M., *Comparison of
+> outcomes for veterans receiving dialysis care from VA and non-VA providers*, BMC Health Serv
+> Res 2013;13:26 (open access, CC BY) — https://doi.org/10.1186/1472-6963-13-26 ·
+> https://pmc.ncbi.nlm.nih.gov/articles/PMC3559268/
+
+- "Approximately **35,000** veterans enrolled in the Veterans Health Administration (VA) have
+  end-stage renal disease (ESRD), reflecting a higher prevalence in the VA population than in
+  the general US population (**604 vs. 187 per 100,000**)". The paper cites the USRDS 2012
+  Annual Data Report and the VA Allocation Resource Center's FY2011 workload report.
+- **This is the level the cohort's `ckd_dialysis` is drawn at** (`VA_ESRD_PER_100K = 604` in
+  `leeward/cohort/build.py`): 0.604%, about 60 of 10,000 veterans, up from 7 when emPOWER's
+  Medicare facility-dialysis count was used alone. emPOWER still supplies the per-ZIP shape.
+- Read it with three caveats. **ESRD includes people with a functioning transplant**, and the
+  paper does not split them out, so it slightly overstates dialysis. It is **FY2011-vintage**
+  and **not age-adjusted** to this panel. And although the paper says "enrolled", its two
+  figures imply a denominator of about 5.8 million, so it is probably a rate among the
+  veterans the VA actually serves.
+
 > The American Legion, *VA updates Legion on Manhattan facility*, November 2012 —
 > https://www.legion.org/information-center/news/veterans-healthcare/2012/november/va-updates-legion-on-manhattan-facility
 
@@ -85,6 +103,7 @@ These are not quotes. They are joins you can re-run; the script is `scripts/fetc
 | --- | --- | --- |
 | The Manhattan VA is in the first evacuation zone | Station **630**, Margaret Cochran Corbin VA Campus, **evacuation zone 1** | `va_facilities_nyc_hazard.parquet` — VHA facility registry × NYC hurricane evacuation zones |
 | Veterans in NYC | **131,195**, of whom **53.5% are 65+** | `acs_veterans_by_zcta.parquet` — ACS 2023 5-year B21001, summed over NYC ZCTAs |
+| NYC residents by race and Hispanic origin | **8,575,512** residents in NYC ZCTAs: **28.3%** Hispanic, **31.1%** non-Hispanic white, **20.9%** non-Hispanic Black, **14.7%** non-Hispanic Asian | `acs_race_by_zcta.parquet` — ACS 2023 5-year B03002, summed over NYC ZCTAs. All residents, not veterans |
 | Electricity-dependent Medicare beneficiaries in NYC | **36,146**; **3,165** on oxygen; **1,948** facility ESRD dialysis | `empower_ny_zip.parquet` — HHS emPOWER, five-borough ZIPs |
 | June 2023 smoke peak | **203.5 µg/m³ PM2.5, AQI 254**, Queens monitor, 7 June 2023 | `airnow_pm25_nyc_smoke2023.parquet` — EPA AirNow daily files |
 | Patients on ≥1 heat-impairing medication | **65%** of the 77 Synthea patients with active meds (**77%** are on a crosswalk medication of *some* hazard); **16%** on the CDC-named ACE-inhibitor/ARB-plus-diuretic pair; 10% on a controlled substance; 9% cold-chain; 12% at ACB ≥ 3 | `med_climate_risk.csv` × `va_drug_class_members.parquet` × `synthea_med_profiles.parquet`, re-derived from the bundles in `tests/test_medications.py` |
@@ -175,6 +194,20 @@ fall risk. Leeward uses the same 0–3 convention in `med_climate_risk.csv`.
 - VA Lighthouse Clinical Health API (FHIR R4) — https://developer.va.gov/explore/api/clinical-health
 - Oracle Health Millennium FHIR R4 APIs — https://docs.oracle.com/en/industries/health/millennium-platform-apis/index.html
 
+### Where the convergence thresholds come from
+
+`report/fit.json` reports the sampler against two bars, and both are somebody's published
+recommendation rather than ours:
+
+| Number | What it is | Source |
+| --- | --- | --- |
+| **r-hat < 1.05** | SPEC §6.5's acceptance bar, and what `make fit` exits non-zero on | `docs/SPEC.md` §6.5 |
+| **r-hat < 1.01**, **bulk and tail ESS > 400** | the stricter modern bar, reported alongside | Vehtari, Gelman, Simpson, Carpenter & Bürkner, *Rank-normalization, folding, and localization: an improved R̂ for assessing convergence of MCMC*, **Bayesian Analysis 16(2), 2021, 667–718** — https://doi.org/10.1214/20-BA1221 |
+
+The statistic itself is the rank-normalised split-R̂ from that paper: it is what ArviZ's
+`az.rhat` computes by default, so the number we print is already the one the paper argues
+for rather than the 1992 original.
+
 ---
 
 ## 2. Data sources, as fetched
@@ -200,6 +233,7 @@ prefix for each in `data/reference/manifest.json`.
 | `airnow_smoke` | https://files.airnowtech.org/airnow/ | `airnow_pm25_nyc_smoke2023.parquet` |
 | `nws_snapshot` | https://api.weather.gov/ | `nws_forecast_nyc.parquet`, `nws_alerts_ny.json` |
 | `acs_veterans` | https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/ | `acs_veterans_by_zcta.parquet` |
+| `acs_race` | https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b03002.dat | `acs_race_by_zcta.parquet` |
 | `va_drug_classes` | https://rxnav.nlm.nih.gov/REST/rxclass/ | `va_drug_class_members.parquet` |
 | `synthea_sample` | https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip | `data/raw/synthea_sample_fhir.zip` |
 | `synthea_med_profiles` | derived from `synthea_sample` | `synthea_med_profiles.parquet` |
@@ -212,6 +246,14 @@ prefix for each in `data/reference/manifest.json`.
   **4.0 GB**, filename `csv_national_100k.zip`, root directory `csv_usa_100k/`, Synthea **CSV**
   format. CC0. The catalogue description says 10,000 records; the resource is the national
   100k CSV release. See `data/README.md`.
+- U.S. Census Bureau, ACS 2023 5-year **B03002**, *Hispanic or Latino Origin by Race*, table-based
+  Summary File — https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b03002.dat
+  (line definitions: `.../documentation/ACS20235YR_Table_Shells.txt`). Sets the cohort's `race`
+  and `ethnicity`: each veteran is one joint draw from their own ZIP's cells. It describes all
+  residents of a ZIP, not its veterans, and both columns are `_synthetic`. Cross-checked against
+  CDC/ATSDR SVI 2022 `EP_MINRTY` (persons of color, per tract, population-weighted to borough),
+  https://svi.cdc.gov/Documents/Data/2022/csv/states/NewYork.csv — the cohort lands within 4.4
+  points of it in every borough (`tests/test_cohort.py`).
 - Synthea sample data (FHIR R4) — https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip
 - Synthea CSV data dictionary — https://github.com/synthetichealth/synthea/wiki/CSV-File-Data-Dictionary
 - VA National Center for PTSD, *How Common Is PTSD in Veterans?* —

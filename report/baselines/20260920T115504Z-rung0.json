@@ -1,0 +1,107 @@
+{
+  "act_now_share": 7.08,
+  "auc_heat": 0.727,
+  "auc_treatment_gap": 0.715,
+  "auc_worst_need": 0.581,
+  "calls_available_k40": 1200,
+  "calls_spent_k40": 934,
+  "constant_ece": {
+    "access_loss": 0.0,
+    "breathing": 0.0,
+    "heat": 0.0,
+    "mental": 0.0,
+    "treatment_gap": 0.0
+  },
+  "divergences": null,
+  "ece_by_need": {
+    "access_loss": 0.0067,
+    "breathing": 0.0011,
+    "heat": 0.0076,
+    "mental": 0.0044,
+    "treatment_gap": 0.0055
+  },
+  "ece_max": 0.0076,
+  "ece_mean": 0.005,
+  "fairness_flagged": 0,
+  "fairness_groups": 33,
+  "fairness_max_fnr_ratio": 1.048,
+  "find_out_share": 9.147,
+  "git_dirty": true,
+  "git_sha": "d6ef34e",
+  "harm_averted_baselines_k40": {
+    "random": 3.74,
+    "rank_by_age": 3.37,
+    "rank_by_chronic": 6.79
+  },
+  "harm_averted_k40": 16.14,
+  "harm_per_call_baselines_k40": {
+    "random": 0.0935,
+    "rank_by_age": 0.0843,
+    "rank_by_chronic": 0.1698
+  },
+  "harm_per_call_k40": 0.5185,
+  "harm_total_k40": 484.3,
+  "lift_at_1pct": {
+    "access_loss": 4.1,
+    "breathing": 3.3,
+    "heat": 10.5,
+    "mental": 2.8,
+    "treatment_gap": 15.3
+  },
+  "lift_per_call_k40": 3.05,
+  "lift_vs_best_baseline_k40": 2.38,
+  "machine": "arm64",
+  "medication": {
+    "cdc_pair_pct": 18.4,
+    "cold_chain_pct": 10.8,
+    "controlled_pct": 5.5,
+    "heat_impairing_pct": 72.0,
+    "n_active_meds_mean": 4.37
+  },
+  "model_beats_constant_on_ece": false,
+  "model_rung": 0,
+  "n_actions": 327397,
+  "n_score_rows": 6000000,
+  "n_veterans": 10000,
+  "n_zips": 175,
+  "needs_beating_chance": 2,
+  "outcome_base_rate_pct": {
+    "access_loss": 0.437,
+    "breathing": 0.669,
+    "heat": 5.837,
+    "mental": 0.537,
+    "treatment_gap": 1.859
+  },
+  "python": "3.11.14",
+  "recorded_utc": "2026-09-20T11:55:04Z",
+  "recovery_coverage": 0.9833,
+  "rhat_max": null,
+  "scaled_brier": {
+    "access_loss": -0.0144,
+    "breathing": 0.0011,
+    "heat": 0.1075,
+    "mental": -0.0041,
+    "treatment_gap": 0.0419
+  },
+  "tier_mix": {
+    "act_now": 23192,
+    "find_out": 29947,
+    "self_serve": 274258
+  },
+  "timings_seconds": {
+    "allocate": 7.37,
+    "cohort": 0.29,
+    "hazards": 0.16,
+    "report": 9.68,
+    "score": 16.92,
+    "simulate": 1.38
+  },
+  "total_seconds": 35.8,
+  "within_day_auc": {
+    "access_loss": 0.645,
+    "breathing": 0.581,
+    "heat": 0.727,
+    "mental": 0.605,
+    "treatment_gap": 0.715
+  }
+}

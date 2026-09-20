@@ -70,6 +70,10 @@ CAREGIVER = ["none", "informal_coresident", "informal_remote", "va_pcafc"]
 INCOME_BANDS = ["low", "mid", "high"]
 FLOORS = ["basement", "ground", "upper"]
 CHANNELS = ["VEText", "MHV", "care_team_phone"]
+#: The fairness audit's strata. Census asks race and Hispanic origin as two questions, so
+#: "Hispanic" is an origin of any race; "Other" folds AIAN, NHPI, some other race and multiracial.
+RACES = ["White", "Black", "Asian", "Other"]
+ETHNICITIES = ["Hispanic", "Non-Hispanic"]
 
 #: Every outreach message must contain all of these. `test_guardrails.py` enforces it.
 MANDATORY_MESSAGE_ELEMENTS = [
@@ -131,8 +135,10 @@ _COHORT = Table(
         _c("name_display", pl.Utf8, "Synthetic display name for the demo card", synthetic=True),
         _c("age", pl.Int32, bounds=(18, 110)),
         _c("sex", pl.Utf8, values=("M", "F")),
-        _c("race", pl.Utf8, "Fairness audit only", nullable=True),
-        _c("ethnicity", pl.Utf8, "Fairness audit only", nullable=True),
+        _c("race", pl.Utf8, "Fairness audit only; drawn from the ZIP's ACS B03002 composition",
+           nullable=True, values=tuple(RACES), synthetic=True),
+        _c("ethnicity", pl.Utf8, "Fairness audit only; drawn jointly with race, same source",
+           nullable=True, values=tuple(ETHNICITIES), synthetic=True),
 
         # geography -- modzcta is the join key everywhere
         _c("modzcta", pl.Utf8, "NYC Modified ZCTA, one of 178"),
@@ -197,6 +203,16 @@ _COHORT = Table(
         _c("consent_partner_check", pl.Boolean, synthetic=True),
         _c("consent_ride", pl.Boolean, synthetic=True),
         _c("consent_housing", pl.Boolean, synthetic=True),
+
+        # nullable copies after missingness (cohort/missingness.py). Null means the VA does
+        # not have the value; the column beside it is the truth, which only the simulator may
+        # read. Scoring reads these. Not `synthetic`: the value is a copy of a column that
+        # already carries its own flag, and it is the gap, not the value, that is invented.
+        _c("home_ac_observed", pl.Boolean, "null where missingness hid it", nullable=True),
+        _c("floor_observed", pl.Utf8, "null where missingness hid it",
+           nullable=True, values=tuple(FLOORS)),
+        _c("deployment_era_observed", pl.Utf8, "null where missingness hid it",
+           nullable=True, values=tuple(DEPLOYMENT_ERAS)),
     ),
 )
 
@@ -272,8 +288,17 @@ _SCORES = Table(
         _c("p_lo80", pl.Float64, "10th percentile over posterior draws", bounds=(0, 1)),
         _c("p_hi80", pl.Float64, "90th percentile over posterior draws", bounds=(0, 1)),
         _c("p_epistemic_share", pl.Float64,
-           "Var over draws / (Var over draws + mean p(1-p)). Drives the Find-out tier.",
+           "Var over draws / (Var over draws + mean p(1-p)).",
            bounds=(0, 1)),
+        # What the gap in this veteran's own record is worth. Null where there is no gap --
+        # which is not the same as a gap that would not move the number, and the Find-out
+        # tier needs to tell those apart.
+        _c("p_gap_lo", pl.Float64, "p if every missing field took its least-risky value",
+           nullable=True, bounds=(0, 1)),
+        _c("p_gap_hi", pl.Float64,
+           "p if every missing field took its most-risky value. Drives the Find-out tier: a "
+           "call is worth making when p_gap_hi crosses a line p_mean does not.",
+           nullable=True, bounds=(0, 1)),
         _c("driver_1", pl.Utf8, "Plain-language phrase from posterior contributions",
            nullable=True),
         _c("driver_2", pl.Utf8, nullable=True),
@@ -289,14 +314,18 @@ _SCORES = Table(
 _ACTIONS = Table(
     name="actions",
     key=("date", "veteran_id", "action"),
-    doc="Today's ranked action list, already cut at capacity.",
+    doc="A day's ranked action list, already cut at that day's capacity. `date` is the "
+        "do-by day: the day the work happens, which is the risk day minus `lead_days`.",
     columns=(
         _c("action_id", pl.Utf8),
-        _c("date", pl.Date),
+        _c("date", pl.Date, "The day this must be DONE by; risk day = date + lead_days"),
         _c("veteran_id", pl.Utf8),
         _c("action", pl.Utf8, values=tuple(ACTIONS)),
         _c("tier", pl.Utf8, values=tuple(TIERS)),
         _c("eha", pl.Float64, "Expected harm averted", bounds=(0, 1000)),
+        _c("lead_days", pl.Int32, "Days ahead of the risk this must happen to work at all; "
+                                  "from lead_days in leeward/decision/tau.yaml",
+           bounds=(0, 30)),
         _c("rank", pl.Int32, bounds=(1, 1_000_000)),
         _c("capacity_bucket", pl.Utf8, values=tuple(sorted(set(ACTION_COST_UNIT.values())))),
         _c("rationale", pl.Utf8, "One sentence a care team member can read aloud"),

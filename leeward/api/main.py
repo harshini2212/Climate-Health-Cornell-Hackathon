@@ -5,12 +5,16 @@
 Every route reads a cached parquet through `leeward.schema.read` (see `store.py`); nothing here
 fits, scores or samples, so the `make demo` path needs no network and no key. The one thing a
 request computes is `POST /actions`, which is the capacity slider: it calls
-`leeward.decision.allocate.compare` on one day of cached scores and answers in well under
-300 ms at 10,000 veterans.
+`leeward.decision.allocate.compare` on the days of cached scores that one work day can still
+act on, and answers in well under 300 ms at 10,000 veterans.
 
 Response bodies are the frozen models in `schemas.py`. The large ones are built as plain dicts
 and validated against the model in one pass, then serialized straight to JSON, which is the
 same contract as constructing every row by hand and several times faster.
+
+If `ui/dist` exists (it is committed; `make ui` rebuilds it) the app also serves it at `/`, and
+answers `/api/*` as `/*`, so `make demo` is this one process and needs neither Node nor a dev
+server. Routes are declared first and the static mount last, so no route is ever shadowed.
 
 What is honest about the parameters the models carry but the data cannot yet honour:
 
@@ -27,13 +31,16 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date as Date
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from leeward import demo, schema
 from leeward.api import schemas as api
@@ -50,6 +57,9 @@ log = logging.getLogger("uvicorn.error")
 SCENARIO = "sandy_then_heat"
 PRIOR_SCALE = 1.0
 FORECAST_DAYS = 7
+
+#: The committed UI bundle (`make ui` rebuilds it). Served at `/` when it is there.
+UI_DIST = schema.ROOT / "ui" / "dist"
 
 #: name -> the cohort column a team working "by the book" sorts on, highest first.
 #: `_random` is added per request from a seed keyed by the date, so the same click gives the
@@ -72,7 +82,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             store.table(name)
         except store.DataUnavailable as e:
             log.warning("not loaded at startup: %s", e)
-    store.weights(), store.tau(), store.facilities(), store.med_classes()
+    store.weights(), store.tau(), store.leads(), store.facilities(), store.med_classes()
     yield
 
 
@@ -84,6 +94,30 @@ app = FastAPI(
 # The UI proxies /api in dev; this covers a build pointed straight at :8000 (VITE_API_URL).
 app.add_middleware(CORSMiddleware, allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
                    allow_methods=["GET", "POST"], allow_headers=["content-type"])
+
+
+class _StripApiPrefix:
+    """`/api/forecast` is answered as `/forecast`.
+
+    The UI calls `/api/*`. Under `npm run dev`, Vite's proxy strips the prefix before the request
+    reaches this app (ui/vite.config.ts); the built bundle is served by this app itself, so the
+    same rewrite has to happen here. Doing it on the path rather than per route means a bundle
+    built with any `VITE_API_URL` still reaches the API instead of quietly answering from fixtures.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket") and (
+                scope["path"] == "/api" or scope["path"].startswith("/api/")):
+            scope = {**scope, "path": scope["path"][4:] or "/"}
+            if "raw_path" in scope:
+                scope["raw_path"] = scope["raw_path"][4:] or b"/"
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_StripApiPrefix)
 
 
 @app.exception_handler(store.DataUnavailable)
@@ -153,15 +187,13 @@ def forecast(scenario: str = SCENARIO, day: int | None = Query(None, ge=0)) -> R
     window = dates[day:day + FORECAST_DAYS]
     hz = hazards.filter(pl.col("date").is_in(window)).sort("date", "modzcta")
 
-    # FacilityStatus carries no date, so a site counts as down if it is down on any day of the
-    # window: "will this site be there when the veteran needs it?"
+    # One row per facility per day, straight off `site_status`, which is already keyed that
+    # way. A closure is a fact about a day: the ribbon puts it on the day it starts, and a
+    # caller that wants "will this site be there at all this week?" takes .any() itself.
     site = (store.table("site_status").filter(pl.col("date").is_in(window))
-                 .group_by("facility_id")
-                 .agg(pl.col("site_down").any(), pl.col("evac_zone").first(),
-                      pl.col("site_dependent_services").first())
                  .join(store.facilities(), left_on="facility_id", right_on="station_no",
                        how="left")
-                 .sort("facility_id"))
+                 .sort("facility_id", "date"))
     facilities = site.select(list(api.FacilityStatus.model_fields)).to_dicts()
 
     alerts = hz.group_by("date").agg(pl.col("flood_warning").any(), pl.col("heat_alert").any(),
@@ -176,9 +208,14 @@ def forecast(scenario: str = SCENARIO, day: int | None = Query(None, ge=0)) -> R
         if r["smoke_alert"]:
             bits.append(f"smoke {d}")
     headline = "; ".join(dict.fromkeys(bits)) or "No active alerts in the 7-day window"
-    down = [f["name"] for f in facilities if f["site_down"]]
+    #: The first day of the window each site is down, so the banner says when, not just who.
+    down: dict[str, Date] = {}
+    for f in facilities:
+        if f["site_down"] and f["name"] not in down:
+            down[f["name"]] = f["date"]
     if down:
-        headline += f". Site down: {', '.join(down)}"
+        headline += ". Site down: " + ", ".join(
+            f"{name} from {on.strftime('%a %d %b')}" for name, on in down.items())
 
     return _json(api.ForecastResponse.model_validate({
         "scenario": scenario, "day": day, "dates": window, "headline": headline,
@@ -225,23 +262,50 @@ def scores(date: Date, need: str) -> Response:
 # GET /veteran/{id}?date=
 # --------------------------------------------------------------------------- #
 
-def _why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float]) -> str:
-    """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers."""
+def why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float]) -> str:
+    """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers.
+
+    Every branch falls through to the plain "highest need" sentence rather than assuming its
+    own rule is the one that fired. A caller may hold a tier decided on a different frame --
+    `make_ui_fixtures.py` labels from the allocator's candidate list, and `tiers.py` has
+    hazard-triggered act-now rules the SPEC lists and the scores alone cannot show -- so a
+    branch that trusts the label crashes on `max()` of an empty sequence. It did.
+    """
     top = max(needs, key=lambda n: n.p_mean)
     if tier == "act_now":
-        n = max((n for n in needs if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
-                 and n.p_mean >= tiers.ACT_NOW_P and n.p_epistemic_share < tiers.EPISTEMIC_CUT),
-                key=lambda n: n.p_mean)
-        return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance (80% interval "
-                f"{n.p_lo80:.0%}-{n.p_hi80:.0%}), above the {tiers.ACT_NOW_P:.0%} Act-now line "
-                f"for a need this severe, and only {n.p_epistemic_share:.0%} of the uncertainty "
-                f"is what we do not know about this veteran.")
+        acting = [n for n in needs if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
+                  and n.p_mean >= tiers.ACT_NOW_P and n.p_epistemic_share < tiers.EPISTEMIC_CUT]
+        if acting:
+            n = max(acting, key=lambda n: n.p_mean)
+            return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance (80% interval "
+                    f"{n.p_lo80:.0%}-{n.p_hi80:.0%}), above the {tiers.ACT_NOW_P:.0%} Act-now "
+                    f"line for a need this severe, and only {n.p_epistemic_share:.0%} of the "
+                    f"uncertainty is what we do not know about this veteran.")
+        return (f"Act-now on a hazard rule rather than a probability: highest single-need risk "
+                f"is {top.p_mean:.0%} ({NEED_PHRASE[top.need]}).")
     if tier == "find_out":
-        n = max((n for n in needs if n.p_epistemic_share >= tiers.EPISTEMIC_CUT
-                 and n.p_mean >= tiers.FIND_OUT_P), key=lambda n: n.p_mean)
-        return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance, but "
-                f"{n.p_epistemic_share:.0%} of the uncertainty is what we do not know about "
-                f"this veteran, so a check-in call is worth more than a guess.")
+        # The gap rule first: it is the more useful sentence and the more common one. Both
+        # rules can put a veteran here, so neither may assume it was the one that fired.
+        straddling = [(n, line) for n in needs for line in tiers.ASKABLE_LINES
+                      if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
+                      and n.p_gap_lo is not None and n.p_gap_hi is not None
+                      and n.p_gap_lo < line <= n.p_gap_hi]
+        if straddling:
+            n, line = max(straddling, key=lambda t: t[0].p_gap_hi - t[0].p_gap_lo)
+            return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance on what the "
+                    f"VA has on file, but part of this veteran's record is missing. Depending "
+                    f"on the answer the real number is {n.p_gap_lo:.0%} to {n.p_gap_hi:.0%} "
+                    f"-- either side of the {line:.0%} line. A three-minute check-in call "
+                    f"settles which, and nothing else on this list will.")
+        wide = [n for n in needs if n.p_epistemic_share >= tiers.EPISTEMIC_CUT
+                and n.p_mean >= tiers.FIND_OUT_P]
+        if wide:
+            n = max(wide, key=lambda n: n.p_mean)
+            return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance, but "
+                    f"{n.p_epistemic_share:.0%} of the uncertainty is what we do not know "
+                    f"about this veteran, so a check-in call is worth more than a guess.")
+        return (f"Something in this veteran's record is missing and worth a check-in call; "
+                f"highest single-need risk is {top.p_mean:.0%} ({NEED_PHRASE[top.need]}).")
     if tier == "self_serve":
         return (f"Highest single-need risk is {top.p_mean:.0%} ({NEED_PHRASE[top.need]}): above "
                 f"the {tiers.SELF_SERVE_P:.0%} line, short of Act-now and Find-out.")
@@ -302,6 +366,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
         needs.append(api.NeedScore(
             need=k, p_mean=r["p_mean"], p_lo80=r["p_lo80"], p_hi80=r["p_hi80"],
             p_epistemic_share=r["p_epistemic_share"],
+            p_gap_lo=r.get("p_gap_lo"), p_gap_hi=r.get("p_gap_hi"),
             drivers=[d for d, _ in drivers], driver_contribs=[c for _, c in drivers]))
     weights = store.weights()
     tier = tiers.assign(mine, weights)["tier"][0]
@@ -325,7 +390,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
         veteran_id=veteran_id, name_display=v["name_display"], age=v["age"],
         modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
         facility_name=fac["name"][0] if fac.height else v["facility_id"], date=date,
-        tier=tier, why_this_tier=_why_tier(tier, needs, weights), needs=needs,
+        tier=tier, why_this_tier=why_tier(tier, needs, weights), needs=needs,
         medications=api.MedicationFlags(
             n_active_meds=v["n_active_meds"], thermoreg_score=v["med_thermoreg_score"],
             acb_score=v["acb_score"], combo_raas_diuretic=v["med_combo_raas_diuretic"],
@@ -345,31 +410,49 @@ def veteran(veteran_id: str, date: Date) -> Response:
 
 @app.post("/actions", response_model=api.ActionsResponse)
 def actions(req: api.ActionsRequest) -> Response:
-    """Today's list cut at `capacity`, its total EHA, and what the same team would have
-    averted working the same candidates oldest-first, most-chronic-first, or in a seeded
-    shuffle. `capacity` may be partial: buckets it omits keep their defaults.
+    """The work list for `date` cut at `capacity`, its total EHA, and what the same team
+    would have averted working the same candidates oldest-first, most-chronic-first, or in a
+    seeded shuffle. `capacity` may be partial: buckets it omits keep their defaults.
+
+    `date` is the do-by day, not the risk day. An alternate-site booking for Wednesday's
+    surge is Monday's work, so this reads the days `date` can still act on -- `date` through
+    `date + the longest lead in tau.yaml` -- and returns what has to be done on `date`.
+    Each do-by day gets the whole team for a day and they share nothing, so one day is still
+    one request.
+
+    `n_not_reached` is the other half of the slider and comes back in the same answer: the
+    Act-now and Find-out veterans a limitless team would put a person on and this capacity
+    reaches with nobody. It is one extra greedy pass over candidates this request has
+    already valued, so it costs a fraction of the second, uncapped request it replaces.
+
+    `limit` cuts the rows returned, never the allocation: `n_selected`, `total_eha`,
+    `counts_by_tier` and `n_not_reached` all describe the whole day's work either way.
     """
     _check_scenario(req.scenario)
     if req.prior_scale != PRIOR_SCALE:
         raise HTTPException(422, f"prior_scale {req.prior_scale} is not cached; the cached "
                                  f"posterior uses {PRIOR_SCALE}")
     all_scores = store.table("scores")
-    today = _need_scored_day(all_scores, req.date)
+    _need_scored_day(all_scores, req.date)       # 404 rather than an empty list for a typo
     cohort = store.table("cohort")
     capacity = {**DEFAULT_CAPACITY, **req.capacity}
 
     shuffle = np.random.default_rng([0, req.date.toordinal()]).random(cohort.height)
     try:
-        chosen, baseline = compare(
-            today, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
-            req.group_floor, rank_by=BASELINES, weights=store.weights(), tau=store.tau())
+        chosen, baseline, n_too_late, n_not_reached = compare(
+            all_scores, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
+            req.group_floor, rank_by=BASELINES, date=req.date, weights=store.weights(),
+            tau=store.tau(), lead=store.leads(), headroom=True)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     store.remember(chosen)
 
-    rows = (chosen.join(cohort.select("veteran_id", "name_display", "modzcta", "borough"),
-                        on="veteran_id", how="left")
-                  .sort("rank").select(list(api.ActionRow.model_fields)).to_dicts())
+    # `limit` cuts the rows and nothing else: every count below is of the whole allocation,
+    # so a board showing a top slice can say "40 of 6,303" without asking a second time.
+    shown = chosen if req.limit is None else chosen.sort("rank").head(req.limit)
+    rows = (shown.join(cohort.select("veteran_id", "name_display", "modzcta", "borough"),
+                       on="veteran_id", how="left")
+                 .sort("rank").select(list(api.ActionRow.model_fields)).to_dicts())
     by_tier = dict.fromkeys(TIERS, 0) | dict(chosen.group_by("tier").len().iter_rows())
     total = total_eha(chosen)
     return _json(api.ActionsResponse.model_validate({
@@ -377,6 +460,7 @@ def actions(req: api.ActionsRequest) -> Response:
         "baselines": [{"name": "leeward", "total_eha": total},
                       *({"name": n, "total_eha": t} for n, t in baseline.items())],
         "n_panel": cohort.height, "n_selected": chosen.height, "counts_by_tier": by_tier,
+        "n_too_late": n_too_late, "n_not_reached": n_not_reached,
         "model_rung": _rung(all_scores),
     }))
 
@@ -461,3 +545,24 @@ def export(date: Date) -> Response:
     sheet = partner_sheet(actions=plan, cohort=store.table("cohort"))
     return Response(sheet.write_csv(), media_type="text/csv", headers={
         "Content-Disposition": f'attachment; filename="partner_sheet_{date}.csv"'})
+
+
+# --------------------------------------------------------------------------- #
+# The UI, if it has been built -- keep this last
+# --------------------------------------------------------------------------- #
+
+def mount_ui(target: FastAPI, dist: Path = UI_DIST) -> bool:
+    """Serve the built UI at `/`, so the demo is one process with no dev server.
+
+    A mount at `/` matches every path, so it has to come after every route above: routes are
+    tried in declaration order and the API must win. The UI has no client-side router, which
+    is why plain static serving (no index.html fallback) is enough.
+    """
+    if not (dist / "index.html").is_file():
+        log.warning("no built UI at %s; the API is up, the page is not (run `make ui`)", dist)
+        return False
+    target.mount("/", StaticFiles(directory=dist, html=True), name="ui")
+    return True
+
+
+mount_ui(app)

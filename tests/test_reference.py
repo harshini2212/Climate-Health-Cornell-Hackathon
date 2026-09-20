@@ -7,7 +7,9 @@ If it goes red, something changed `data/reference/` and every downstream prior i
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 import polars as pl
@@ -112,6 +114,55 @@ def test_acs_has_one_row_per_zcta() -> None:
     assert df["zcta"].n_unique() == df.height, "duplicate ZCTAs: a non-ZCTA geography leaked in"
     older = df["pop_65plus"].sum()
     assert 1_200_000 < older < 1_600_000, f"NYC 65+ population {older} is implausible"
+
+
+ACS_RACE_NH = ["nh_white", "nh_black", "nh_aian", "nh_asian", "nh_nhpi", "nh_other", "nh_multi"]
+ACS_RACE_HISP = [c.replace("nh_", "hisp_") for c in ACS_RACE_NH]
+
+
+def test_acs_race_cells_add_up_and_are_the_right_cells() -> None:
+    """B03002 is Hispanic origin by race. Reading the wrong cells is silent, so check the
+    identities the table must satisfy and then the shares a New Yorker could sanity-check."""
+    df = pl.read_parquet(REF / "acs_race_by_zcta.parquet")
+    assert df["zcta"].n_unique() == df.height, "duplicate ZCTAs: a non-ZCTA geography leaked in"
+    assert (df["pop_total"] == df.select(pl.sum_horizontal(ACS_RACE_NH + ACS_RACE_HISP)).to_series()
+            ).all(), "the 14 race-by-origin cells do not sum to each ZCTA's total"
+    assert (df["hisp_total"] == df.select(pl.sum_horizontal(ACS_RACE_HISP)).to_series()).all()
+
+    total = df["pop_total"].sum()
+    assert 7_500_000 < total < 9_500_000, f"NYC population {total:,.0f} is implausible"
+    share = lambda col: df[col].sum() / total  # noqa: E731
+    assert 0.25 < share("hisp_total") < 0.33, f"NYC is ~29% Hispanic, got {share('hisp_total'):.1%}"
+    assert 0.27 < share("nh_white") < 0.34, f"NYC is ~31% non-Hispanic white, got {share('nh_white'):.1%}"
+    assert 0.17 < share("nh_black") < 0.23, f"NYC is ~20% non-Hispanic Black, got {share('nh_black'):.1%}"
+    assert 0.11 < share("nh_asian") < 0.17, f"NYC is ~14% non-Hispanic Asian, got {share('nh_asian'):.1%}"
+
+
+def test_the_committed_race_table_is_still_b03002(tmp_path, monkeypatch) -> None:
+    """Re-derive from the Census file itself. Skips on a clean clone, where data/raw/ is
+    absent by design -- this is the check that the committed table was not edited."""
+    raw = ROOT / "data" / "raw"
+    if not (raw / "acsdt5y2023-b03002.dat").exists() or not (raw / "acs2023_geos.txt").exists():
+        pytest.skip("data/raw/acsdt5y2023-b03002.dat absent -- run `make sources-heavy`")
+    spec = importlib.util.spec_from_file_location(
+        "fetch_sources", ROOT / "scripts" / "fetch_sources.py")
+    fetch_sources = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fetch_sources)
+    shutil.copy(REF / "nyc_modzcta.parquet", tmp_path / "nyc_modzcta.parquet")
+    monkeypatch.setattr(fetch_sources, "REF", tmp_path)  # write the re-derivation to tmp
+    fetch_sources.fetch_acs_race()
+    fresh = pl.read_parquet(tmp_path / "acs_race_by_zcta.parquet")
+    assert fresh.equals(pl.read_parquet(REF / "acs_race_by_zcta.parquet"))
+
+
+def test_acs_race_covers_every_modzcta_member() -> None:
+    """The cohort aggregates ZCTA -> MODZCTA through `zcta_members`; a member with no row
+    would leave its MODZCTA drawing race from a partial population."""
+    df = pl.read_parquet(REF / "acs_race_by_zcta.parquet")
+    mz = pl.read_parquet(REF / "nyc_modzcta.parquet")
+    members = {m.strip() for s in mz["zcta_members"].to_list() for m in str(s).split(",")}
+    missing = members - set(df["zcta"].to_list())
+    assert len(missing) <= 5, f"{len(missing)} MODZCTA member ZCTAs have no B03002 row: {sorted(missing)}"
 
 
 def test_empower_covers_the_five_boroughs() -> None:

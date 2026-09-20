@@ -40,6 +40,10 @@ class ZipHazard(Base):
 
 class FacilityStatus(Base):
     facility_id: str
+    #: One row per facility **per day**, like `ZipHazard`. A closure is a fact about a day,
+    #: not about the window: Sandy shuts station 630 for 45 days and the ribbon has to put
+    #: that on the day it starts. A caller that wants the window's answer takes `.any()`.
+    date: Date
     name: str
     lat: float
     lon: float
@@ -90,6 +94,11 @@ class NeedScore(Base):
     p_lo80: float
     p_hi80: float
     p_epistemic_share: float
+    #: What this veteran's number would be if the fields the VA does not have on file turned
+    #: out to be their least- and most-risky values. Null when the record has no gap, which
+    #: is not the same as a gap that would not move the number.
+    p_gap_lo: float | None = None
+    p_gap_hi: float | None = None
     drivers: list[str] = Field(default_factory=list, max_length=3)
     driver_contribs: list[float] = Field(default_factory=list, max_length=3)
 
@@ -137,12 +146,19 @@ class VeteranCard(Base):
 # --------------------------------------------------------------------------- #
 
 class ActionsRequest(Base):
+    #: The **do-by day**: the day this work list is worked. An action here may be for a risk
+    #: that lands later -- see `ActionRow.lead_days`.
     date: Date
     capacity: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_CAPACITY))
     group_floor: dict[str, float] | None = Field(
         default=None, description="Minimum share of slots per group, e.g. {'borough': 0.1}")
     prior_scale: float = Field(default=1.0, description="0.5, 1.0 or 2.0; picks a cached posterior")
     scenario: str = "sandy_then_heat"
+    limit: int | None = Field(
+        default=None, ge=0,
+        description="Return at most this many rows, highest EHA first. The allocation is "
+                    "unchanged and every count still describes all of it, so a board that "
+                    "renders a top slice can say '40 of 6,303'. Null means every row.")
 
 
 class ActionRow(Base):
@@ -157,6 +173,10 @@ class ActionRow(Base):
     eha: float
     capacity_bucket: str
     owner: str
+    lead_days: int = Field(
+        ge=0, description="Days ahead of the risk this has to happen to work at all. The "
+                          "response's `date` is the do-by day, so the risk day this action "
+                          "is for is `date + lead_days`. Zero means it still works today.")
     headline: str = Field(
         description="Card-safe reason line: urgency and timing, no condition, medicine or "
                     "service. The only one of these three a wall-mounted board may render.")
@@ -173,14 +193,31 @@ class BaselineResult(Base):
 
 
 class ActionsResponse(Base):
+    #: The do-by day this list is worked on. Every row's risk day is `date + lead_days`.
     date: Date
     capacity: dict[str, int]
+    #: The allocation, highest EHA first, cut to `ActionsRequest.limit` if one was asked for.
+    #: Every count below is of the whole allocation, never of this list.
     actions: list[ActionRow]
     total_eha: float
     baselines: list[BaselineResult] = Field(default_factory=list)
     n_panel: int
     n_selected: int
     counts_by_tier: dict[str, int] = Field(default_factory=dict)
+    n_not_reached: int = Field(
+        default=0, ge=0,
+        description="Veterans this capacity does not reach with a person at all: Act-now or "
+                    "Find-out, offered a human action by an uncapped team, and given none "
+                    "here. A free verified text is not being reached. It is the same number "
+                    "a second uncapped request would have shown, computed in the one pass "
+                    "that already values every candidate, so nobody has to ask twice.")
+    n_too_late: int = Field(
+        default=0, ge=0,
+        description="Actions for the risk days ahead whose do-by day already falls before "
+                    "`date`, so this work day cannot offer them however much capacity it "
+                    "has. On the first day of a forecast that is exactly what arriving late "
+                    "cost; on a later day it is the work that had to happen before today. "
+                    "Show the number either way.")
     model_rung: int = Field(ge=0, le=3)
 
 
@@ -247,11 +284,68 @@ class CalibrationBin(Base):
 class FairnessRow(Base):
     stratum: str
     group: str
+    #: Veteran-days in the group, then how many of them had a need, then how many of those
+    #: got a call. Every rate below divides two of these, and a ratio shown without its
+    #: denominator invites a reader to trust a number built on four events.
     n: int
+    n_events: int = 0
+    n_called: int | None = None
     ece: float
+    #: The raw rate stays in the contract. It is the honest denominator, and showing only
+    #: the friendlier number below would be the suppression the audit exists to prevent.
     fnr: float
     fnr_ratio_to_cohort: float
+    #: 1 - fnr, and its ratio: the same measurement with the ceiling taken off. On a cohort
+    #: whose pooled FNR is near 1 this is the only one of the two that can move.
+    reach: float = 0.0
+    reach_ratio_to_cohort: float = 1.0
+    #: Share of the group's events that got one of the scarce daily calls, and its ratio.
+    #: **None means not measured, not nobody** -- an audit run without a call list.
+    coverage: float | None = None
+    coverage_ratio_to_cohort: float | None = None
+    direction: str = Field(
+        default="on_par",
+        description="reached_more | reached_less | on_par -- which side of the same 20 "
+                    "percent bar the group's reach falls on. reached_more is a result, "
+                    "not a pass")
     flagged: bool = Field(description="True when relative FNR gap exceeds 20 percent")
+
+
+class DiscriminationRow(Base):
+    """Per need, on the held-out window. TRIPOD+AI's first leg; `leeward/eval/discrimination.py`.
+
+    `within_day_auc` is the headline and `pooled_auc` is the flattering one: the call list is
+    chosen within a day, so pooled AUC includes credit for knowing today is a heat wave. The
+    UI shows both, always, and never the pooled one alone.
+
+    The AUCs and `pr_auc` are null when the window has no events to rank -- "we could not
+    measure this" must not render as "the model scored zero".
+    """
+    need: str
+    within_day_auc: float | None = Field(default=None, ge=0.0, le=1.0)
+    pooled_auc: float | None = Field(default=None, ge=0.0, le=1.0)
+    pr_auc: float | None = Field(default=None, ge=0.0, le=1.0)
+    #: 1 - Brier/Brier_null, the Brier skill score. **The score on which the constant does
+    #: not win**: it is 0.0 for a constant at the base rate and 1.0 for a perfect predictor,
+    #: and unlike ECE it is strictly proper, so it keeps the sharpness term. Negative is
+    #: allowed and means worse than knowing nothing, so there is no lower bound here.
+    scaled_brier: float | None = Field(default=None, le=1.0)
+    #: The raw Brier. Prevalence-dependent, and shipped only so `scaled_brier` is not read
+    #: as it: predicting zero for everyone scores 0.0034 at a 0.34% base rate.
+    brier: float | None = Field(default=None, ge=0.0)
+    lift_at_1pct: float | None = None
+    lift_at_10pct: float | None = None
+    #: min(1/q, 1/base_rate): the best lift@1% any predictor could score here. Lift is
+    #: uninterpretable without it -- 10.7x of a possible 42.9x is not 10.7x of a possible 11.
+    lift_ceiling_1pct: float | None = None
+    base_rate: float
+    n: int
+    n_events: int
+    #: Held-out days on which the need happened at all, so had an AUC to contribute, and
+    #: days there were. Eventless days are dropped, which conditions on the outcome, so the
+    #: denominator travels with the numerator rather than being left off the slide.
+    n_days: int
+    n_days_total: int = 0
 
 
 class AblationRow(Base):
@@ -274,6 +368,12 @@ class ReportResponse(Base):
     recovery_coverage: float | None = None
     calibration: list[CalibrationBin] = Field(default_factory=list)
     ece_by_need: dict[str, float] = Field(default_factory=dict)
+    #: The control for `ece_by_need`: what a single number equal to each need's base rate
+    #: scores on the same equal-mass bins. It is 0.0 by construction, which is *better* than
+    #: the model's. Shown beside `ece_by_need`, never instead of it -- at these base rates
+    #: calibration cannot separate the model from this, and `discrimination` is what can.
+    constant_ece: dict[str, float] = Field(default_factory=dict)
+    discrimination: list[DiscriminationRow] = Field(default_factory=list)
     ablations: list[AblationRow] = Field(default_factory=list)
     decision_quality: list[DecisionQualityRow] = Field(default_factory=list)
     fairness: list[FairnessRow] = Field(default_factory=list)
@@ -290,5 +390,5 @@ __all__ = [
     "ActionsRequest", "ActionsResponse", "ActionRow", "BaselineResult",
     "Message", "LogRequest", "LogResponse",
     "ReportResponse", "RecoveryRow", "CalibrationBin", "FairnessRow",
-    "AblationRow", "DecisionQualityRow",
+    "AblationRow", "DecisionQualityRow", "DiscriminationRow",
 ]

@@ -72,6 +72,20 @@ def _cap(**kw: int) -> dict[str, int]:
     return {b: kw.get(b, 0) for b in DEFAULT_CAPACITY}
 
 
+def _risk_day(actions: pl.DataFrame) -> pl.DataFrame:
+    """`actions` with the day the risk lands beside the day the work is done."""
+    return actions.with_columns(
+        risk_date=pl.col("date") + pl.duration(days=pl.col("lead_days")))
+
+
+#: Every lead time at zero, which is what this file's hand-checked cases run under. The
+#: five-veteran world is the *allocator's* proof -- greedy order, marginal values, buckets,
+#: the group floor -- and one day is enough to hold it. Lead time moves an action to another
+#: day and is checked where it belongs, in tests/test_schedule.py, against a window wide
+#: enough for a five-day lead to land in.
+NO_LEAD = dict.fromkeys(tau.leads(), 0)
+
+
 # --------------------------------------------------------------------------- #
 # The editable tables
 # --------------------------------------------------------------------------- #
@@ -134,23 +148,27 @@ def test_epistemic_variance_is_recovered_exactly() -> None:
 #
 # Capacity: call 2, booking 1, ride 1, free 10, everything else 0.
 #
-# Every value is fixed before anything is chosen. One-slot veterans (V3, V4) get the plain
-# EHA w*p*tau. Act-now veterans (V1, V2) take their actions in descending standalone EHA, each
-# valued on the risk the ones above it leave behind:
+# Every value is fixed before anything is chosen. Each veteran's prevention actions are taken
+# in descending standalone EHA and valued on the risk the ones above them leave behind -- V3
+# and V4 included, even though one slot means they can only take the first of theirs here,
+# because the schedule can spread a veteran's actions over several days (tests/test_schedule.py)
+# and standalone values would then add up to more harm than the veteran carries:
 #   V1  alt_site 2.0*.70 = 1.40   call (2.0*.30)*.40 = .24   text (.60*.60)*.10 = .036
 #   V2  ride 1.2*.60 = .72   call (1.2*.40)*.30 = .144   text (.48*.70)*.15 = .0504
-#   V3  check_in VOI = 4 * .5*.2*.8 = .32  (w * share * p(1-p))   call .8*.35 = .28   text .08
-#   V4  clean_air .3*.50 = .15   call .3*.25 = .075   text .3*.05 = .015
+#   V3  check_in VOI = 4 * .5*.2*.8 = .32  (w * share * p(1-p))   call .8*.35 = .28
+#   V4  clean_air .3*.50 = .15   call (.3*.50)*.25 = .0375   ride (.1125)*.05 = .005625
+#       text (.106875)*.05 = .00534375
 #
 # Greedy, highest first:
 #   1.40   V1 alt_site   -> booking full
 #    .72   V2 ride       -> ride full
 #    .32   V3 check_in   -> call 1 of 2. V3 has its one action, so V3's call (.28) is skipped
-#    .24   V1 call       -> call full. V4 clean_air .15, V2 call .144, V4 call .075: no room
-#    .0504 V2 text,  .036 V1 text (V1's third),  .015 V4 text
+#    .24   V1 call       -> call full. V4 clean_air .15, V2 call .144, V4 call .0375: no room
+#    .0504 V2 text,  .036 V1 text (V1's third),  .00534375 V4 text
 #
-# Reported total 2.7814. The chosen set truly averts 2.803, because V2 never got the call,
-# so V2's text really averts .48*.15 = .072. Reported EHA is a floor, never a ceiling.
+# Reported total 2.77174375. The chosen set truly averts 2.803, because V2 never got the call
+# and V4 never got the clean-air room, so their texts really avert .48*.15 = .072 and
+# .3*.05 = .015. Reported EHA is a floor, never a ceiling.
 
 FIVE_RISK = {
     "V1": {"treatment_gap": (0.40, 0.1)},
@@ -171,7 +189,7 @@ FIVE_EXPECTED = [                  # rank order
     ("V1", "care_team_call", 0.24, "act_now"),
     ("V2", "verified_text", 0.0504, "act_now"),
     ("V1", "verified_text", 0.036, "act_now"),
-    ("V4", "verified_text", 0.015, "self_serve"),
+    ("V4", "verified_text", 0.00534375, "self_serve"),
 ]
 _ANYONE = ["care_team_call", "verified_text", "cooling_center_ride", "clean_air_room"]
 FIVE_MENU = {  # eligible actions and slots, by hand; V5 is Everyday and gets nothing
@@ -183,7 +201,8 @@ FIVE_MENU = {  # eligible actions and slots, by hand; V5 is Everyday and gets no
 
 
 def _five(**cap: int) -> pl.DataFrame:
-    return allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**{**FIVE_CAP, **cap}))
+    return allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**{**FIVE_CAP, **cap}),
+                    lead=NO_LEAD)
 
 
 def test_five_veterans_hand_checked() -> None:
@@ -193,7 +212,7 @@ def test_five_veterans_hand_checked() -> None:
         (v, a, t) for v, a, _, t in FIVE_EXPECTED]
     assert got.sort("rank")["eha"].to_list() == pytest.approx([e for _, _, e, _ in FIVE_EXPECTED])
     assert got["rank"].to_list() == list(range(1, 8))
-    assert total_eha(got) == pytest.approx(2.7814)
+    assert total_eha(got) == pytest.approx(2.77174375)
     assert "V5" not in got["veteran_id"].to_list(), "an Everyday veteran got an action"
 
 
@@ -255,10 +274,10 @@ def test_five_veterans_more_of_any_bucket_never_averts_less(bucket: str) -> None
 #
 #   in the allocator's own veteran order  V1, V2, V3, V4
 #     V1  alt_site 1.40, call .24, text .036     V2  ride .72, call .144, text .0504
-#     V3  check_in and call are gone; text .08   V4  ride and call are gone; text .015
-#     total 1.676 + .9144 + .08 + .015 = 2.6854
+#     V3  check_in and call are gone; text .052  V4  ride and call are gone; text .00534375
+#     total 1.676 + .9144 + .052 + .00534375 = 2.64774375
 #
-# The allocator's own 2.7814 is higher because it gave V3 the check-in (.32) ahead of V2's
+# The allocator's own 2.77174375 is higher because it gave V3 the check-in (.32) ahead of V2's
 # and V1's later calls; ranking by anything else cannot see that.
 
 FIVE_AGES = {"V1": 66, "V2": 77, "V3": 88, "V4": 99, "V5": 55}
@@ -267,36 +286,38 @@ FIVE_AGES = {"V1": 66, "V2": 77, "V3": 88, "V4": 99, "V5": 55}
 def _five_compare(rank_by: dict[str, str], ages: dict[str, int] = FIVE_AGES, **cap: int):
     cohort = _cohort([{**c, "age": ages[c["veteran_id"]], "rank_key": 0}
                       for c in FIVE_COHORT])
-    return compare(_scores(FIVE_RISK), cohort, _cap(**{**FIVE_CAP, **cap}), rank_by=rank_by)
+    return compare(_scores(FIVE_RISK), cohort, _cap(**{**FIVE_CAP, **cap}), rank_by=rank_by,
+                   lead=NO_LEAD)
 
 
 def test_baselines_hand_checked() -> None:
-    got, totals = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
-    assert total_eha(got) == pytest.approx(2.7814), "the allocator's own list must not change"
+    got, totals, _, _ = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
+    assert total_eha(got) == pytest.approx(2.77174375), "the allocator's own list must not change"
     assert totals["rank_by_age"] == pytest.approx(2.1004)
-    assert totals["in_order"] == pytest.approx(2.6854), "all keys tied means veteran order"
+    assert totals["in_order"] == pytest.approx(2.64774375), "all keys tied means veteran order"
 
 
 def test_compare_returns_exactly_what_allocate_returns() -> None:
-    got, _ = _five_compare({"rank_by_age": "age"})
+    got, _, _, _ = _five_compare({"rank_by_age": "age"})
     assert got.equals(_five())
 
 
 def test_a_baseline_with_no_names_is_just_allocate() -> None:
-    got, totals = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP))
+    got, totals, _, _ = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
+                             lead=NO_LEAD)
     assert totals == {} and got.equals(_five())
 
 
 def test_a_baseline_on_a_missing_column_fails_loudly() -> None:
     with pytest.raises(ValueError, match="rank_by"):
         compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
-                rank_by={"by_shoe_size": "shoe_size"})
+                rank_by={"by_shoe_size": "shoe_size"}, lead=NO_LEAD)
 
 
 def test_a_baseline_with_nothing_to_score_totals_zero() -> None:
     cohort = _cohort([{**c, "age": 70} for c in FIVE_COHORT])
-    _, totals = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
-                        rank_by={"x": "age"}, date=date(2000, 1, 1))
+    _, totals, _, _ = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
+                           rank_by={"x": "age"}, date=date(2000, 1, 1), lead=NO_LEAD)
     assert totals == {"x": 0.0}
 
 
@@ -335,9 +356,10 @@ def _random_instance(seed: int):
 @pytest.mark.parametrize("seed", BROKE_LAZY_GREEDY + list(range(40)))
 def test_random_instances_more_of_any_bucket_never_averts_less(seed: int) -> None:
     scores, cohort, cap, floor = _random_instance(seed)
-    base = total_eha(allocate(scores, cohort, cap, floor))
+    base = total_eha(allocate(scores, cohort, cap, floor, lead=NO_LEAD))
     for bucket in sorted(set(ACTION_COST_UNIT.values())):
-        more = total_eha(allocate(scores, cohort, dict(cap, **{bucket: cap[bucket] + 1}), floor))
+        more = total_eha(allocate(scores, cohort, dict(cap, **{bucket: cap[bucket] + 1}), floor,
+                                  lead=NO_LEAD))
         assert more >= base - 1e-9, f"seed {seed}: +1 {bucket} lowered EHA {base} -> {more}"
 
 
@@ -360,7 +382,7 @@ def test_panel_actions_match_the_contract(default_actions) -> None:
     schema.validate(default_actions, "actions")
 
 
-def test_a_day_gets_a_list_exactly_when_someone_is_above_the_everyday_floor(
+def test_a_risk_day_earns_a_list_exactly_when_someone_is_above_the_everyday_floor(
         fixtures, default_actions) -> None:
     """Not "every scored day gets a list" -- a day can correctly produce nothing.
 
@@ -368,11 +390,14 @@ def test_a_day_gets_a_list_exactly_when_someone_is_above_the_everyday_floor(
     smoke, no outage, no flood, peak risk 0.0476 under the 0.05 self-serve floor. The whole
     panel is Everyday tier, and a care team doing nothing on a calm June day is the right
     answer. What must hold is the biconditional, not the count.
+
+    The biconditional is about the day the *risk* lands, which is `date + lead_days`; which
+    day the work falls on is the schedule's business (tests/test_schedule.py).
     """
     scores, _ = fixtures
     graded = tiers.assign(scores)
     actionable = set(graded.filter(pl.col("tier") != "everyday")["date"].to_list())
-    assert set(default_actions["date"].to_list()) == actionable
+    assert set(_risk_day(default_actions)["risk_date"].to_list()) == actionable
 
 
 def test_a_day_where_the_whole_panel_is_everyday_produces_no_actions() -> None:
@@ -387,14 +412,18 @@ def test_a_day_where_the_whole_panel_is_everyday_produces_no_actions() -> None:
     assert total_eha(got) == 0.0
 
 
-def test_a_calm_day_drops_out_of_a_multi_day_list_and_a_busy_one_does_not() -> None:
+def test_a_calm_day_earns_nothing_of_its_own_but_is_still_a_day_of_work() -> None:
+    """A calm day's own panel buys it no actions -- and it still has a list, because the
+    ride for tomorrow's heat has to be booked today."""
     calm, busy = date(2026, 6, 12), date(2026, 6, 13)
     scores = pl.concat([
         _scores({v: {k: (0.001, 0.1) for k in NEEDS} for v in ("V1", "V2")}, day=calm),
         _scores({"V1": {"heat": (0.30, 0.1)}, "V2": {"breathing": (0.10, 0.1)}}, day=busy)])
     cohort = _cohort([{"veteran_id": "V1"}, {"veteran_id": "V2"}])
-    got = allocate(scores, cohort, DEFAULT_CAPACITY)
-    assert got["date"].unique().to_list() == [busy], "the calm day should simply not appear"
+    got = _risk_day(allocate(scores, cohort, DEFAULT_CAPACITY))
+    assert got["risk_date"].unique().to_list() == [busy], "the calm day's own panel earns nothing"
+    assert calm in got["date"].to_list(), "yet the calm day is when the ride gets booked"
+    assert (got.filter(pl.col("date") == calm)["lead_days"] > 0).all()
 
 
 def test_fixture_capacity_is_per_day_and_never_exceeded(default_actions) -> None:
@@ -406,11 +435,27 @@ def test_fixture_capacity_is_per_day_and_never_exceeded(default_actions) -> None
 
 
 def test_fixture_slot_limits_and_dense_ranks(default_actions) -> None:
-    per = default_actions.group_by("date", "veteran_id").agg(
+    """Two slot limits, both inside one work day, because a work day carries work for
+    several risk days and a risk day's work is spread over several days.
+
+    Per (work day, risk day) the tier means what it always meant: a Self-serve Friday earns
+    one action about Friday on any one morning. Per work day nobody is contacted more than
+    three times, however many risk days are being worked for them.
+
+    What is deliberately *not* capped is a risk day's actions summed over the mornings they
+    are done on -- a refill five days out and a text on the day are two touches for one
+    Friday, and both have to happen when they happen. That is safe because every one of a
+    veteran's actions for a risk day is valued on the risk the others leave behind, so the
+    harm they claim between them is still bounded by the harm the veteran carries
+    (`test_fixture_harm_averted_never_exceeds_the_harm_there_is`).
+    """
+    per_risk = _risk_day(default_actions).group_by("date", "risk_date", "veteran_id").agg(
         pl.len().alias("n"), pl.col("tier").first(), pl.col("tier").n_unique().alias("tiers"))
-    assert per["tiers"].max() == 1, "a veteran has one tier per day"
-    assert per.filter((pl.col("tier") != "act_now") & (pl.col("n") > 1)).height == 0
-    assert per["n"].max() <= 3
+    assert per_risk["tiers"].max() == 1, "a veteran has one tier per risk day"
+    assert per_risk.filter((pl.col("tier") != "act_now") & (pl.col("n") > 1)).height == 0
+    assert per_risk["n"].max() <= 3
+    per_day = default_actions.group_by("date", "veteran_id").agg(pl.len().alias("n"))
+    assert per_day["n"].max() <= 3, "no veteran is reached more than three times in a day"
     for _, g in default_actions.group_by("date"):
         g = g.sort("rank")
         assert g["rank"].to_list() == list(range(1, g.height + 1))
@@ -425,19 +470,26 @@ def test_fixture_actions_only_go_to_veterans_they_apply_to(fixtures, default_act
         wrong = joined.filter((pl.col("action") == action) & ~rule)
         assert wrong.height == 0, f"{wrong.height} {action} rows for veterans it does not apply to"
     assert (joined.filter(pl.col("action") == "check_in_call")["tier"] == "find_out").all()
-    everyday = tiers.assign(scores).filter(pl.col("tier") == "everyday")
-    assert default_actions.join(everyday, on=["veteran_id", "date"]).height == 0
+    everyday = (tiers.assign(scores).filter(pl.col("tier") == "everyday")
+                .rename({"date": "risk_date"}))
+    assert _risk_day(default_actions).join(
+        everyday, on=["veteran_id", "risk_date"]).height == 0
 
 
 def test_fixture_harm_averted_never_exceeds_the_harm_there_is(fixtures, default_actions) -> None:
-    """Three actions on one heat illness cannot prevent 135% of it."""
+    """Three actions on one heat illness cannot prevent 135% of it.
+
+    Against the *risk* day, because that is where the harm is: two actions done on two
+    different mornings for one Friday surge still share Friday's risk between them.
+    """
     scores, _ = fixtures
     w = severity.load()
     harm = scores.group_by("veteran_id", "date").agg(
-        (pl.col("p_mean") * pl.col("need").replace_strict(w)).sum().alias("harm"))
-    averted = (default_actions.filter(pl.col("action") != "check_in_call")
-               .group_by("veteran_id", "date").agg(pl.col("eha").sum().alias("averted")))
-    over = averted.join(harm, on=["veteran_id", "date"]).filter(
+        (pl.col("p_mean") * pl.col("need").replace_strict(w)).sum().alias("harm")
+    ).rename({"date": "risk_date"})
+    averted = (_risk_day(default_actions).filter(pl.col("action") != "check_in_call")
+               .group_by("veteran_id", "risk_date").agg(pl.col("eha").sum().alias("averted")))
+    over = averted.join(harm, on=["veteran_id", "risk_date"]).filter(
         pl.col("averted") > pl.col("harm") + 1e-9)
     assert over.height == 0, f"{over.height} veteran-days avert more harm than they carry"
 
@@ -515,4 +567,5 @@ def test_capacity_is_checked() -> None:
 
 def test_scores_for_unknown_veterans_are_refused() -> None:
     with pytest.raises(ValueError):
-        allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT[:4]), _cap(**FIVE_CAP))
+        allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT[:4]), _cap(**FIVE_CAP),
+                 lead=NO_LEAD)

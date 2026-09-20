@@ -32,3 +32,7 @@ fails intermittently on **`main` as well as here** — median ~300-306 ms agains
 budget, where status/api.md recorded 127 ms before `allocate.headline` landed. Everything
 else is green on a clean checkout of this branch. The slider is the demo's best three
 seconds, so the api lane should look at `_headline` before rehearsal.
+
+## 02:13 — ui/dist committed and served by the API; `make clean-clone` now boots and fetches the UI
+**Clean clone → offline install → boot → `GET /` (has `id="root"`) + its script + `/api/forecast` in 10.9 s, budget 60** (quiet machine, load 4.8: clone 1.2 · install 1.1 · fixtures 6.1 · boot 2.3 · page+route 0.2; four earlier runs at load 31–57 took 12.6–13.9 s). Network blocked by proxy env vars and `uv --offline`, **not by switching the wifi off** (that would cut this session), and the install came out of a warm uv cache, so a machine that has never run `make setup` still needs one online install; do the wifi-off run once yourself.
+`make ui` rebuilds and stamps `ui/dist`; `scripts/ui_dist.py check` compares by content and runs from `make demo`, `make clean-clone` and the gate. Both failures verified loud in under 2 s (stale `ui/src` names the file; missing dist says so). `?day=N` now works at runtime (the entry above claimed it, nothing read it). `make check` is green at the real 300 ms budget on the merged tree once load fell to ~3; while load was 30–60 (another session's model fit) the slider test was red, as on untouched `main` (A/B of this change: 0.994x).

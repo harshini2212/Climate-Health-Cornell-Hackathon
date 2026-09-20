@@ -18,6 +18,10 @@ Outputs, all under ui/public/fixtures/ and committed (they are small):
                               list, so a click on the week board opens a real card offline
     messages.json             { action_id: Message } for every candidate action, each one
                               carrying all five elements that tell it apart from a scam
+    report.json               ReportResponse: report/report.json from the last `make
+                              report`, which is gitignored, so the model report screen
+                              still has recovery, reliability and the fairness audit in a
+                              clean clone
 
 Every object is validated through the pydantic models before it is written, so the UI
 is typed against the contract and not against whatever this script happened to emit.
@@ -36,6 +40,8 @@ import polars as pl
 
 from leeward import demo, schema
 from leeward.api import schemas as api
+from leeward.api.main import why_tier
+from leeward.decision import severity
 from leeward.schema import DEFAULT_CAPACITY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -54,13 +60,10 @@ def _dump(obj, path: Path) -> None:
 
 def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
     hz = schema.read("hazards").filter(pl.col("date").is_in(dates))
-    # FacilityStatus carries no date, so a site counts as down if it is down on any day
-    # of the forecast window: "will this site be there when the veteran needs it?"
+    # One row per facility per day, like the route: a closure is a fact about a day, so the
+    # ribbon can put it on the day it starts rather than over the whole window.
     site = (schema.read("site_status").filter(pl.col("date").is_in(dates))
-                  .group_by("facility_id")
-                  .agg(pl.col("site_down").any(), pl.col("evac_zone").first(),
-                       pl.col("site_dependent_services").first())
-                  .sort("facility_id"))
+                  .sort("facility_id", "date"))
     fac = pl.read_parquet(schema.REFERENCE / "va_facilities_nyc_hazard.parquet")
     site = site.join(fac.select("station_no", "name", "lat", "lon"),
                      left_on="facility_id", right_on="station_no", how="left")
@@ -68,7 +71,11 @@ def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
     zips = [api.ZipHazard(**{k: r[k] for k in zip_fields}) for r in hz.select(zip_fields).to_dicts()]
     facilities = [api.FacilityStatus(**{k: r[k] for k in api.FacilityStatus.model_fields})
                   for r in site.to_dicts()]
-    down = [f.name for f in facilities if f.site_down]
+    #: The first day of the window each site is down, so the banner says when, not just who.
+    down: dict[str, date] = {}
+    for f in facilities:
+        if f.site_down and f.name not in down:
+            down[f.name] = f.date
     alerts = hz.group_by("date").agg(pl.col("flood_warning").any(), pl.col("heat_alert").any(),
                                      pl.col("smoke_alert").any()).sort("date")
     bits = []
@@ -82,7 +89,8 @@ def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
             bits.append(f"smoke {d}")
     headline = "; ".join(dict.fromkeys(bits)) or "No active alerts in the 7-day window"
     if down:
-        headline += f". Site down: {', '.join(down)}"
+        headline += ". Site down: " + ", ".join(
+            f"{name} from {on.strftime('%a %d %b')}" for name, on in down.items())
     return api.ForecastResponse(scenario="sandy_then_heat", day=day_index, dates=dates,
                                 zips=zips, facilities=facilities, headline=headline)
 
@@ -111,7 +119,10 @@ def build_scores(cohort: pl.DataFrame, scores: pl.DataFrame, dates: list) -> dic
 def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int) -> dict:
     """The real allocator's list at the slider's maximum (100 calls), so the client can cut
     it at any smaller capacity with the same rules and still match what /actions would say.
-    Baselines need age, n_chronic and a seeded random key per row, so those ride along."""
+    Baselines need age, n_chronic and a seeded random key per row, so those ride along.
+
+    `day` is the do-by day, as it is everywhere else: some of these are for risk that lands
+    later, and each row's `lead_days` says how much later."""
     from leeward.decision.allocate import allocate
 
     r = np.random.default_rng(seed)
@@ -139,6 +150,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
             "name_display": v["name_display"], "modzcta": v["modzcta"], "borough": v["borough"],
             "action": v["action"], "tier": v["tier"], "eha": round(float(v["eha"]), 4),
             "capacity_bucket": v["capacity_bucket"], "owner": v["owner"],
+            "lead_days": int(v["lead_days"]),
             "headline": v["headline"], "rationale": v["rationale"],
             "top_driver": v["top_driver"],
             "message_id": v["message_id"],
@@ -209,18 +221,6 @@ def _phrase(action_id: str) -> str:
     return " ".join(picked)
 
 
-def _why_this_tier(tier: str, peak: float, epi: float, driver: str) -> str:
-    if tier == "act_now":
-        return (f"Peak need {peak:.0%} this week and the interval is tight "
-                f"({epi:.0%} of the spread is model uncertainty): {driver}.")
-    if tier == "find_out":
-        return (f"Peak need {peak:.0%}, but {epi:.0%} of the spread is what we do not know "
-                "about this veteran. A three-minute call collapses it.")
-    if tier == "self_serve":
-        return f"Peak need {peak:.0%}: real, but a text with the right list is proportionate."
-    return f"Peak need {peak:.0%} across every need this week. Nothing is due from the team."
-
-
 def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[dict],
                    day) -> dict:
     """One VeteranCard per veteran in the candidate list, for the click-through."""
@@ -249,11 +249,11 @@ def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[
         needs = [api.NeedScore(
             need=r["need"], p_mean=round(r["p_mean"], 4), p_lo80=round(r["p_lo80"], 4),
             p_hi80=round(r["p_hi80"], 4), p_epistemic_share=round(r["p_epistemic_share"], 4),
+            p_gap_lo=r.get("p_gap_lo"), p_gap_hi=r.get("p_gap_hi"),
             drivers=[r[f"driver_{i}"] for i in (1, 2, 3) if r.get(f"driver_{i}")],
             driver_contribs=[round(r[f"driver_{i}_contrib"], 4) for i in (1, 2, 3)
                              if r.get(f"driver_{i}")],
         ) for r in rows]
-        top = rows[0]
         tier = tier_of.get(vid, "everyday")
         notes = []
         if v["med_combo_raas_diuretic"]:
@@ -275,8 +275,7 @@ def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[
             modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
             facility_name=v["facility_name"] or f"Station {v['facility_id']}", date=day,
             tier=tier,
-            why_this_tier=_why_this_tier(tier, top["p_mean"], top["p_epistemic_share"],
-                                         top["driver_1"]),
+            why_this_tier=why_tier(tier, needs, severity.load()),
             needs=needs,
             medications=api.MedicationFlags(
                 n_active_meds=int(v["n_active_meds"]),
@@ -346,13 +345,24 @@ def build_messages(cohort: pl.DataFrame, candidates: list[dict]) -> dict:
 def build_report(scores: pl.DataFrame) -> dict:
     """ReportResponse for the Model report screen.
 
-    Until leeward/eval/report.py assembles the full report, this carries what has actually
-    been run: the rung, and decision quality from report/decision_quality.csv if
-    `python -m leeward.eval.decision_quality` has produced it (mean realised harm averted
-    per day, by K and strategy). Every other section stays empty and the screen says so;
-    an empty fairness table means "not audited", never "passed".
+    `make report` assembles the whole thing -- recovery, reliability, decision quality, the
+    fairness audit -- into report/report.json. That file is generated output and gitignored,
+    so a clean clone has no eval run at all and `GET /report` answers with the rung and
+    nothing else. Copy it into the fixtures when it is there, so the screen has the real run
+    with the network off and on a machine that has never run the pipeline.
+
+    When it is not there, fall back to what has actually been run: the rung, and decision
+    quality from report/decision_quality.csv if `python -m leeward.eval.decision_quality`
+    has produced it (mean realised harm averted per day, by K and strategy). Every other
+    section stays empty and the screen says so; an empty fairness table means "not audited",
+    never "passed".
     """
     from datetime import datetime
+
+    full = ROOT / "report" / "report.json"
+    if full.exists():
+        return api.ReportResponse.model_validate_json(
+            full.read_text(encoding="utf-8")).model_dump(mode="json")
 
     rows = []
     csv = ROOT / "report" / "decision_quality.csv"

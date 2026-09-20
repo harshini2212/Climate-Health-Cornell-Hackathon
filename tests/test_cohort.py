@@ -9,6 +9,7 @@ that build.py computed for itself -- a wrong join in build.py cannot also fix it
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -141,6 +142,151 @@ def test_powered_equipment_follows_empower(cohort: pl.DataFrame) -> None:
     realised, source = powered.mean(), older["rate"].mean()
     assert abs(realised / source - 1) < 0.25, (
         f"65+ powered equipment {realised:.2%}, ZIP-weighted emPOWER {source:.2%}")
+
+
+# --------------------------------------------------------------------------- #
+# Dialysis: the level is the VA's own, the geography is emPOWER's
+# --------------------------------------------------------------------------- #
+
+# ESRD prevalence among VA-enrolled veterans: 604 per 100,000. Wang et al., BMC Health
+# Serv Res 2013;13:26, https://doi.org/10.1186/1472-6963-13-26 (docs/sources.md). Written out
+# here rather than imported, so the test cannot agree with a wrong constant in build.py.
+VA_ESRD_PER_100K = 604
+
+
+def test_dialysis_prevalence_is_the_vas_own_esrd_rate(cohort: pl.DataFrame) -> None:
+    """emPOWER counts only Medicare *facility* dialysis, which put 7 of 10,000 veterans on it
+    (0.07%). The VA's own figure is 0.604%: about 60 of 10,000. Under 40 or over 85 is more
+    than 3 standard deviations from it."""
+    n = cohort["ckd_dialysis"].sum()
+    assert 40 <= n <= 85, (
+        f"{n} of {N:,} veterans on dialysis; the VA's ESRD rate of {VA_ESRD_PER_100K} per "
+        f"100,000 puts it near {N * VA_ESRD_PER_100K / 100_000:.0f}")
+
+
+def test_dialysis_probability_takes_its_level_from_the_va_and_its_shape_from_empower() -> None:
+    """Flattening to a citywide 0.604% would pass the count test above and throw away a
+    measured per-ZIP pattern. So: the mean is exactly the VA's, and within an age group each
+    veteran's probability stays proportional to their own ZIP's emPOWER rate."""
+    people = build.rehome(N, 0, build.zip_frame())
+    rate, age = people["rate_dialysis"].to_numpy(), people["age"].to_numpy()
+    p = build.dialysis_probability(rate, age)
+
+    assert abs(p.mean() - VA_ESRD_PER_100K / 100_000) < 1e-9
+    assert p.min() >= 0 and p.max() < 0.10, "rescaling made some ZIP's rate implausible"
+    for group in (age >= 65, age < 65):
+        keep = group & (rate > 0)
+        assert np.allclose(p[keep] / rate[keep], (p[keep] / rate[keep])[0]), (
+            "probability is no longer proportional to the ZIP's emPOWER rate")
+    older, younger = (age >= 65) & (rate > 0), (age < 65) & (rate > 0)
+    assert (p[younger] / rate[younger]).mean() < (p[older] / rate[older]).mean(), (
+        "under-65s should sit below 65+ at the same emPOWER rate; emPOWER counts Medicare")
+
+
+def test_the_sandy_dialysis_story_is_more_than_a_handful_of_people(cohort: pl.DataFrame) -> None:
+    """It rested on seven people. Station 630 is the campus that evacuated in 2012, and at
+    least five of the veterans sent there for dialysis are what makes that scenario land."""
+    on = cohort.filter(pl.col("ckd_dialysis"))
+    assert on.height >= 40
+    at_630 = on.filter(pl.col("facility_id") == "630").height
+    assert at_630 >= 5, f"only {at_630} dialysis veterans at station 630"
+
+
+def test_the_va_esrd_rate_is_cited_with_its_url() -> None:
+    """CLAUDE.md: every real number shown anywhere is in docs/sources.md with a URL."""
+    text = (Path(__file__).resolve().parents[1] / "docs" / "sources.md").read_text("utf-8")
+    assert build.VA_ESRD_PER_100K == VA_ESRD_PER_100K
+    assert f"{VA_ESRD_PER_100K} vs. 187 per 100,000" in text, (
+        "the paper's sentence giving the VA ESRD rate is not quoted in docs/sources.md")
+    assert "10.1186/1472-6963-13-26" in text, "the ESRD rate has no URL in docs/sources.md"
+
+
+# --------------------------------------------------------------------------- #
+# Race and ethnicity: drawn from the ZIP's measured composition, never invented
+# --------------------------------------------------------------------------- #
+
+RACES = {"White", "Black", "Asian", "Other"}
+ETHNICITIES = {"Hispanic", "Non-Hispanic"}
+
+# B03002 cell -> the cohort value it must feed. Written out here, not imported from
+# build.py, so a wrong mapping in the build cannot also fix its own test.
+SOURCE_RACE = {"White": ["nh_white", "hisp_white"], "Black": ["nh_black", "hisp_black"],
+               "Asian": ["nh_asian", "hisp_asian"],
+               "Other": ["nh_aian", "nh_nhpi", "nh_other", "nh_multi",
+                         "hisp_aian", "hisp_nhpi", "hisp_other", "hisp_multi"]}
+SOURCE_HISPANIC = ["hisp_white", "hisp_black", "hisp_aian", "hisp_asian", "hisp_nhpi",
+                   "hisp_other", "hisp_multi"]
+
+
+def _race_shares() -> pl.DataFrame:
+    """Per-MODZCTA share of residents in each cohort race, and of Hispanic origin, straight
+    from the vendored B03002 table."""
+    acs = pl.read_parquet(REF / "acs_race_by_zcta.parquet")
+    num = [c for c in acs.columns if c != "zcta"]
+    by_zip = (acs.join(_members(), on="zcta", how="inner")
+                 .group_by("modzcta").agg(pl.col(num).sum()))
+    return by_zip.select(
+        "modzcta",
+        *[(pl.sum_horizontal(cells) / pl.col("pop_total")).alias(f"src_{race}")
+          for race, cells in SOURCE_RACE.items()],
+        (pl.sum_horizontal(SOURCE_HISPANIC) / pl.col("pop_total")).alias("src_Hispanic"),
+        (pl.col("nh_white") / pl.col("pop_total")).alias("src_nh_white"))
+
+
+def test_race_and_ethnicity_are_filled_and_say_they_are_synthetic(cohort: pl.DataFrame) -> None:
+    """They were null for all 10,000, which left the fairness audit nothing to stratify by."""
+    assert cohort["race"].null_count() == 0
+    assert cohort["ethnicity"].null_count() == 0
+    assert set(cohort["race"].unique().to_list()) == RACES
+    assert set(cohort["ethnicity"].unique().to_list()) == ETHNICITIES
+    assert cohort["race_synthetic"].all() and cohort["ethnicity_synthetic"].all(), (
+        "a real ZIP composition does not make an individual's race real")
+
+
+@pytest.mark.parametrize("group", ["White", "Black", "Asian", "Other", "Hispanic"])
+def test_race_share_matches_the_composition_of_the_zips_veterans_live_in(
+        cohort: pl.DataFrame, group: str) -> None:
+    """Each veteran carries their own ZIP's composition, so the cohort's share of a group is
+    the mean of its veterans' ZIP shares -- as the PLACES rates are tested above."""
+    j = cohort.join(_race_shares(), on="modzcta", how="left")
+    assert j[f"src_{group}"].null_count() == 0, "veterans in ZIPs with no B03002 row"
+    col = "ethnicity" if group == "Hispanic" else "race"
+    realised = (j[col] == group).mean()
+    source = j[f"src_{group}"].mean()
+    assert abs(realised / source - 1) < 0.10, (
+        f"{group}: realised {realised:.1%}, ZIP-weighted ACS B03002 {source:.1%}")
+
+
+def test_race_gradient_survives_into_the_cohort(cohort: pl.DataFrame) -> None:
+    """A citywide [55/27/8/10] split would pass the average test above. It cannot pass this:
+    where ACS says a ZIP is mostly Black, the cohort's veterans there must be mostly Black."""
+    j = cohort.join(_race_shares(), on="modzcta", how="left")
+    hi = j.filter(pl.col("src_Black") >= 0.5)
+    lo = j.filter(pl.col("src_Black") <= 0.1)
+    assert hi.height >= 200 and lo.height >= 200, "too few veterans to compare the two ends"
+    assert (hi["race"] == "Black").mean() > 0.4, "majority-Black ZIPs came out under 40% Black"
+    assert (lo["race"] == "Black").mean() < 0.15, "ZIPs under 10% Black came out over 15% Black"
+
+
+def test_minority_share_agrees_with_cdc_svi_by_borough(cohort: pl.DataFrame) -> None:
+    """An independent check on a different source. CDC SVI `EP_MINRTY` is the share of
+    residents who are anything but non-Hispanic white, per census tract. Population-weighted
+    to borough it must land near the cohort's share, or B03002 was read wrongly."""
+    svi = (pl.read_parquet(REF / "svi_nyc_tract.parquet")
+             .filter((pl.col("EP_MINRTY") >= 0) & (pl.col("E_TOTPOP") > 0))
+             .group_by("borough")
+             .agg(((pl.col("EP_MINRTY") / 100) * pl.col("E_TOTPOP")).sum().alias("m"),
+                  pl.col("E_TOTPOP").sum().alias("pop")))
+    svi = svi.with_columns((pl.col("m") / pl.col("pop")).alias("svi_minority"))
+    ours = cohort.group_by("borough").agg(
+        (~((pl.col("race") == "White") & (pl.col("ethnicity") == "Non-Hispanic")))
+        .mean().alias("minority"))
+    j = svi.join(ours, on="borough", how="inner")
+    assert j.height == 5
+    for row in j.iter_rows(named=True):
+        assert abs(row["minority"] - row["svi_minority"]) < 0.10, (
+            f"{row['borough']}: cohort {row['minority']:.1%} non-white-non-Hispanic, "
+            f"CDC SVI says {row['svi_minority']:.1%}")
 
 
 def test_hazard_exposure_is_the_real_zip_join(cohort: pl.DataFrame) -> None:

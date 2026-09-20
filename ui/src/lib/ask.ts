@@ -125,7 +125,7 @@ export function answer(question: string, ctx: AskContext): Answer {
     const outageDays = ctx.days.filter((d) => d.outage >= 0.2);
     const plans = ctx.week.reduce((s, r) => s + (r?.actions.filter((a) => a.action === "backup_power_plan" || a.action === "cold_chain_plan").length ?? 0), 0);
     return {
-      text: outageDays.length ? `Outages are forecast on ${outageDays.map((d) => fmtDate(d.date)).join(", ")}, up to ${Math.round(Math.max(...outageDays.map((d) => d.outage)) * 100)}% of ZIPs. ${fmtInt(plans)} backup-power and cold-chain plans are queued this week.` : "No outage is forecast in this window.",
+      text: outageDays.length ? `Outages are forecast on ${outageDays.map((d) => fmtDate(d.date)).join(", ")}, peaking at ${Math.round(Math.max(...outageDays.map((d) => d.outage)) * 100)}% of customers out in the worst ZIP. ${fmtInt(plans)} backup-power and cold-chain plans are queued this week.` : "No outage is forecast in this window.",
       bullets: [
         "HHS emPOWER counts 36,146 electricity-dependent Medicare beneficiaries in NYC, 3,165 on oxygen.",
         "Rule of the list: a care-team call within two hours of an outage for anyone on powered equipment.",

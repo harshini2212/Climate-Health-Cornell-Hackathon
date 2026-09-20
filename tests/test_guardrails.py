@@ -45,6 +45,53 @@ def test_every_table_matches_its_contract(name: str) -> None:
     schema.validate(table(name), name)
 
 
+def test_no_test_depends_on_whether_make_fit_has_run() -> None:
+    """The same rule as below, for the file a path-literal scan cannot see.
+
+    `eval.recovery.POSTERIOR` is `data/posterior.nc` and it is the *default* argument of
+    `recovery.coefficient_draws`, `recovery.diagnostics` and `report.assemble`. So a test
+    that simply omits `posterior=` reads pipeline state without ever naming a path: it
+    passes on a machine where `make fit` has not run and fails on one where it has, which
+    is exactly what happened when rung 1 landed -- `report.json` grew an r-hat next to
+    `model_rung: 0`, and recovery coverage fell from prior coverage to a fitted model's.
+    Every call site in the suite therefore has to say which it means.
+    """
+    # `assemble` and `coefficient_draws` take `posterior` keyword-only, so it has to be
+    # named. `diagnostics(path)` takes it first and positionally, so only a bare call is a
+    # problem there -- a test that hands it a file it wrote itself is the point.
+    keyword_only = re.compile(r"\b(?:rep\.)?assemble\(|coefficient_draws\(")
+    positional = re.compile(r"\bdiagnostics\(")
+    offenders = []
+    for path in sorted((ROOT / "tests").glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        if "leeward.eval" not in src:
+            continue
+        for call in _call_sites(src, keyword_only):
+            if "posterior=" not in call:
+                offenders.append(f"{path.name}: {call.splitlines()[0].strip()}")
+        for call in _call_sites(src, positional):
+            if call.endswith("()"):
+                offenders.append(f"{path.name}: {call.strip()}")
+    assert not offenders, (
+        "these reach data/posterior.nc through a default argument; pass posterior=None "
+        "(or a tmp_path) so the gate does not depend on whether `make fit` ran: "
+        + "; ".join(offenders))
+
+
+def _call_sites(src: str, pattern: re.Pattern) -> list[str]:
+    """Each match of `pattern` plus the rest of its (possibly wrapped) call, to the ')'."""
+    out = []
+    for m in pattern.finditer(src):
+        depth, i = 0, m.end() - 1
+        while i < len(src):
+            depth += (src[i] == "(") - (src[i] == ")")
+            i += 1
+            if depth == 0:
+                break
+        out.append(src[m.start():i])
+    return out
+
+
 def test_no_test_reads_a_contract_table_out_of_data() -> None:
     """`data/` is pipeline state, not test input, and the gate must not depend on it.
 
@@ -234,6 +281,79 @@ def test_fairness_audit_is_never_suppressed() -> None:
     for pattern in (r"except\s*:\s*\n\s*pass", r"except Exception:\s*\n\s*pass"):
         assert not re.search(pattern, src), "fairness.py swallows an exception"
     assert "flagged" in src, "fairness.py must mark groups whose relative FNR gap exceeds 20 pct"
+
+
+def test_the_calibration_claim_never_ships_without_its_control() -> None:
+    """A constant at the base rate scores ECE 0.0000 on `calibration.py`'s own bins -- better
+    than the model. So the reliability curve alone is not evidence, and anything that reports
+    `ece_by_need` has to report `constant_ece` beside it and the discrimination table with it.
+
+    This is the same rule as the fairness audit's: the uncomfortable number is displayed,
+    never suppressed. It is a guardrail rather than a comment because the tempting edit --
+    quietly dropping the control from the payload the day before the demo -- is a one-line
+    edit that no diff review would catch.
+    """
+    cal = _mod("leeward.eval.calibration")
+    disc = _mod("leeward.eval.discrimination")
+    pairs = cal.paired(table("scores"), table("outcomes"))
+
+    control = cal.constant_ece(pairs)
+    assert set(control) == set(NEEDS), "the control must cover every need, not a chosen few"
+    model = cal.ece(cal.reliability(pairs))
+    assert all(control[k] <= model[k] + 1e-12 for k in NEEDS), (
+        "a constant at the base rate no longer beats the model on ECE. If that is real, the "
+        "caveats in calibration.py, report.py and Report.tsx are now wrong -- fix them.")
+
+    # Both legs reach the payload the API serves and the screen draws.
+    report_src = Path(inspect.getfile(_mod("leeward.eval.report"))).read_text(encoding="utf-8")
+    for key in ("constant_ece", "discrimination"):
+        assert re.search(rf'"{key}":', report_src), (
+            f"report.py no longer puts {key} in report.json; the Model report screen would "
+            "show the calibration curve as if it were the whole case for the model")
+    screen = (ROOT / "ui" / "src" / "screens" / "Report.tsx").read_text(encoding="utf-8")
+    assert "constant_ece" in screen and "within_day_auc" in screen, (
+        "Report.tsx no longer renders the control or within-day AUC")
+
+    # Within-day AUC is the number that justifies a call list; pooled is partly the weather.
+    got = disc.discriminate(pairs)
+    assert {"within_day_auc", "pooled_auc"} <= set(got.columns), (
+        "discrimination.py must report within-day AUC beside pooled, never pooled alone")
+
+    # And the strictly proper score, which is the only place the constant does not win.
+    # Without it the honest version of this story has no ending.
+    assert "scaled_brier" in got.columns, (
+        "the Brier skill score is gone. It is the answer to the ECE result above: a constant "
+        "at the base rate scores 0.0 on it by construction, so it is the one number that "
+        "makes the comparison fair.")
+    assert disc.scaled_brier([float(pairs["y"].mean())] * pairs.height, pairs["y"]) == \
+        pytest.approx(0.0, abs=1e-12), "the skill score's null model is no longer the base rate"
+def test_the_fairness_audit_reports_what_a_flag_count_cannot() -> None:
+    """The other way to suppress an audit is to report a number that cannot move.
+
+    At a pooled FNR near 1 no group can exceed the 20 percent bar -- clearing it would take
+    an FNR above 1 -- so a report that says only "0 of 33 flagged" has shown a metric with
+    no failing state and called it a pass. The audit therefore has to keep the raw rate, and
+    also carry the direction and the coverage that *can* separate groups.
+    """
+    fairness = _mod("leeward.eval.fairness")
+    if fairness is None:
+        pytest.skip("leeward.eval.fairness not built yet; will enforce reach/coverage/"
+                    "direction beside the flag, and that raw fnr stays in the report")
+
+    assert "fnr" in fairness.AUDIT_SCHEMA, "the raw rate is the honest denominator"
+    assert "fnr" in fairness.REPORT_COLUMNS, "dropping fnr for the nicer number is suppression"
+    for column in ("reach_ratio_to_cohort", "coverage", "direction"):
+        assert column in fairness.REPORT_COLUMNS, (
+            f"{column} must reach report.json; the flag alone cannot report this cohort")
+
+    tbl = fairness.audit(table("scores"), table("outcomes"), table("cohort"))
+    pooled = fairness.cohort_fnr(tbl)
+    note = fairness.ceiling_note(tbl)
+    assert f"{pooled:.3f}" in note, "the pooled rate the ratios divide by is never hidden"
+    if not fairness.flag_is_reachable(pooled):
+        assert not tbl["flagged"].any(), "a bar above an FNR of 1 cannot be cleared"
+        assert "impossible" in note, (
+            "a report where nothing can flag has to say so next to the flag count")
 
 
 def test_model_rung_is_recorded() -> None:

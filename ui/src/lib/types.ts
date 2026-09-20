@@ -46,6 +46,12 @@ export interface ZipHazard {
 
 export interface FacilityStatus {
   facility_id: string;
+  /**
+   * One row per facility **per day**, like `ZipHazard` -- a closure is a fact about a day,
+   * not about the window. `schemas.py` has carried this since the week contract landed;
+   * this mirror had not, so the week board rendered one closure card per day it was down.
+   */
+  date: string;
   name: string;
   lat: number;
   lon: number;
@@ -212,13 +218,29 @@ export interface CalibrationBin {
   n: number;
 }
 
+/** `reach_ratio_to_cohort` against the same 20 % bar the flag uses. */
+export type FairnessDirection = "reached_more" | "reached_less" | "on_par";
+
 export interface FairnessRow {
   stratum: string;
   group: string;
+  /** Veteran-days, then those with a need, then those that got a call: the denominators
+   *  under every rate below. `n_called` is null when coverage was not measured. */
   n: number;
+  n_events: number;
+  n_called: number | null;
   ece: number;
+  /** The raw rate. Kept on screen beside the ratio: it is the honest denominator. */
   fnr: number;
   fnr_ratio_to_cohort: number;
+  /** 1 - fnr. The same measurement with the ceiling taken off, and the one that moves. */
+  reach: number;
+  reach_ratio_to_cohort: number;
+  /** Share of the group's events that got one of the scarce daily calls.
+   *  `null` means not measured — never "nobody". */
+  coverage: number | null;
+  coverage_ratio_to_cohort: number | null;
+  direction: FairnessDirection;
   flagged: boolean;
 }
 
@@ -234,6 +256,36 @@ export interface DecisionQualityRow {
   harm_averted: number;
 }
 
+/**
+ * leeward/eval/discrimination.py, one row per need on the held-out window.
+ *
+ * `within_day_auc` is the headline and `pooled_auc` is the flattering one: the call list is
+ * chosen within a day, so pooled AUC includes credit for knowing today is a heat wave, which
+ * the team cannot act on. Show both or neither. Nulls mean "no events to rank", not zero.
+ */
+export interface DiscriminationRow {
+  need: string;
+  within_day_auc?: number | null;
+  pooled_auc?: number | null;
+  pr_auc?: number | null;
+  /** Brier skill score: 0 for a constant at the base rate, 1 for perfect, negative for
+   *  worse than knowing nothing. The score on which the constant does NOT beat us. */
+  scaled_brier?: number | null;
+  brier?: number | null;
+  lift_at_1pct?: number | null;
+  lift_at_10pct?: number | null;
+  /** min(1/q, 1/base_rate) — the best lift@1% anything could score. Lift without its
+   *  ceiling is uninterpretable, so the screen never shows one without the other. */
+  lift_ceiling_1pct?: number | null;
+  base_rate: number;
+  n: number;
+  n_events: number;
+  /** Days that could be scored, and days there were. Eventless days have no ranking to
+   *  score and are dropped; that conditions on the outcome, so both numbers are shown. */
+  n_days: number;
+  n_days_total?: number;
+}
+
 export interface ReportResponse {
   model_rung: number;
   rhat_max?: number | null;
@@ -242,6 +294,10 @@ export interface ReportResponse {
   recovery_coverage?: number | null;
   calibration: CalibrationBin[];
   ece_by_need: Record<string, number>;
+  /** What a single number at each need's base rate scores on the same bins: 0, by
+   *  construction. The control for `ece_by_need`, rendered beside it and never hidden. */
+  constant_ece?: Record<string, number>;
+  discrimination?: DiscriminationRow[];
   ablations: AblationRow[];
   decision_quality: DecisionQualityRow[];
   fairness: FairnessRow[];

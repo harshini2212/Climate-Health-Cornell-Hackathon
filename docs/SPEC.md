@@ -143,7 +143,7 @@ leeward/
 | veteran_id | str | synthea | Patient.id |
 | age | int | synthea | |
 | sex | str | synthea | |
-| race, ethnicity | str | synthea | for fairness audit only |
+| race, ethnicity | str | augment | **from ACS B03002** (`acs_race_by_zcta.parquet`): one joint draw from the veteran's own ZIP composition, so P(race, ethnicity \| ZIP) is measured and the individual assignment is synthetic. race ∈ White / Black / Asian / Other (AIAN, NHPI, some other race and multiracial folded in); ethnicity ∈ Hispanic / Non-Hispanic (Hispanic is an origin of any race). For fairness audit only |
 | modzcta | str | rehome | NYC Modified ZCTA, one of 178. **The join key everywhere.** |
 | borough | str | rehome | |
 | facility_id | str | rehome | nearest of {NY_MANHATTAN, NY_BROOKLYN, NY_BRONX, NY_ST_ALBANS, CBOC_*} |
@@ -202,11 +202,26 @@ The 82 °F hot-day threshold is from NYC Health's 2026 mortality report, not a t
 
 ### 3.4 scores.parquet
 
-`veteran_id, date, need, p_mean, p_lo80, p_hi80, p_epistemic_share, driver_1, driver_2, driver_3, driver_1_contrib, driver_2_contrib, driver_3_contrib`
+`veteran_id, date, need, p_mean, p_lo80, p_hi80, p_epistemic_share, p_gap_lo, p_gap_hi, driver_1, driver_2, driver_3, driver_1_contrib, driver_2_contrib, driver_3_contrib`
+
+`p_gap_lo` and `p_gap_hi` are nullable, and null means the record has no gap — which is not
+the same as a gap that would not move the number, and §7.5 needs to tell those apart. Where
+they are set, `p_gap_lo ≤ p_mean ≤ p_gap_hi` always: all three are averaged over the same
+posterior draws, because taking the ends at the mean coefficients instead puts `p_mean`
+outside its own range at these probabilities (Jensen) and breaks every threshold the tier
+compares them against.
 
 ### 3.5 actions.parquet
 
-`date, veteran_id, action, tier, eha, rank, capacity_bucket, rationale, message_id`
+`action_id, date, veteran_id, action, tier, eha, rank, lead_days, capacity_bucket, rationale, owner, message_id`
+
+**`date` is the do-by day, not the day the risk lands.** An action has a day it must be done
+by — the alternate dialysis site for Wednesday's surge has to be booked Monday — so
+`lead_days` (from `lead_days` in `leeward/decision/tau.yaml`, per docs/proposal.md §6) gives
+the gap and the risk day is `date + lead_days`. Capacity is consumed on `date`, so one work
+day's forty calls cover its own risk, the bookings two days out and the refills five days out
+together. An action whose do-by day has already passed is not offered; `compare()` returns
+how many, and `POST /actions` reports it as `n_too_late`.
 
 ### 3.6 outcome_log.parquet
 
@@ -446,7 +461,14 @@ Report the rung you reached, its r-hat and what did not converge. A model that s
 failed to fit is worse than a simpler one that did.
 
 ### 6.1 design.py — shared by simulator and model
-Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)`, `lag stacks`, and **binomial cells**: group by `(zip, stratum, date)` where stratum = the tuple of binary vulnerability flags used in interactions, now including `no_caregiver` and `low_assets` (≤ 256 strata; still ~50× fewer rows than Bernoulli). Output `cells.parquet: zip, stratum_id, date, need, n, y`.
+Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)` and `lag stacks`: one row per veteran-day, columns in `design.FEATURES` order.
+
+**The binomial cells moved to `hazard.cells()`** (rung 1, September 2026) and `design.py` was left alone, because the simulator shares it and the cohort lane owns it. Two changes to what this section originally specified, both in the safer direction:
+
+- The grouping key is **the exact design row**, not `(zip, stratum, date)`. The likelihood depends on a veteran-day only through its row of `X`, so identical rows are one cell whatever ZIP or day they came from — which is *exactly* equal to the Bernoulli likelihood rather than approximately, and `tests/test_hazard_toy.py` asserts that against the panel. Measured over the 120-day panel: 1,200,000 veteran-days → **135,743 cells, 8.8×** (and the same 8.8× on the 6M Bernoulli terms — a cell still carries one binomial term per need, not one in total).
+- Grouping is on the **active** columns for the rung, so at rung 1 two veterans who differ only in a medication interaction are one cell.
+
+No `cells.parquet` is written: cells are derived from `cohort × hazards × site_status × outcomes` in about a second, and a cached copy is one more thing that can go stale against `truth.json`.
 
 ### 6.2 hazard.py — NumPyro
 
@@ -550,7 +572,9 @@ the pharmacist slot is deliberately scarce, because it is a real person's aftern
 If `caregiver != none` and `caregiver_contact_consent`, `care_team_call` and `verified_text` target the caregiver first (τ for those actions +0.10 on treatment_gap and access_loss, because a co-resident can act same-day). If `caregiver == none`, `verified_text` τ is halved and `care_team_call` / `evacuation_assist` are preferred; `assign_buddy` becomes available (τ access_loss 0.35, cost unit `partner_slot`). If `low_assets`, `cooling_center_ride` and `evacuation_assist` are booked, not suggested, and `heap_application` is added as a 5-day-out action (τ heat 0.30 over the season).
 
 ### 7.5 tiers.py
-Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast), **or `mail_order_pharmacy` and `days_supply_remaining ≤ forecast lead time` on a day the scenario disrupts delivery to that ZIP, or `med_controlled` and the veteran's station is SiteDown**. The last two are close to deterministic, which is the point: they are the rows a care team can act on with no argument. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10. Self-serve: p_mean 0.05–0.25. Everyday: rest.
+Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast), **or `mail_order_pharmacy` and `days_supply_remaining ≤ forecast lead time` on a day the scenario disrupts delivery to that ZIP, or `med_controlled` and the veteran's station is SiteDown**. The last two are close to deterministic, which is the point: they are the rows a care team can act on with no argument. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10, **or the veteran's record has a gap that straddles a line the team acts on** — `p_gap_lo < L ≤ p_gap_hi` for L in (0.10, 0.25), where `p_gap_lo`/`p_gap_hi` (scores.parquet, from `model/score_prior.py`) are the p_mean this veteran would be reported with if the fields the VA does not have on file turned out to be their least- and most-risky values. Self-serve: p_mean 0.05–0.25. Everyday: rest.
+
+The second Find-out rule is not a loosening of the first; it reads a different column, and that is why both are here. The epistemic share is Var(p) relative to p(1-p), and at rung 0 it is dominated by the prior spread every veteran shares rather than by anything about one of them: across 6,000,000 scored rows it reaches 0.426 against the 0.4 cut, so the first rule alone fires on 0.04% of veteran-days and the tier cannot be demonstrated. Lowering the cut is not the fix either, because Act-now requires the same share to be *below* it — at 0.25 Find-out reaches 3.1% and Act-now collapses from 1.37% to 0.004%. The two rules were competing for one threshold. Measured on the sandy_then_heat scenario, the gap rule brings Find-out to 2.4% of veteran-days (9.2% of actions) and leaves Act-now untouched at 16,424 veteran-days.
 
 **Acceptance:** `test_allocate.py` hand-checkable 5-veteran case; capacity never exceeded; raising capacity never lowers total EHA.
 
@@ -576,7 +600,7 @@ Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or 
 | `GET /forecast?scenario=&day=` | hazards for the next 7 days by ZIP and facility |
 | `GET /scores?date=&need=` | ZIP and facility aggregates with intervals |
 | `GET /veteran/{id}?date=` | card: p per need, interval, epistemic share, drivers, tier |
-| `POST /actions` body `{date, capacity, group_floor?, prior_scale?}` | ranked action list + total EHA + baselines' EHA |
+| `POST /actions` body `{date, capacity, group_floor?, prior_scale?, limit?}` | the work list for the **do-by day** `date` (each row carries `lead_days`; its risk day is `date + lead_days`) + total EHA + baselines' EHA + `n_too_late` + `n_not_reached` |
 | `GET /message/{action_id}` | rendered message |
 | `POST /log` | outcome log row |
 | `GET /report` | eval JSON for the Model report screen |
@@ -589,9 +613,11 @@ Stub with fake data by hour 2 so Track D can build against it.
 `leeward/api/main.py` implements all eight. Every route reads cached parquets through
 `schema.read`; only `POST /actions` computes, and it answers in about 130 ms at 10,000 veterans.
 
-- **`day`** in `/forecast` is the offset from the scenario's first day; the window is seven days from there (shorter at the end), and a site is `site_down` if it is down on any day of the window.
+- **`day`** in `/forecast` is the offset from the scenario's first day; the window is seven days from there (shorter at the end). `facilities` is one `FacilityStatus` **per facility per day**, keyed like `site_status` itself, so a closure lands on the day it starts rather than over the whole window; a caller that wants "is this site there at all this week?" takes `.any()` over the window's rows.
 - **`scenario`** and **`prior_scale`** are accepted only for what is cached: `sandy_then_heat` and `1.0`. Anything else is a 422 that says so; it is never answered with other data under the requested name.
-- **`POST /actions`** merges a partial `capacity` onto `DEFAULT_CAPACITY` and echoes the merged dict. `counts_by_tier` counts action rows, not veterans. Unknown buckets, negative capacity and a bad `group_floor` are 422s.
+- **`POST /actions`** merges a partial `capacity` onto `DEFAULT_CAPACITY` and echoes the merged dict. `counts_by_tier` counts action rows, not veterans. Unknown buckets, negative capacity and a bad `group_floor` are 422s. `date` is the day the team works, so the route reads the risk days that day can still act on (`date` .. `date` + the longest lead in `tau.yaml`) and returns what has to be done on `date`. Do-by days share no capacity, so this is still one request.
+- **`n_not_reached`** is the other half of the slider, in the same answer: the Act-now and Find-out veterans a team with no capacity limit reaches with a person and this capacity reaches with nobody. A free `verified_text` is not being reached. It is one more greedy pass inside `compare(headroom=True)` over candidates the request has already valued -- about 5% of the request -- not a second allocation, so a board never has to ask twice.
+- **`limit`** cuts the rows returned, highest EHA first, and nothing else: `n_selected`, `total_eha`, `counts_by_tier`, `baselines`, `n_too_late` and `n_not_reached` all describe the whole allocation, so a board rendering a top slice can say "40 of 6,303". It defaults to no limit, and every issued row is still resolvable by `GET /message`.
 - **`baselines`** are the same team with the same capacity and the same candidate actions valued the same way, working the veterans in a different order: oldest first, most chronic conditions first, or a shuffle seeded by the date. Each veteran's own actions are still tried best first. So the gap to `leeward` is what risk-ranking who goes first is worth, not a strawman with fewer tools. Most of every total is the free `verified_text` bucket, which no ordering changes, so the gap is modest. Measured over every scored day (rung 0): 22-33% on the 500-veteran fixtures, and 0-17% (median 9%) on the 10,000-veteran run, where the days at 0% are the ones with no competition for a scarce slot. No baseline beat `leeward` on any day.
 - **`GET /message/{action_id}`** accepts the `action_id` or the `msg-` `message_id`, and finds any action from a recent `POST /actions` as well as the cached plan. 503 until `leeward.outreach.messages` exists.
 - **`POST /log`** is append-only, one row per `action_id`: a repeat is a 409. Unknown veteran is a 404.
@@ -629,8 +655,30 @@ Screens, in demo order: Forecast → Map → Care team list → Veteran card →
 | sbc.py | 50 refits on 500-veteran draws from prior | rank histograms; runs overnight |
 | ablate.py | drops climate / lags / interactions / latent dose / ICAR / SiteDown; calibration + harm averted per row | table |
 | decision_quality.py | harm averted at K ∈ {20,40,80} for Leeward vs age / chronic-count / random | the Impact bar chart |
-| fairness.py | ECE and FNR by borough, HVI band, evac zone, income band, caregiver status, race/ethnicity | show gaps; flag > 20 pct relative |
+| fairness.py | ECE, FNR, reach and coverage-at-40-calls by borough, HVI band, evac zone, income band, caregiver status, medication burden, race/ethnicity | show gaps; flag > 20 pct relative FNR; report `direction` on the same bar applied to reach |
 | report.py | assembles `report/report.json` for `GET /report` | |
+
+**Why the fairness audit reports more than the flag.** The 20 pct relative FNR bar stays exactly
+where it is, but on the real cohort it cannot be crossed: at a pooled FNR of 0.958, flagging a
+group would take an FNR of 1.149. The held-out window holds ~16.7k veteran-days with a need and
+40 calls a day to spend on them, so every group's FNR sits between 0.93 and 0.99 and two numbers
+at the ceiling cannot diverge by 20 pct. A report that says only "0 of 33 flagged" has therefore
+shown a metric with no failing state and called it a pass. So `fairness.py` also reports:
+
+- **`reach`** = 1 − FNR, and `reach_ratio_to_cohort`. The identical measurement with the ceiling
+  subtracted off, where groups separate by a factor of six rather than a tenth.
+- **`direction`** ∈ `reached_more` / `reached_less` / `on_par` — which side of the *same* 20 pct
+  bar the group's reach falls on. A group reached more than the cohort is a result, not the
+  absence of one, and is marked as deliberately as a flagged row.
+- **`coverage`** — the share of a group's events that got one of the `DEFAULT_CAPACITY["call"]`
+  daily calls, from `leeward.decision.allocate` run over the same window. Null when the audit was
+  given no call list: not measured and measured-as-nobody are different claims.
+
+Reach and coverage disagree, and the disagreement is the finding. The tier rule surfaces
+low-income (2.72×), no-caregiver (1.72×), HVI-5 (1.69×) and 5–9-medication (1.99×) veterans more
+than the cohort; under a 40-call budget the allocator follows through on the first two (2.69× and
+2.17×) but lands at parity on the other two (0.97× and 1.05×). `flag_is_reachable()` says which
+regime a report is in, and every rendering of the table repeats it.
 
 **Claude Code prompt (Track B, eval):**
 > Implement `leeward/eval/decision_quality.py`: for each day in 91–120 and K in {20,40,80}, select actions with `allocate.py` and with three baselines (rank by age, rank by n_chronic, random with seed), then compute harm averted = Σ w_k · τ[a,k] · y_true[i,k,t] over selected veterans. Output a tidy CSV and a Plotly bar chart. Add a test on a tiny fixture where Leeward must beat random.

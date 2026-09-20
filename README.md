@@ -143,7 +143,7 @@ Five design choices, each tied to something a judge can see:
 1. **Daily hazard with distributed lags.** Lag weights follow a smooth random-walk prior, so the model learns the lag shape from a handful of numbers.
 2. **Latent exposure with measurement error.** Deployment exposure is never observed exactly. Wide uncertainty in Λ flows into wide uncertainty in risk, which routes that veteran to the Find-out tier.
 3. **Weakly informative priors, shown not hidden.** Prior centers come from WTC Registry and PACT Act evidence with wide scales. A slider in the demo halves or doubles the prior scale and re-scores live. Rankings barely move, which is the point.
-4. **Fit on sufficient statistics, not rows.** 10,000 veterans × 120 days × 5 needs is 6 million Bernoulli rows. Grouping by ZIP × covariate stratum × day gives binomial cells with an identical likelihood and about 50× fewer rows. NumPyro NUTS on JAX fits in minutes on a laptop. The posterior is cached, so scoring a new forecast is a matrix multiply. **Nothing runs inference inside a request.**
+4. **Fit on sufficient statistics, not rows.** 10,000 veterans × 120 days × 5 needs is 6 million Bernoulli rows. The likelihood only sees a veteran-day through its row of the design matrix, so identical rows collapse into binomial cells with an **identical** likelihood — measured, 1,200,000 veteran-days become **135,743 cells, 8.8×** (the estimate here used to say 50×; that was a guess, this is the number). NumPyro NUTS on JAX fits in minutes on a laptop. The posterior is cached, so scoring a new forecast is a matrix multiply. **Nothing runs inference inside a request.**
 5. **Uncertainty decomposition.** The posterior predictive is split into aleatoric and epistemic parts. Epistemic width is what the decision layer treats as value of information.
 
 **Why not XGBoost.** A tree model would fit the synthetic data as well or better. It cannot carry a latent exposure dose, cannot say how much of a prediction is ignorance, cannot share strength across small ZIPs, and cannot update from 30 logged outcomes without a full retrain.
@@ -282,8 +282,8 @@ Makefile targets, in pipeline order:
 | `make sources` | Re-fetch the public data into `data/reference/`. Already done and committed; only needed to refresh. |
 | `make fixtures` | Fake-but-correctly-shaped parquets, so every lane can start before the real cohort exists. |
 | `make cohort` | Build the synthetic NYC cohort, plant `truth.json`, simulate 120 days of outcomes. |
-| `make fit` | Fit the NumPyro model on binomial cells and cache `posterior.nc` (about 5–10 min on 8 CPU cores). |
-| `make score` | Score the cohort against the scenario's hazards; write `scores.parquet` and `actions.parquet`. |
+| `make fit` | Fit the NumPyro model on binomial cells and cache `posterior.nc` (about 5–10 min on 8 CPU cores). Not built yet: the model is at rung 0, so the target refuses with an explanation until `leeward/model/fit.py` lands, and starts fitting the moment it does. |
+| `make score` | Score the cohort against the scenario's hazards, then allocate: `scores.parquet` and `actions.parquet`. Runs the rung-0 prior scorer until there is a posterior one. |
 | `make demo` | Boot the API and UI. Target: under 60 s from a clean clone, fully offline. |
 | `make report` | Run the full evaluation harness, including the fairness audit, into `report/report.json`. |
 | `make test` | `pytest -q`. Must pass before any merge. |
