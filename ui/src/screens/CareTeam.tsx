@@ -8,7 +8,7 @@ import { exportUrl, lastSource, postActions, type Source } from "../lib/api";
 import { parseRisk, splitHeadline } from "../lib/risk";
 import { ACTION_LABEL, BASELINE_LABEL, EHA_EXPECTED, EHA_REALIZED, TIER_BADGE, TIER_LABEL, fmtDate, fmtInt } from "../lib/labels";
 import { DEFAULT_CAPACITY, TIERS, type ActionsResponse } from "../lib/types";
-import type { VeteranFocus } from "./Week";
+import type { VeteranFocus } from "./CommandCenter";
 
 interface Props {
   scenario: string;

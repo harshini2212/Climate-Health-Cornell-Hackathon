@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { IconAlert, IconBook, IconCalendar, IconChart, IconHome, IconList, IconMap, IconMessage, IconSearch, IconSparkle, IconUser } from "./components/Icons";
+import { IconBook, IconCalendar, IconChart, IconHome, IconList, IconMap, IconMessage, IconSearch, IconSparkle, IconUser } from "./components/Icons";
 import { getForecast, postActions, type Source } from "./lib/api";
 import { DEFAULT_SCENARIO } from "./lib/config";
 import { CHOICES, INITIAL_CHOICE } from "./lib/demo";
@@ -7,24 +7,23 @@ import { RUNG_LABEL, fmtDate } from "./lib/labels";
 import { DEFAULT_CAPACITY } from "./lib/types";
 import { Ask } from "./screens/Ask";
 import { CareTeam } from "./screens/CareTeam";
-import { Dashboard } from "./screens/Dashboard";
+import { CommandCenter, type VeteranFocus } from "./screens/CommandCenter";
 import { Forecast } from "./screens/Forecast";
 import { Library } from "./screens/Library";
 import { Map } from "./screens/Map";
 import { MessageScreen } from "./screens/Message";
 import { Report } from "./screens/Report";
 import { VeteranScreen } from "./screens/VeteranCard";
-import { Week, type VeteranFocus } from "./screens/Week";
 
 /**
  * The shell: a 230px sidebar with grouped nav, a sticky topbar, a page header, then the
- * page. Screens sit in the demo's order: Week board -> Forecast -> Map -> Action list ->
+ * page. Screens sit in the demo's order: Command center -> Forecast -> Map -> Action list ->
  * Veteran card -> Message -> Model report. Every screen opens on the same morning: the
  * window the API picks (two days before the first alert) or the calm week, from the
  * picker in the topbar.
  */
 
-export type ScreenKey = "dashboard" | "week" | "forecast" | "map" | "careteam" | "veteran" | "message" | "ask" | "library" | "report";
+export type ScreenKey = "command" | "forecast" | "map" | "careteam" | "veteran" | "message" | "ask" | "library" | "report";
 
 interface Screen {
   key: ScreenKey;
@@ -36,8 +35,7 @@ interface Screen {
 }
 
 const SCREENS: Screen[] = [
-  { key: "dashboard", group: "Overview", label: "Dashboard", icon: <IconAlert />, title: "Care team dashboard", sub: "The event, who is at risk, and what to do about it" },
-  { key: "week", group: "Overview", label: "Week board", icon: <IconCalendar />, title: "The week ahead", sub: "Who to reach, under the day it is due" },
+  { key: "command", group: "Overview", label: "Command center", icon: <IconCalendar />, title: "Command center", sub: "The week ahead, who to reach, and what to know before you call" },
   { key: "forecast", group: "Overview", label: "Forecast", icon: <IconHome />, title: "Forecast", sub: "Hazards, sites and the panel over the next seven days" },
   { key: "map", group: "Overview", label: "Map", icon: <IconMap />, title: "Map", sub: "Expected need by ZIP, VA sites, and where the hazard lands" },
   { key: "careteam", group: "Care team", label: "Action list", icon: <IconList />, title: "Today's action list", sub: "Ranked by expected harm averted, cut at the team's real capacity" },
@@ -49,7 +47,7 @@ const SCREENS: Screen[] = [
 ];
 
 export default function App() {
-  const [screen, setScreen] = useState<ScreenKey>("dashboard");
+  const [screen, setScreen] = useState<ScreenKey>("command");
   const scenario = DEFAULT_SCENARIO.key;
   const [source, setSource] = useState<Source>("fixture");
   const [actNow, setActNow] = useState<number | null>(null);
@@ -97,10 +95,6 @@ export default function App() {
     };
   }, [scenario, startDay]);
 
-  const openDay = useCallback((d: string) => {
-    setDay(d);
-    setScreen("careteam");
-  }, []);
   /** Ask and the dashboard both jump to a screen, sometimes on a particular day. */
   const goto = useCallback((s: ScreenKey, d?: string) => {
     if (d) setDay(d);
@@ -180,12 +174,11 @@ export default function App() {
               <div className="sub">{current.sub}</div>
             </div>
           </div>
-          {screen === "dashboard" && <Dashboard scenario={scenario} day={startDay} onSource={onSource} onOpen={goto} onOpenVeteran={openVeteran} />}
-          {screen === "week" && <Week scenario={scenario} day={startDay} onSource={onSource} onOpenDay={openDay} onOpenVeteran={openVeteran} />}
+          {screen === "command" && <CommandCenter scenario={scenario} day={startDay} onSource={onSource} onOpen={goto} onOpenVeteran={openVeteran} />}
           {screen === "forecast" && <Forecast scenario={scenario} day={startDay} onSource={onSource} onOpen={setScreen} />}
           {screen === "map" && <Map scenario={scenario} day={startDay} onSource={onSource} />}
           {screen === "careteam" && <CareTeam scenario={scenario} date={day ?? today} onSource={onSource} onOpenVeteran={openVeteran} />}
-          {screen === "veteran" && <VeteranScreen focus={focus} onOpenMessage={() => setScreen("message")} onBack={() => setScreen("week")} />}
+          {screen === "veteran" && <VeteranScreen focus={focus} onOpenMessage={() => setScreen("message")} onBack={() => setScreen("command")} />}
           {screen === "message" && <MessageScreen focus={focus} onBack={() => setScreen("veteran")} />}
           {screen === "ask" && <Ask scenario={scenario} day={startDay} onGoto={goto} />}
           {screen === "library" && <Library />}
