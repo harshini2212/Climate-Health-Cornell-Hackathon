@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
-import { HBars } from "../components/Charts";
+import { DotRows } from "../components/Charts";
 import { CapacitySlider } from "../components/CapacitySlider";
 import { HarmCounter } from "../components/HarmCounter";
 import { IconArrow, IconDownload } from "../components/Icons";
+import { RiskAxis, RiskBar } from "../components/RiskBar";
 import { exportUrl, lastSource, postActions, type Source } from "../lib/api";
+import { parseRisk, splitHeadline } from "../lib/risk";
 import { ACTION_LABEL, BASELINE_LABEL, EHA_EXPECTED, EHA_REALIZED, TIER_BADGE, TIER_LABEL, fmtDate, fmtInt } from "../lib/labels";
 import { DEFAULT_CAPACITY, TIERS, type ActionsResponse } from "../lib/types";
 import type { VeteranFocus } from "./Week";
@@ -62,6 +64,15 @@ export function CareTeam({ scenario, date, onSource, onOpenVeteran }: Props) {
   const rows = tierFilter === "all" ? resp.actions : resp.actions.filter((a) => a.tier === tierFilter);
   const human = resp.actions.filter((a) => a.capacity_bucket !== "free").length;
   const age = resp.baselines.find((b) => b.name === "rank_by_age")?.total_eha;
+  /**
+   * The gap to the oldest-first baseline, in the unit it is measured in.
+   *
+   * This used to print the ratio, which rounds to "1.00x" and reads as a win when it is
+   * 1.003. At rung 0 the ranking really is close to calling the oldest first: the prior
+   * has no fitted signal to separate them with. The Model report's realized harm-averted
+   * is the number that does, and the caption below points at it.
+   */
+  const delta = age === undefined ? null : resp.total_eha - age;
   const ratio = age ? resp.total_eha / age : null;
   const barRows = [{ name: "leeward", total_eha: resp.total_eha }, ...resp.baselines.filter((b) => b.name !== "leeward")].map((b) => ({ label: BASELINE_LABEL[b.name] ?? b.name, value: b.total_eha, lead: b.name === "leeward" }));
 
@@ -70,7 +81,14 @@ export function CareTeam({ scenario, date, onSource, onOpenVeteran }: Props) {
       <div className="strip">
         <div className="stat hero">
           <div className="k">Expected harm averted today</div>
-          <div className="vrow"><div className="v"><HarmCounter total={resp.total_eha} /></div>{ratio && <span className="delta up">▲ {ratio.toFixed(2)}×</span>}</div>
+          <div className="vrow">
+            <div className="v"><HarmCounter total={resp.total_eha} /></div>
+            {delta !== null && (
+              <span className={`delta${delta > 0 ? " up" : ""}`} title={ratio ? `${ratio.toFixed(3)}× the oldest-first baseline at this capacity` : undefined}>
+                {delta > 0 ? "+" : ""}{delta.toFixed(2)} vs oldest first
+              </span>
+            )}
+          </div>
           <div className="s" title={EHA_EXPECTED.line}>severity-weighted need-days · {EHA_EXPECTED.short}</div>
         </div>
         <div className="stat">
@@ -94,7 +112,7 @@ export function CareTeam({ scenario, date, onSource, onOpenVeteran }: Props) {
         </div>
         <div className="card">
           <div className="ch"><h3>Versus the baselines</h3><span className="sub">{EHA_EXPECTED.short}</span></div>
-          <HBars rows={barRows} />
+          <DotRows rows={barRows} format={(v) => v.toFixed(1)} unit="need-days" />
           <div className="muted small" style={{ marginTop: 12 }}>{EHA_EXPECTED.line} The model report carries the other one: {EHA_REALIZED.line.toLowerCase()}</div>
         </div>
       </div>
@@ -123,25 +141,31 @@ export function CareTeam({ scenario, date, onSource, onOpenVeteran }: Props) {
                 <th>Veteran</th>
                 <th>Tier</th>
                 <th>Action</th>
+                <th>Risk<span className="sub">posterior mean · 80% credible interval</span><RiskAxis /></th>
                 <th>Top driver</th>
-                <th className="n">Expected harm averted</th>
+                <th className="n stack">Expected harm averted</th>
                 <th>Owner</th>
                 <th></th>
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 400).map((a) => (
-                <tr key={a.action_id} className="click" onClick={() => onOpenVeteran({ veteranId: a.veteran_id, actionId: a.action_id, date: resp.date })}>
-                  <td className="n">{a.rank}</td>
-                  <td>{a.name_display}<span className="sub">{a.borough} · {a.modzcta}</span></td>
-                  <td><span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span></td>
-                  <td className="wrap">{ACTION_LABEL[a.action] ?? a.action}<span className="sub">{a.rationale}</span></td>
-                  <td>{a.top_driver ? <span className="tag">{a.top_driver}</span> : <span className="muted">—</span>}</td>
-                  <td className="n">{a.eha.toFixed(2)}</td>
-                  <td className="muted">{a.owner.replace("_", " ")}</td>
-                  <td><IconArrow /></td>
-                </tr>
-              ))}
+              {rows.slice(0, 400).map((a) => {
+                const risk = parseRisk(a.rationale);
+                const { need, when } = splitHeadline(a.headline);
+                return (
+                  <tr key={a.action_id} className="click" onClick={() => onOpenVeteran({ veteranId: a.veteran_id, actionId: a.action_id, date: resp.date })}>
+                    <td className="n">{a.rank}</td>
+                    <td>{a.name_display}<span className="sub">{a.borough} · {a.modzcta}</span></td>
+                    <td><span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span>{when && <span className="sub">{when}</span>}</td>
+                    <td className="wrap" title={a.rationale}>{ACTION_LABEL[a.action] ?? a.action}{need && <span className="sub">{need}</span>}</td>
+                    <td>{risk ? <RiskBar r={risk} /> : <span className="muted">—</span>}</td>
+                    <td className="driver">{a.top_driver ? <span className="tag">{a.top_driver}</span> : <span className="muted">—</span>}</td>
+                    <td className="n">{a.eha.toFixed(2)}</td>
+                    <td className="muted">{a.owner.replace("_", " ")}</td>
+                    <td><IconArrow /></td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {rows.length > 400 && <div className="muted small" style={{ padding: "10px 12px" }}>Showing the first 400 of {fmtInt(rows.length)} rows.</div>}

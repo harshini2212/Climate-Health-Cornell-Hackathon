@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { IconAlert, IconArrow, IconBuilding } from "../components/Icons";
 import { getForecast, lastSource, postActions, postActionsWeek, type Source } from "../lib/api";
 import { ACTION_LABEL, BUCKET_LABEL, OWNER_LABEL, TIER_BADGE, TIER_LABEL, dayLabel, dayName, fmtDate, fmtInt, handleFor } from "../lib/labels";
-import { DEFAULT_CAPACITY, type ActionRow, type ActionsResponse, type Capacity, type ForecastResponse, type ZipHazard } from "../lib/types";
+import { DEFAULT_CAPACITY, type ActionRow, type ActionsResponse, type Capacity, type FacilityStatus, type ForecastResponse, type ZipHazard } from "../lib/types";
 
 /** Capacity high enough that nothing is cut. The gap to the real cut is the honest half. */
 const UNCAPPED: Capacity = Object.fromEntries(Object.keys(DEFAULT_CAPACITY).map((k) => [k, 100_000]));
@@ -29,15 +29,25 @@ interface DayHazard {
   smoke: boolean;
   flood: boolean;
   surge: number;
-  outage: number;
+  /** ZIPs at or over the outage line, and how many ZIPs the day had at all. */
+  outageZips: number;
+  nZips: number;
+  /** Worst single ZIP's outage fraction. Not a share of ZIPs -- see `chips`. */
+  outagePeak: number;
   maxHeatIndex: number;
   maxPm25: number;
   evacZone: number;
 }
 
+/**
+ * The line Forecast.tsx already uses to call a ZIP "in outage" (`outage_frac >= 0.2`).
+ * Both screens summarise the same field, so they have to summarise it the same way.
+ */
+const OUTAGE_LINE = 0.2;
+
 function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
   const byDate = new Map<string, DayHazard>();
-  for (const d of dates) byDate.set(d, { date: d, heat: false, smoke: false, flood: false, surge: 0, outage: 0, maxHeatIndex: 0, maxPm25: 0, evacZone: 0 });
+  for (const d of dates) byDate.set(d, { date: d, heat: false, smoke: false, flood: false, surge: 0, outageZips: 0, nZips: 0, outagePeak: 0, maxHeatIndex: 0, maxPm25: 0, evacZone: 0 });
   for (const z of zips) {
     const d = byDate.get(z.date);
     if (!d) continue;
@@ -45,7 +55,9 @@ function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
     d.smoke ||= z.smoke_alert;
     d.flood ||= z.flood_warning || z.flash_flood_emergency;
     d.surge = Math.max(d.surge, z.surge_ft);
-    d.outage = Math.max(d.outage, z.outage_frac);
+    d.nZips += 1;
+    if (z.outage_frac >= OUTAGE_LINE) d.outageZips += 1;
+    d.outagePeak = Math.max(d.outagePeak, z.outage_frac);
     d.maxHeatIndex = Math.max(d.maxHeatIndex, z.heat_index_max_f);
     d.maxPm25 = Math.max(d.maxPm25, z.pm25);
     d.evacZone = Math.max(d.evacZone, z.evac_zone_ordered);
@@ -53,14 +65,30 @@ function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
   return dates.map((d) => byDate.get(d)!);
 }
 
-/** Words, not pictograms: a two-metre read beats an icon nobody has learned yet. */
+/**
+ * Words, not pictograms: a two-metre read beats an icon nobody has learned yet.
+ *
+ * The outage chip used to read "<peak fraction>% of ZIPs", which is two different numbers
+ * wearing one label: 0.80 is how dark the worst single ZIP is, not how much of the city is
+ * out. On landfall day that printed "80% of ZIPs" when 62% of ZIPs were affected. The
+ * share is the number the label promises, so the share is what it now shows; the peak is
+ * still worth knowing for powered-equipment patients, so it moves into the hover.
+ */
 function chips(d: DayHazard) {
-  const out: { key: string; label: string; detail: string }[] = [];
+  const out: { key: string; label: string; detail: string; title?: string }[] = [];
   if (d.flood) out.push({ key: "flood", label: "FLOOD", detail: d.evacZone ? `evac zone ${d.evacZone}` : "warning" });
   if (d.surge > 0) out.push({ key: "surge", label: "SURGE", detail: `${d.surge.toFixed(0)} ft` });
   if (d.heat) out.push({ key: "heat", label: "HEAT", detail: `${Math.round(d.maxHeatIndex)}°F index` });
   if (d.smoke) out.push({ key: "smoke", label: "SMOKE", detail: `PM2.5 ${Math.round(d.maxPm25)}` });
-  if (d.outage > 0.05) out.push({ key: "outage", label: "OUTAGE", detail: `${Math.round(d.outage * 100)}% of ZIPs` });
+  if (d.outageZips > 0) {
+    const share = d.nZips ? Math.round((100 * d.outageZips) / d.nZips) : 0;
+    out.push({
+      key: "outage",
+      label: "OUTAGE",
+      detail: `${share}% of ZIPs`,
+      title: `${d.outageZips} of ${d.nZips} ZIPs at or over ${Math.round(OUTAGE_LINE * 100)}% of customers out; worst ZIP ${Math.round(d.outagePeak * 100)}%`,
+    });
+  }
   return out.slice(0, 3);
 }
 
@@ -156,7 +184,23 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
   }, [load]);
 
   const days = useMemo(() => (forecast ? summarise(forecast.dates.slice(0, 7), forecast.zips) : []), [forecast]);
-  const downSites = useMemo(() => (forecast?.facilities ?? []).filter((f) => f.site_down), [forecast]);
+  /**
+   * `facilities` is one row per site *per day*, so a site that is down all week arrives
+   * five times. Rendering the list raw printed the same closure card five times over and
+   * keyed them all on `facility_id`, which is one duplicate React key per repeat. A
+   * closure is one fact about one site, and the days it covers are the useful part of it.
+   */
+  const downSites = useMemo(() => {
+    const byId = new Map<string, { f: FacilityStatus; days: string[] }>();
+    for (const f of forecast?.facilities ?? []) {
+      if (!f.site_down) continue;
+      const seen = byId.get(f.facility_id);
+      if (seen) seen.days.push(f.date);
+      else byId.set(f.facility_id, { f, days: [f.date] });
+    }
+    for (const s of byId.values()) s.days.sort();
+    return [...byId.values()];
+  }, [forecast]);
   const board = useMemo(() => week.map((r, i) => (r ? boardFor(r, headroom[i] ?? null) : null)), [week, headroom]);
   const loaded = board.filter((b): b is DayBoard => b !== null);
 
@@ -203,7 +247,7 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
               <div className="rd-chips">
                 {chips(d).length === 0 && <span className="hz clear">CLEAR</span>}
                 {chips(d).map((c) => (
-                  <span key={c.key} className={`hz ${c.key}`}>{c.label}<small>{c.detail}</small></span>
+                  <span key={c.key} className={`hz ${c.key}`} title={c.title}>{c.label}<small>{c.detail}</small></span>
                 ))}
               </div>
               <div className={`prog${load >= 1 ? " over" : load >= 0.8 ? " warn" : ""}`}><i style={{ width: `${load * 100}%` }} /></div>
@@ -245,12 +289,14 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
         </div>
 
         <div className="stack">
-          {downSites.map((f) => (
+          {downSites.map(({ f, days }) => (
             <div key={f.facility_id} className="insight">
               <div className="ic ic-critical"><IconBuilding /></div>
               <div className="bd">
-                <div className="t">{f.name} (station {f.facility_id}) is closed this week</div>
-                <div className="d">Evacuation zone {f.evac_zone}{f.site_dependent_services ? "; dialysis, infusion and the opioid treatment program run on site" : ""}. {altSiteBookings} alternate-site {altSiteBookings === 1 ? "booking is" : "bookings are"} queued{loaded.length < board.length ? " so far" : ""}.</div>
+                <div className="t">
+                  {f.name} (station {f.facility_id}) is closed {days.length === 1 ? fmtDate(days[0]) : `${fmtDate(days[0])} – ${fmtDate(days[days.length - 1])}`}
+                </div>
+                <div className="d">{days.length} {days.length === 1 ? "day" : "days"} of this window. Evacuation zone {f.evac_zone}{f.site_dependent_services ? "; dialysis, infusion and the opioid treatment program run on site" : ""}. {altSiteBookings} alternate-site {altSiteBookings === 1 ? "booking is" : "bookings are"} queued{loaded.length < board.length ? " so far" : ""}.</div>
               </div>
             </div>
           ))}

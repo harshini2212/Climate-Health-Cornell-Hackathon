@@ -46,6 +46,12 @@ export interface ZipHazard {
 
 export interface FacilityStatus {
   facility_id: string;
+  /**
+   * One row per facility **per day**, like `ZipHazard` -- a closure is a fact about a day,
+   * not about the window. `schemas.py` has carried this since the week contract landed;
+   * this mirror had not, so the week board rendered one closure card per day it was down.
+   */
+  date: string;
   name: string;
   lat: number;
   lon: number;
