@@ -19,3 +19,8 @@ make_ui_fixtures.py --date 2026-08-03 now cuts leeward.decision.allocate's own l
 
 ## 20:55 — redesign: one shell, one demo day, seven screens live against the API
 Week board rebuilt (ribbon selects a day; one queue grouped by owner; capacity by unit; not-reached chart), Forecast/Action list/Veteran card/Message re-laid on the template grid, Model report screen built from /report with real decision quality (10.7x oldest-first at 40 calls). Every screen opens on landfall via lib/config.ts; api.ts caches responses and loads the week two days at a time. Board no longer renders rationale (test_ui_fixtures scans for it), so the xfail is gone. npm run build clean; make check green.
+
+## 21:50 — dashboard: event panel, 3-tier patient list, Ask Leeward, resource library
+New opening screen (src/screens/Dashboard.tsx). Event panel with computed severity, countdown, NY map and an update feed built from real hazard-table transitions; patient list in three tiers with risk-factor and action counts at a glance, hover detail and click-through to the chart; Ask Leeward answering deterministically offline from the forecast, the allocator's list and the library; 12-card resource library by event and topic with sources. Opens on the first alert day. Six separate commits on lane/ui-redesign so any piece can be reverted alone. npm run build clean.
+
+Rahul: tests/test_api.py::test_the_slider_answers_inside_300ms fails on this Windows machine — median 1412 ms at 10k veterans, budget 300 ms (your note says 127 ms on CI). Pre-existing and not UI: my commits touch only ui/. The client already caches per request and allows 30 s, but the slider will feel slow if the demo runs on a machine like this one.
