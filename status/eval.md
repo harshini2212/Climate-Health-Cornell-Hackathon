@@ -73,3 +73,55 @@ merging anything that touches the allocator.
 Out of lane, not done: `ui/public/fixtures/report.json` still carries `ablations: []`, so
 the offline UI fixture shows the empty card until the ui lane regenerates it after a
 `make ablate && make report`.
+
+## 20:0x — eval/discrimination.py + the constant-predictor control
+TRIPOD+AI's three legs are discrimination, calibration and clinical utility; the repo had the
+last two. `leeward/eval/discrimination.py` adds the first: per need on the held-out window,
+**within-day AUC** — the unweighted mean of per-day c-statistics — pooled AUC beside it,
+PR-AUC, lift at the top 1%/10% against its ceiling, and the Brier skill score. Mann-Whitney
+rank identity with tie-averaged ranks, no scikit-learn. Within-day is the headline because the
+list is chosen within a day; pooled is partly "was today a heat wave". The estimand has a name
+and a citation — within-cluster concordance, van Klaveren et al. BMC Med Res Methodol 2014;14:5
+— and TRIPOD-Cluster asks which version you computed, so the docstring and the screen both say
+"unweighted mean of per-day c-statistics" out loud.
+Real rung-0 run: heat **0.728** within-day (0.844 pooled), treatment_gap 0.715 (0.744),
+access_loss 0.645, mental 0.605, breathing 0.581 (0.581 — no day effect at all). 30/30 days
+scoreable on every need, so no selection effect from dropping eventless days.
+
+**The control, and the thing that answers it.** A single number at each need's base rate scores
+**ECE 0.0000** — better than Leeward's 0.0011–0.0075. I first wrote this up as a binning
+artifact and that was wrong: it is zero under *any* binning and any smoother, because
+calibration error is proper but not *strictly* proper — it drops the sharpness term
+(Gruber & Buettner, NeurIPS 2022). Austin & Steyerberg's ICI returns 0 here too. So no better
+calibration metric rescues it, and the fix is a strictly proper score. `scaled_brier`
+(1 − Brier/Brier_null, the Brier skill score / IPA, recommended by STRATOS TG6 2025) is now in
+the table: the constant scores exactly 0.0 there, by construction.
+
+**Read the skill column before the demo.** heat **+0.110**, treatment_gap **+0.042**,
+breathing +0.001, mental **−0.004**, access_loss **−0.014**. Three of five needs are at or
+below a constant at the base rate on a strictly proper score, while all three still rank above
+chance (within-day AUC 0.58–0.65). Ranking and scale are different things: rung 0 has never
+seen an outcome, so it orders people better than a coin while its probabilities are still the
+priors' — and at a 0.34% base rate an ECE of 0.0067 is twice the base rate itself, which costs
+more in squared error than the weak ranking earns back. **This is the clearest argument in the
+repo for rung 1**, and it is on the screen rather than in a footnote. Do not quote heat alone.
+PR-AUC is reported as secondary only: STRATOS TG6 and McDermott et al. (NeurIPS 2024) both
+advise against preferring AUPRC to AUROC, the latter because it favours subpopulations with
+more frequent positives — a fairness hazard in a project that ships a fairness audit.
+
+`tests/test_guardrails.py` now fails if the control or within-day AUC stops reaching the
+payload or the screen. The Model report is five sections, not four; `ReportResponse` gained
+`constant_ece` and `discrimination` (additive/optional, cleared with the `api` owner first).
+**Corrected `docs/ROUND_C.md`:** its AUC and PR-AUC columns reproduce exactly, but its two lift
+columns are pooled over the window. Per-day selection — the same argument as within-day AUC —
+gives heat 10.7x, not 18.2x; the pooled figure assumes a month of call budget banked for the
+heat wave. Needs with no day effect are identical either way, which is what confirms it.
+
+**Committed with one red test, deliberately, and here is the evidence.**
+`test_api.py::test_the_slider_answers_inside_300ms_at_ten_thousand_veterans` failed at a 424 ms
+median (budget 300; the test's own comment records 127 ms on an idle machine). It is load, not
+this diff: `leeward/api/**` has **zero** runtime imports of `leeward.eval`, so nothing here is
+reachable from POST /actions, and the machine was at load average 22→66 with the model lane
+running `leeward.model.fit --chains 4` at ~400% CPU and a cohort worktree running `score_prior`
+at ~320%. Lint and every other test pass. **Re-run it on a quiet machine before the demo** —
+if it is still red then, it is a real regression from some other lane and not from this one.

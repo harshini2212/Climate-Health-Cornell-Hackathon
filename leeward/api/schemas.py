@@ -268,6 +268,43 @@ class FairnessRow(Base):
     flagged: bool = Field(description="True when relative FNR gap exceeds 20 percent")
 
 
+class DiscriminationRow(Base):
+    """Per need, on the held-out window. TRIPOD+AI's first leg; `leeward/eval/discrimination.py`.
+
+    `within_day_auc` is the headline and `pooled_auc` is the flattering one: the call list is
+    chosen within a day, so pooled AUC includes credit for knowing today is a heat wave. The
+    UI shows both, always, and never the pooled one alone.
+
+    The AUCs and `pr_auc` are null when the window has no events to rank -- "we could not
+    measure this" must not render as "the model scored zero".
+    """
+    need: str
+    within_day_auc: float | None = Field(default=None, ge=0.0, le=1.0)
+    pooled_auc: float | None = Field(default=None, ge=0.0, le=1.0)
+    pr_auc: float | None = Field(default=None, ge=0.0, le=1.0)
+    #: 1 - Brier/Brier_null, the Brier skill score. **The score on which the constant does
+    #: not win**: it is 0.0 for a constant at the base rate and 1.0 for a perfect predictor,
+    #: and unlike ECE it is strictly proper, so it keeps the sharpness term. Negative is
+    #: allowed and means worse than knowing nothing, so there is no lower bound here.
+    scaled_brier: float | None = Field(default=None, le=1.0)
+    #: The raw Brier. Prevalence-dependent, and shipped only so `scaled_brier` is not read
+    #: as it: predicting zero for everyone scores 0.0034 at a 0.34% base rate.
+    brier: float | None = Field(default=None, ge=0.0)
+    lift_at_1pct: float | None = None
+    lift_at_10pct: float | None = None
+    #: min(1/q, 1/base_rate): the best lift@1% any predictor could score here. Lift is
+    #: uninterpretable without it -- 10.7x of a possible 42.9x is not 10.7x of a possible 11.
+    lift_ceiling_1pct: float | None = None
+    base_rate: float
+    n: int
+    n_events: int
+    #: Held-out days on which the need happened at all, so had an AUC to contribute, and
+    #: days there were. Eventless days are dropped, which conditions on the outcome, so the
+    #: denominator travels with the numerator rather than being left off the slide.
+    n_days: int
+    n_days_total: int = 0
+
+
 class AblationRow(Base):
     dropped: str
     ece: float
@@ -288,6 +325,12 @@ class ReportResponse(Base):
     recovery_coverage: float | None = None
     calibration: list[CalibrationBin] = Field(default_factory=list)
     ece_by_need: dict[str, float] = Field(default_factory=dict)
+    #: The control for `ece_by_need`: what a single number equal to each need's base rate
+    #: scores on the same equal-mass bins. It is 0.0 by construction, which is *better* than
+    #: the model's. Shown beside `ece_by_need`, never instead of it -- at these base rates
+    #: calibration cannot separate the model from this, and `discrimination` is what can.
+    constant_ece: dict[str, float] = Field(default_factory=dict)
+    discrimination: list[DiscriminationRow] = Field(default_factory=list)
     ablations: list[AblationRow] = Field(default_factory=list)
     decision_quality: list[DecisionQualityRow] = Field(default_factory=list)
     fairness: list[FairnessRow] = Field(default_factory=list)
@@ -304,5 +347,5 @@ __all__ = [
     "ActionsRequest", "ActionsResponse", "ActionRow", "BaselineResult",
     "Message", "LogRequest", "LogResponse",
     "ReportResponse", "RecoveryRow", "CalibrationBin", "FairnessRow",
-    "AblationRow", "DecisionQualityRow",
+    "AblationRow", "DecisionQualityRow", "DiscriminationRow",
 ]
