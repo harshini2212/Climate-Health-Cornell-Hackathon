@@ -223,9 +223,17 @@ export async function getMessage(actionId: string): Promise<Message> {
   return msg;
 }
 
+/**
+ * `report/report.json` is generated output and gitignored, so a clean clone answers this
+ * route 200 with the rung and nothing else -- which means "make report has not been run
+ * here", not "the audit passed". On screen the two are indistinguishable, so an empty live
+ * report falls through to the committed fixture and the badge says `fixture`. Report.tsx
+ * prints `generated_at` either way, so whichever one you are looking at says when it ran.
+ */
 export async function getReport(): Promise<ReportResponse> {
   const live = await tryApi<ReportResponse>("/report");
-  return live ?? fixture<ReportResponse>("report");
+  if (live && (live.recovery.length || live.calibration.length || live.fairness.length)) return live;
+  return fixture<ReportResponse>("report");
 }
 
 /** The partner-sheet CSV only exists live; offline the button explains why. */

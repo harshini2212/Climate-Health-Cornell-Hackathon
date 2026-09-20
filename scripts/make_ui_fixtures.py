@@ -18,6 +18,10 @@ Outputs, all under ui/public/fixtures/ and committed (they are small):
                               list, so a click on the week board opens a real card offline
     messages.json             { action_id: Message } for every candidate action, each one
                               carrying all five elements that tell it apart from a scam
+    report.json               ReportResponse: report/report.json from the last `make
+                              report`, which is gitignored, so the model report screen
+                              still has recovery, reliability and the fairness audit in a
+                              clean clone
 
 Every object is validated through the pydantic models before it is written, so the UI
 is typed against the contract and not against whatever this script happened to emit.
@@ -350,13 +354,24 @@ def build_messages(cohort: pl.DataFrame, candidates: list[dict]) -> dict:
 def build_report(scores: pl.DataFrame) -> dict:
     """ReportResponse for the Model report screen.
 
-    Until leeward/eval/report.py assembles the full report, this carries what has actually
-    been run: the rung, and decision quality from report/decision_quality.csv if
-    `python -m leeward.eval.decision_quality` has produced it (mean realised harm averted
-    per day, by K and strategy). Every other section stays empty and the screen says so;
-    an empty fairness table means "not audited", never "passed".
+    `make report` assembles the whole thing -- recovery, reliability, decision quality, the
+    fairness audit -- into report/report.json. That file is generated output and gitignored,
+    so a clean clone has no eval run at all and `GET /report` answers with the rung and
+    nothing else. Copy it into the fixtures when it is there, so the screen has the real run
+    with the network off and on a machine that has never run the pipeline.
+
+    When it is not there, fall back to what has actually been run: the rung, and decision
+    quality from report/decision_quality.csv if `python -m leeward.eval.decision_quality`
+    has produced it (mean realised harm averted per day, by K and strategy). Every other
+    section stays empty and the screen says so; an empty fairness table means "not audited",
+    never "passed".
     """
     from datetime import datetime
+
+    full = ROOT / "report" / "report.json"
+    if full.exists():
+        return api.ReportResponse.model_validate_json(
+            full.read_text(encoding="utf-8")).model_dump(mode="json")
 
     rows = []
     csv = ROOT / "report" / "decision_quality.csv"

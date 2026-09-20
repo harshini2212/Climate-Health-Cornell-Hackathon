@@ -237,3 +237,49 @@ def test_report_fixture_is_a_report_response() -> None:
     if rep.decision_quality:
         at = {(r.k, r.strategy): r.harm_averted for r in rep.decision_quality}
         assert at[(40, "leeward")] > at[(40, "random")], "Leeward must beat random at 40 calls"
+
+    # `report/report.json` is generated output and gitignored, so a clean clone has no eval
+    # run and `GET /report` answers with the rung alone. The committed fixture is the last
+    # real `make report` and the screen falls back to it, so it has to stay the real one.
+    assert rep.generated_at, "an undated report is not evidence; the screen dates the run"
+    assert rep.recovery and rep.calibration and rep.fairness, (
+        "the report fixture has lost its recovery, calibration or fairness rows. Run `make "
+        "report` before scripts/make_ui_fixtures.py, or the demo shows three empty panels")
+    for r in rep.recovery:
+        assert r.lo90 <= r.post_mean <= r.hi90, f"{r.parameter}: mean outside its own interval"
+        assert r.covered == (r.lo90 <= r.truth <= r.hi90), (
+            f"{r.parameter}: `covered` disagrees with the interval it is drawn from")
+    assert set(rep.ece_by_need) == set(NEEDS), f"ECE is missing a need: {sorted(rep.ece_by_need)}"
+    assert {c.need for c in rep.calibration} <= set(NEEDS)
+    assert {d.strategy for d in rep.decision_quality} == {
+        "leeward", "rank_by_age", "rank_by_chronic", "random"}, (
+        "harm averted is plotted against all three baselines; one of them is missing")
+    assert rep.fairness_failed == any(f.flagged for f in rep.fairness), (
+        "fairness_failed disagrees with the rows; the screen's verdict line reads it")
+
+
+def test_report_screen_renders_the_fairness_audit_pass_or_fail() -> None:
+    """A failing audit is displayed, never suppressed -- the UI half of that project rule.
+
+    `tests/test_guardrails.py` holds the backend half (leeward/eval/fairness.py may not
+    swallow an exception and must mark flagged groups). This is the screen: the table maps
+    over every row it was given, no `fairness_failed` guard wraps it, and a flagged row is
+    marked in a way you can see from across the room.
+    """
+    src = _uncommented((ROOT / "ui" / "src" / "screens" / "Report.tsx").read_text(encoding="utf-8"))
+
+    assert re.search(r"\breport\.fairness\.map\(", src), (
+        "the fairness table must map over the whole list the API sent")
+    assert not re.search(r"fairness[\s\S]{0,80}?\.filter\([\s\S]{0,60}?\)\s*\.map\(", src), (
+        "the fairness table renders a filtered subset; every audited group is shown")
+    assert not re.search(r"(!|\bnot\b)?\s*\w*fairness_failed\s*(&&|\?)", src), (
+        "fairness_failed gates something on screen; the table renders either way")
+
+    assert "flagged" in src, "a flagged group must be marked, not just counted"
+    assert "flagrow" in src, "flagged rows need the visual marker, not only a word in a cell"
+
+    for phrase, why in [
+        ("not audited", "an empty fairness table means the audit did not run, never that it passed"),
+        ("not run", "an empty ablation table means ablate.py has not been built, never a pass"),
+    ]:
+        assert phrase in src, f"Report.tsx never says {phrase!r}: {why}"
