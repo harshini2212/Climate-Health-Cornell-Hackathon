@@ -6,8 +6,8 @@ coefficients: zero that block, re-score the held-out window, re-run the same cal
 the same allocator, and report what the care team lost.
 
 At rung 0 that is cheap. The linear predictor is `X @ B`, so dropping a term is zeroing its
-rows of `B` -- no refit, no MCMC, no second design matrix. Five ablations plus the full
-model over thirty days of the real cohort is a couple of dozen seconds.
+rows of `B` -- no refit, no MCMC, no second design matrix. Every block plus the full model
+over thirty days of the real cohort is about half a minute.
 
     python -m leeward.eval.ablate            # -> report/ablations.{csv,json,html}
     python -m leeward.eval.ablate --k 20     # a tighter call budget
@@ -323,7 +323,7 @@ def run(cohort: pl.DataFrame, hazards: pl.DataFrame, site_status: pl.DataFrame,
     daily, rows = [], []
     for label, drop, claim in models:
         # One scores frame alive at a time: thirty days of the real cohort is 1.5M rows, and
-        # six of them at once is most of a laptop.
+        # one per model at once is most of a laptop.
         scores = score_ablated(cohort, hazards, site_status, drop=drop, dates=dates,
                                n_draws=n_draws, seed=seed)
         reliability = cal.run(scores, outcomes, dates=dates)
