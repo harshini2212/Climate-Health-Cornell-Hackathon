@@ -35,7 +35,7 @@ action list and the card. Opening on day 0 shows an empty ribbon, so nothing doe
 | **Action list** | The ranked list cut at capacity, with the slider and the baselines | `/actions`, `/export` |
 | **Veteran card** | Five needs with their uncertainty, drivers, context, medication, the plan, the message | `/veteran/{id}`, `/message/{id}` |
 | **Message** | The verified text with its five-element checklist | `/message/{id}` |
-| **Model report** | Decision quality (real), and honest "not run yet" cards for calibration, recovery, fairness | `/report` |
+| **Model report** | Recovery dot-and-whisker, reliability curves per need, harm averted against the three baselines, ablations, the fairness audit | `/report` |
 
 Design rules the screens share: one page header, a five-column stat strip, a
 `g2` card grid (1.6 : 1), the same badges for tiers everywhere, and no raw enum on
@@ -71,11 +71,25 @@ python scripts/make_ui_fixtures.py --date 2026-08-03
 
 `actions_candidates.json` is the real allocator's list at 100 calls; offline the client
 cuts it at whatever capacity the slider asks for with the allocator's own rules.
-`report.json` (and `report/report.json` for the API) carry decision quality until
-`leeward/eval/report.py` assembles the full report.
+
+`report.json` is a copy of `report/report.json` from the last `make report`. That file is
+generated output and gitignored, so a clean clone has no eval run and `GET /report` answers
+200 with the rung and nothing else — which means "not run", not "passed". `getReport()`
+treats that empty answer as no answer and falls back to the fixture, and the screen prints
+its `generated_at` either way. Run `make report` before `make_ui_fixtures.py` or the
+fixture falls back to decision quality alone and `test_ui_fixtures.py` says so.
+
+**The fairness table renders whether or not the audit passes**, and flagged rows are marked
+in the row, not only in a cell. That is a project rule;
+`test_report_screen_renders_the_fairness_audit_pass_or_fail` reads `Report.tsx` and enforces
+it — no filtered subset, no `fairness_failed` guard around the table. Empty sections say
+"not run" rather than showing a clean bill: `ablations` stays empty until
+`leeward/eval/ablate.py` exists.
 
 ## Two numbers that look like they disagree
 
 The action list's "▲ 1.13×" is *expected* harm averted on the day, from the posterior.
-The model report's "10.7×" is *realised* harm averted on the held-out window, from the
-planted outcomes. Both are correct, both are labelled, and the report says so in a line.
+The model report's "4.24×" is *realised* harm averted on the held-out window, from the
+planted outcomes, and it is measured against the best of the three baselines rather than
+against oldest-first alone. Both are correct, both are labelled, and the report says so in
+a line.

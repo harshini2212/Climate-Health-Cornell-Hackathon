@@ -51,6 +51,7 @@ BETTER = {
     "ece_max": "lower", "ece_mean": "lower",
     "recovery_coverage": "higher",
     "harm_averted_k40": "higher", "lift_vs_best_baseline_k40": "higher",
+    "harm_per_call_k40": "higher", "lift_per_call_k40": "higher",
     "fairness_flagged": "lower", "fairness_max_fnr_ratio": "lower",
     "find_out_share": "higher",
     "total_seconds": "lower",
@@ -100,6 +101,24 @@ def collect(timings: dict[str, float]) -> dict:
     lee40 = at40.get("leeward")
     best_base = max((v for k, v in at40.items() if k != "leeward"), default=None)
 
+    # Harm per day punishes a system for correctly doing less on a calm day: with do-by
+    # scheduling leeward leaves calls unspent when nothing is worth one, and 7 of 30
+    # held-out days now avert zero on purpose. Per call actually made is the honest
+    # efficiency number, and it is the one that went up.
+    # Both totals come from the same rows, or the scale silently mismatches: report.json
+    # carries the per-day mean while the CSV carries per-day counts.
+    calls, harm_total = {}, {}
+    dq_csv = ROOT / "report/decision_quality.csv"
+    if dq_csv.exists():
+        raw = pl.read_csv(dq_csv).filter(pl.col("k") == 40)
+        agg = raw.group_by("strategy").agg(pl.col("n_actions").sum().alias("calls"),
+                                           pl.col("harm_averted").sum().alias("harm"))
+        calls = dict(zip(agg["strategy"], agg["calls"], strict=True))
+        harm_total = dict(zip(agg["strategy"], agg["harm"], strict=True))
+    per_call = {k: round(harm_total[k] / calls[k], 4) for k in harm_total if calls.get(k)}
+    lee_pc = per_call.get("leeward")
+    best_pc = max((v for k, v in per_call.items() if k != "leeward"), default=None)
+
     tiers = dict(actions.group_by("tier").agg(pl.len().alias("n")).iter_rows())
     n_act = actions.height
 
@@ -144,6 +163,12 @@ def collect(timings: dict[str, float]) -> dict:
         "harm_averted_baselines_k40": {k: round(v, 2) for k, v in at40.items() if k != "leeward"},
         "lift_vs_best_baseline_k40": (round(lee40 / best_base, 2)
                                       if lee40 and best_base else None),
+        "harm_total_k40": round(harm_total["leeward"], 2) if harm_total.get("leeward") else None,
+        "calls_spent_k40": calls.get("leeward"),
+        "calls_available_k40": max(calls.values()) if calls else None,
+        "harm_per_call_k40": lee_pc,
+        "harm_per_call_baselines_k40": {k: v for k, v in per_call.items() if k != "leeward"},
+        "lift_per_call_k40": round(lee_pc / best_pc, 2) if lee_pc and best_pc else None,
 
         "tier_mix": tiers,
         "find_out_share": round(100 * tiers.get("find_out", 0) / n_act, 3) if n_act else None,
@@ -180,6 +205,7 @@ def render_row(b: dict, label: str) -> str:
 | | |
 | --- | --- |
 | **Harm averted, 40 calls/day** | **{b['harm_averted_k40']}** vs {base_s} — **{b['lift_vs_best_baseline_k40']}× the best baseline** |
+| **Per call actually made** | **{b['harm_per_call_k40']}** — **{b['lift_per_call_k40']}×**, spending {b['calls_spent_k40']} of {b['calls_available_k40']} available calls |
 | **Calibration (ECE, bar 0.03)** | max **{b['ece_max']}** · mean {b['ece_mean']} |
 | **Parameter coverage (bar 0.90)** | **{b['recovery_coverage']}** |
 | **Fairness** | {b['fairness_flagged']} flagged of {b['fairness_groups']} groups · worst FNR ratio {b['fairness_max_fnr_ratio']} |

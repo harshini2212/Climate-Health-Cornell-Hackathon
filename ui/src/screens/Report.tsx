@@ -1,166 +1,673 @@
+import { useEffect, useMemo, useState } from "react";
+import { IconAlert, IconShield } from "../components/Icons";
+import { getReport, lastSource, type Source } from "../lib/api";
+import { STRATEGY_STEP } from "../lib/colors";
+import { BASELINE_LABEL, EHA_REALIZED, NEED_LABEL, NEED_SHORT, RUNG_LABEL, fmtInt } from "../lib/labels";
+import {
+  NEEDS,
+  type CalibrationBin,
+  type DecisionQualityRow,
+  type RecoveryRow,
+  type ReportResponse,
+} from "../lib/types";
+
 /**
- * The proof. "How do you know it works?" gets a screen, not a footnote. Every section is
- * either a real number from `make report` or an honest "not run yet"; an empty fairness
- * table means "not audited", never "passed".
+ * The model report: the four claims this project is allowed to make on stage, each one
+ * drawn from `report/report.json` exactly as `make report` wrote it.
+ *
+ *   1. recovery      — does the fit find the world the simulator built?
+ *   2. reliability   — when it says 3 %, does it happen 3 % of the time?
+ *   3. harm averted  — does the ranking beat oldest-first, most-conditions-first, random?
+ *   4. fairness      — do the misses fall evenly across groups?
+ *
+ * Titles and subtitles are the ones `leeward/eval/*.py` puts on the offline Plotly charts,
+ * so the screen and `report/*.html` cannot end up claiming different things.
+ *
+ * The fairness table renders whether or not it passes, and flagged rows are marked. That
+ * is a project rule; `tests/test_ui_fixtures.py` holds this screen to it and
+ * `tests/test_guardrails.py` holds the backend to the other half.
  */
 
-import { useEffect, useState } from "react";
-import { HBars } from "../components/Charts";
-import { getReport, lastSource, type Source } from "../lib/api";
-import { BASELINE_LABEL, NEED_LABEL, RUNG_LABEL } from "../lib/labels";
-import type { ReportResponse } from "../lib/types";
+/** leeward/eval/fairness.py's FNR_GAP. The ratio column draws the band it tests. */
+const FNR_GAP = 0.2;
 
-function Pending({ what, cmd }: { what: string; cmd: string }) {
+const NUM = (v: number, d = 2) => v.toFixed(d);
+const PCT = (v: number, d = 1) => `${(100 * v).toFixed(d)}%`;
+
+/** "beta_copd (breathing)" -> "breathing". Every recovery row names its need this way. */
+function needOf(parameter: string): string {
+  const m = /\(([^)]+)\)\s*$/.exec(parameter);
+  return m ? m[1] : "other";
+}
+
+/** "2026-09-20 03:50 UTC". Not toLocaleString: the same run must read the same on stage. */
+function fmtRun(iso: string | null | undefined): string {
+  if (!iso) return "never run";
+  const [day, rest] = iso.split("T");
+  if (!rest) return iso;
+  return `${day} ${rest.slice(0, 5)}${/(Z|\+00:00)$/.test(rest) ? " UTC" : ""}`;
+}
+
+/**
+ * An empty section, in the redesign's `.pending` block. Every one of them says the same
+ * thing in the same words: nothing ran here. An empty table is the absence of evidence and
+ * must never read as a clean bill.
+ */
+function NotRun({ what, cmd, why }: { what: string; cmd: string; why: string }) {
   return (
-    <div className="pending"><span><b>{what}</b> has not been run yet · <code>{cmd}</code></span></div>
+    <div className="pending">
+      <span>
+        <b>{what}</b> · <code>{cmd}</code>
+        <div style={{ marginTop: 3 }}>Empty means not run. {why}</div>
+      </span>
+    </div>
   );
 }
 
+// --------------------------------------------------------------------------- #
+// 1. Recovery: truth against the 90 % interval
+// --------------------------------------------------------------------------- #
+
+/**
+ * One parameter's interval, rescaled so every row is the same width, with the generating
+ * truth as the dot. The intervals span three orders of magnitude across 60 parameters, so
+ * a shared value axis would render most of them as a smudge; rescaling each to its own
+ * half-width keeps the only question this chart asks readable: is the dot inside the bar?
+ */
+function Whisker({ row }: { row: RecoveryRow }) {
+  const half = Math.max((row.hi90 - row.lo90) / 2, 1e-12);
+  const z = (row.truth - row.post_mean) / half;
+  // The viewBox matches the rendered box 1:1 (see .whisk), so the truth dot stays a circle
+  // instead of stretching into an ellipse the way a scaled viewBox would.
+  const x = (u: number) => 88 + Math.max(-1.48, Math.min(1.48, u)) * 56;
+  const ink = row.covered ? "var(--accent)" : "var(--crit)";
+  return (
+    <svg className="whisk" viewBox="0 0 176 14" aria-hidden="true">
+      <line x1="3" x2="173" y1="7" y2="7" stroke="var(--line2)" strokeWidth="1" />
+      <line x1={x(-1)} x2={x(1)} y1="7" y2="7" stroke="var(--accentbd)" strokeWidth="6" strokeLinecap="round" />
+      <line x1={x(-1)} x2={x(-1)} y1="2.5" y2="11.5" stroke="var(--accent)" strokeWidth="1.2" />
+      <line x1={x(1)} x2={x(1)} y1="2.5" y2="11.5" stroke="var(--accent)" strokeWidth="1.2" />
+      <line x1="88" x2="88" y1="3.5" y2="10.5" stroke="var(--muted)" strokeWidth="1" />
+      <circle cx={x(z)} cy="7" r="3.4" fill={ink} stroke="var(--panel)" strokeWidth="1" />
+    </svg>
+  );
+}
+
+function Recovery({ report }: { report: ReportResponse }) {
+  const [need, setNeed] = useState("all");
+  const [missesOnly, setMissesOnly] = useState(false);
+  const priorOnly = report.model_rung === 0;
+
+  const rows = useMemo(() => {
+    const keep = report.recovery.filter(
+      (r) => (need === "all" || needOf(r.parameter) === need) && (!missesOnly || !r.covered));
+    // Misses first: a claim about recovery is only worth as much as its worst row.
+    return [...keep].sort((a, b) => Number(a.covered) - Number(b.covered));
+  }, [report.recovery, need, missesOnly]);
+
+  const missed = report.recovery.filter((r) => !r.covered).length;
+  const coverage = report.recovery_coverage;
+
+  if (!report.recovery.length) {
+    return (
+      <NotRun what="Parameter recovery has no rows in this report"
+              cmd="python -m leeward.eval.recovery"
+              why="It is not a claim that every parameter was recovered." />
+    );
+  }
+
+  return (
+    <div className="card">
+      <div className="ch">
+        <h3>{priorOnly ? "Prior coverage" : "Parameter recovery"}: truth against the 90% interval</h3>
+        <span className="sp" />
+        <span className={missed ? "pillbadge pill-watch" : "pillbadge pill-healthy"}>
+          {coverage === null || coverage === undefined ? "—" : PCT(coverage, 0)} covered · bar is 90%
+        </span>
+      </div>
+      <p className="lede" style={{ marginBottom: 10 }}>
+        {priorOnly ? "rung 0 has no fit, so these are prior intervals" : "90% posterior intervals"}
+        {" · "}{report.recovery.length - missed} of {report.recovery.length} parameters covered
+        {" · "}{missed} outside. Every whisker is rescaled to the same width, so the dot is
+        the generating truth in units of that parameter's own interval: inside the bar is a
+        hit, outside is a miss.
+      </p>
+      <div className="ctrls">
+        <span className={`iv ${need === "all" ? "on" : ""}`} onClick={() => setNeed("all")}>All needs</span>
+        {NEEDS.map((n) => (
+          <span key={n} className={`iv ${need === n ? "on" : ""}`} onClick={() => setNeed(n)}>
+            {NEED_LABEL[n]}
+          </span>
+        ))}
+        <span className={`iv ${missesOnly ? "on" : ""}`} onClick={() => setMissesOnly(!missesOnly)}>
+          Misses only {missed ? `(${missed})` : ""}
+        </span>
+      </div>
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Parameter</th>
+              <th style={{ width: 190 }}>truth vs interval</th>
+              <th className="n">Truth</th>
+              <th className="n">{priorOnly ? "Prior mean" : "Post. mean"}</th>
+              <th className="n">90% interval</th>
+              <th>In</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.parameter} className={r.covered ? "" : "missrow"}>
+                <td>{r.parameter}</td>
+                <td><Whisker row={r} /></td>
+                <td className="n">{NUM(r.truth)}</td>
+                <td className="n">{NUM(r.post_mean)}</td>
+                <td className="n muted">[{NUM(r.lo90)}, {NUM(r.hi90)}]</td>
+                <td>{r.covered
+                  ? <span className="mk ok">✓</span>
+                  : <span className="rb rb-critical">missed</span>}</td>
+              </tr>
+            ))}
+            {!rows.length && (
+              <tr><td colSpan={6} className="muted">No parameter matches that filter.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="legend">
+        <span><i style={{ background: "var(--accentbd)", height: 6 }} /> 90% interval, rescaled</span>
+        <span><i style={{ background: "var(--muted)", height: 6, width: 3 }} /> interval centre</span>
+        <span><i style={{ background: "var(--accent)", height: 8, width: 8, borderRadius: 8 }} /> truth, covered</span>
+        <span><i style={{ background: "var(--crit)", height: 8, width: 8, borderRadius: 8 }} /> truth, missed</span>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
+// 2. Reliability, per need
+// --------------------------------------------------------------------------- #
+
+interface LogScale { lo: number; hi: number }
+
+/**
+ * One need's reliability curve on a log-log square: predicted risk across, what actually
+ * happened up, the diagonal for "exactly right". Log axes because a heat day runs at 10%
+ * and a breathing day at 0.6%; on a linear 0–1 axis all five needs would sit in the corner.
+ * The scale is shared by all five panels, so they can be read against each other.
+ */
+function Reliability({ need, bins, ece, scale }: {
+  need: string; bins: CalibrationBin[]; ece: number | undefined; scale: LogScale;
+}) {
+  const W = 210, H = 210, padL = 34, padR = 10, padT = 10, padB = 28;
+  const lg = (v: number) => Math.log10(Math.max(v, scale.lo));
+  const span = lg(scale.hi) - lg(scale.lo);
+  const x = (v: number) => padL + ((lg(v) - lg(scale.lo)) / span) * (W - padL - padR);
+  const y = (v: number) => H - padB - ((lg(v) - lg(scale.lo)) / span) * (H - padT - padB);
+  const pts = [...bins].sort((a, b) => a.predicted - b.predicted);
+  const maxN = Math.max(1, ...pts.map((p) => p.n));
+  const ticks = [0.002, 0.01, 0.05, 0.1].filter((t) => t >= scale.lo && t <= scale.hi);
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.predicted).toFixed(1)},${y(p.observed).toFixed(1)}`).join(" ");
+
+  return (
+    <div className="relpanel">
+      <div className="relhead">
+        <span className="rl" title={NEED_LABEL[need] ?? need}>{NEED_SHORT[need] ?? need}</span>
+        <span className={ece !== undefined && ece > 0.03 ? "re red" : "re"}>
+          ECE {ece === undefined ? "—" : NUM(ece, 4)}
+        </span>
+      </div>
+      <svg className="chart2" viewBox={`0 0 ${W} ${H}`}>
+        {ticks.map((t) => (
+          <g key={t}>
+            <line x1={x(t)} x2={x(t)} y1={padT} y2={H - padB} stroke="var(--line2)" strokeWidth="1" />
+            <line x1={padL} x2={W - padR} y1={y(t)} y2={y(t)} stroke="var(--line2)" strokeWidth="1" />
+            <text className="axl" x={x(t)} y={H - padB + 12} textAnchor="middle">{PCT(t, t < 0.01 ? 1 : 0)}</text>
+            <text className="axl" x={padL - 5} y={y(t) + 3.5} textAnchor="end">{PCT(t, t < 0.01 ? 1 : 0)}</text>
+          </g>
+        ))}
+        <line x1={x(scale.lo)} y1={y(scale.lo)} x2={x(scale.hi)} y2={y(scale.hi)}
+              stroke="var(--faint)" strokeDasharray="4 4" strokeWidth="1" />
+        <path d={path} fill="none" stroke="var(--accent)" strokeWidth="1.6" strokeLinejoin="round" />
+        {pts.map((p, i) => (
+          <circle key={i} cx={x(p.predicted)} cy={y(p.observed)} r={2 + 3.4 * Math.sqrt(p.n / maxN)}
+                  fill="var(--accent)" fillOpacity="0.85" stroke="var(--panel)" strokeWidth="1">
+            <title>predicted {PCT(p.predicted, 2)} · observed {PCT(p.observed, 2)} · {fmtInt(p.n)} veteran-days</title>
+          </circle>
+        ))}
+        <text className="axl" x={W - padR} y={H - 3} textAnchor="end">predicted →</text>
+      </svg>
+    </div>
+  );
+}
+
+function Calibration({ report }: { report: ReportResponse }) {
+  const scale = useMemo<LogScale>(() => {
+    const vals = report.calibration.flatMap((b) => [b.predicted, b.observed]).filter((v) => v > 0);
+    if (!vals.length) return { lo: 0.001, hi: 0.2 };
+    return { lo: Math.min(...vals) * 0.7, hi: Math.max(...vals) * 1.4 };
+  }, [report.calibration]);
+  const worst = Object.entries(report.ece_by_need).sort((a, b) => b[1] - a[1])[0];
+
+  if (!report.calibration.length) {
+    return (
+      <NotRun what="Reliability has no bins in this report"
+              cmd="python -m leeward.eval.calibration"
+              why="It is not a claim that the model is calibrated." />
+    );
+  }
+  return (
+    <div className="card">
+      <div className="ch">
+        <h3>Reliability: predicted risk against what happened</h3>
+        <span className="sp" />
+        <span className={worst && worst[1] > 0.03 ? "pillbadge pill-critical" : "pillbadge pill-healthy"}>
+          worst need {worst ? `${NEED_LABEL[worst[0]] ?? worst[0]} ${NUM(worst[1], 4)}` : "—"} · bar is 0.03
+        </span>
+      </div>
+      <p className="lede" style={{ marginBottom: 12 }}>
+        Held-out window · equal-mass bins · simulated outcomes, synthetic cohort. Both axes
+        are log and shared across the five panels; the dot area is how many veteran-days
+        fell in that bin. On the dashed line the model said it and it happened.
+      </p>
+      <div className="rel">
+        {NEEDS.filter((n) => report.calibration.some((b) => b.need === n)).map((n) => (
+          <Reliability key={n} need={n} scale={scale}
+                       bins={report.calibration.filter((b) => b.need === n)}
+                       ece={report.ece_by_need[n]} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
+// 3. Harm averted, against the three baselines
+// --------------------------------------------------------------------------- #
+
+const STRATEGY_ORDER = ["leeward", "rank_by_chronic", "rank_by_age", "random"];
+
+function HarmAverted({ rows }: { rows: DecisionQualityRow[] }) {
+  const ks = [...new Set(rows.map((r) => r.k))].sort((a, b) => a - b);
+  const strategies = STRATEGY_ORDER.filter((s) => rows.some((r) => r.strategy === s));
+  const value = (k: number, s: string) => rows.find((r) => r.k === k && r.strategy === s)?.harm_averted ?? 0;
+  const max = Math.max(1e-9, ...rows.map((r) => r.harm_averted));
+
+  const W = 560, H = 300, padL = 46, padR = 12, padT = 16, padB = 46;
+  const plotH = H - padT - padB;
+  const bandW = (W - padL - padR) / Math.max(1, ks.length);
+  const barW = Math.min(30, (bandW * 0.72) / Math.max(1, strategies.length));
+  // Round the top of the axis up to a 1-2-5 step, so the gridlines are numbers a person
+  // would say out loud (0, 15, 30, 45, 60) rather than quarters of the tallest bar.
+  const step = (() => {
+    const raw = (max * 1.12) / 4;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    return [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
+  })();
+  const top = step * 4;
+  const y = (v: number) => padT + plotH * (1 - v / top);
+  const gridlines = [0, 1, 2, 3, 4].map((i) => i * step);
+
+  return (
+    <svg className="chart2" viewBox={`0 0 ${W} ${H}`} role="img"
+         aria-label="Harm averted per day by strategy, at three daily capacities">
+      {gridlines.map((g, i) => (
+        <g key={i}>
+          <line x1={padL} x2={W - padR} y1={y(g)} y2={y(g)} stroke="var(--line2)" strokeWidth="1" />
+          <text className="axl" x={padL - 6} y={y(g) + 4} textAnchor="end">{g.toFixed(0)}</text>
+        </g>
+      ))}
+      {ks.map((k, gi) => {
+        const x0 = padL + gi * bandW + (bandW - barW * strategies.length) / 2;
+        return (
+          <g key={k}>
+            {strategies.map((s, si) => {
+              const v = value(k, s);
+              const bx = x0 + si * barW;
+              return (
+                <g key={s}>
+                  <rect x={bx} y={y(v)} width={barW - 4} height={Math.max(1, H - padB - y(v))}
+                        rx="3" fill={STRATEGY_STEP[s] ?? "var(--faint)"}>
+                    <title>{BASELINE_LABEL[s] ?? s} at {k} actions: {NUM(v)} severity-weighted events averted per day</title>
+                  </rect>
+                  <text className="axl" x={bx + (barW - 4) / 2} y={y(v) - 5} textAnchor="middle"
+                        fill={s === "leeward" ? "var(--ink)" : "var(--muted)"}>{NUM(v, 1)}</text>
+                </g>
+              );
+            })}
+            <text className="axl" x={padL + gi * bandW + bandW / 2} y={H - padB + 17} textAnchor="middle">
+              {k} actions/day
+            </text>
+          </g>
+        );
+      })}
+      <line x1={padL} x2={W - padR} y1={H - padB} y2={H - padB} stroke="var(--line)" strokeWidth="1" />
+      <text className="axl" x={padL - 6} y={padT - 4} textAnchor="end">events</text>
+    </svg>
+  );
+}
+
+function DecisionQuality({ report }: { report: ReportResponse }) {
+  const rows = report.decision_quality;
+  const ks = [...new Set(rows.map((r) => r.k))].sort((a, b) => a - b);
+  const mid = ks.includes(40) ? 40 : ks[Math.floor(ks.length / 2)];
+  const leeward = rows.find((r) => r.k === mid && r.strategy === "leeward")?.harm_averted ?? 0;
+  const baselines = rows.filter((r) => r.k === mid && r.strategy !== "leeward");
+  const best = baselines.sort((a, b) => b.harm_averted - a.harm_averted)[0];
+  const lift = best && best.harm_averted > 0 ? leeward / best.harm_averted : null;
+
+  if (!rows.length) {
+    return (
+      <NotRun what="Harm averted has no rows in this report"
+              cmd="python -m leeward.eval.decision_quality"
+              why="It is not a claim that the ranking beat anything." />
+    );
+  }
+  return (
+    <div className="card">
+      <div className="ch">
+        <h3>Harm averted per day, by who the care team calls</h3>
+        <span className="sp" />
+        {lift ? <span className="pillbadge pill-healthy">{NUM(lift)}× the best baseline at {mid}</span> : null}
+      </div>
+      <p className="lede" style={{ marginBottom: 6 }}>
+        Every strategy gets the same K calls on the same held-out days, and is scored
+        against the simulated outcomes. {EHA_REALIZED.line}
+      </p>
+      <HarmAverted rows={rows} />
+      <div className="legend">
+        {STRATEGY_ORDER.filter((s) => rows.some((r) => r.strategy === s)).map((s) => (
+          <span key={s}><i style={{ background: STRATEGY_STEP[s], height: 9, width: 9, borderRadius: 3 }} />
+            {BASELINE_LABEL[s] ?? s}</span>
+        ))}
+      </div>
+      <p className="muted" style={{ fontSize: 12.5, marginBottom: 0 }}>
+        Severity-weighted need-days averted, per day, at {mid} actions:{" "}
+        <b>{NUM(leeward)}</b> against{" "}
+        {baselines.map((b) => `${BASELINE_LABEL[b.strategy] ?? b.strategy} ${NUM(b.harm_averted)}`).join(", ")}.
+      </p>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
+// 4. Ablations and the fairness audit
+// --------------------------------------------------------------------------- #
+
+function Ablations({ report }: { report: ReportResponse }) {
+  return (
+    <div className="card">
+      <div className="ch"><h3>Ablations: what each piece is worth</h3></div>
+      {report.ablations.length ? (
+        <>
+          <p className="lede">Each row drops one block of the model and re-runs the same
+            eval. A block that costs nothing to drop is a block we should not claim.</p>
+          <div className="tablewrap auto">
+            <table>
+              <thead><tr><th>Dropped</th><th className="n">ECE</th><th className="n">Harm averted at 40</th></tr></thead>
+              <tbody>
+                {report.ablations.map((a) => (
+                  <tr key={a.dropped}>
+                    <td>{a.dropped}</td>
+                    <td className="n">{NUM(a.ece, 4)}</td>
+                    <td className="n">{NUM(a.harm_averted_at_40)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : (
+        <NotRun what="Ablations have not been built yet"
+                cmd="leeward/eval/ablate.py"
+                why="It is not a claim that every block in the model earns its place." />
+      )}
+    </div>
+  );
+}
+
+interface Verdict { tone: string; icon: "shield" | "alert"; headline: string; detail: string }
+
+/**
+ * The audit's own verdict, in the three states it actually has. "Not audited" is a
+ * separate state from "passed" on purpose: an empty fairness table is the absence of
+ * evidence, and must never be shown as the presence of a clean bill.
+ */
+function auditVerdict(report: ReportResponse): Verdict {
+  const flagged = report.fairness.filter((f) => f.flagged);
+  if (!report.fairness.length) {
+    return {
+      tone: "warn", icon: "alert", headline: "Fairness audit not audited in this report",
+      detail: "No groups were scored. This is the absence of an audit, not a pass. Run "
+        + "`make report` against a scored cohort.",
+    };
+  }
+  if (report.fairness_failed) {
+    return {
+      tone: "crit", icon: "alert",
+      headline: `Fairness audit FAILED · ${flagged.length} of ${report.fairness.length} groups flagged`,
+      detail: `These groups miss real events more than ${PCT(FNR_GAP, 0)} more often than the `
+        + "cohort does. They are marked in the table below, in the order the audit returned "
+        + "them. A failing audit is displayed, never suppressed.",
+    };
+  }
+  return {
+    tone: "ok", icon: "shield",
+    headline: `Fairness audit passed · 0 of ${report.fairness.length} groups flagged`,
+    detail: `No group's false-negative rate is more than ${PCT(FNR_GAP, 0)} away from the `
+      + "cohort's. Every group audited is in the table below, flagged or not.",
+  };
+}
+
+/** The FNR ratio against the cohort, centred on 1.00, with the ±20 % band it is judged by. */
+function RatioBar({ ratio, flagged }: { ratio: number; flagged: boolean }) {
+  // 0.75..1.25 rather than 0..2: every ratio the audit has ever produced lives within a
+  // few points of 1, and on a wider axis the whole column would be one flat line of dots.
+  const lo = 0.75, hi = 1.25;
+  const x = (v: number) => 5 + ((Math.max(lo, Math.min(hi, v)) - lo) / (hi - lo)) * 108;
+  const ink = flagged ? "var(--crit)" : "var(--accent)";
+  return (
+    <svg className="ratiobar" viewBox="0 0 118 16" aria-hidden="true">
+      <rect x={x(1 - FNR_GAP)} y="4" width={x(1 + FNR_GAP) - x(1 - FNR_GAP)} height="8" rx="2" fill="var(--panel2)" />
+      {[1 - FNR_GAP, 1 + FNR_GAP].map((t) => (
+        <line key={t} x1={x(t)} x2={x(t)} y1="2" y2="14" stroke="var(--amber)" strokeWidth="1" strokeDasharray="2 2" />
+      ))}
+      <line x1={x(1)} x2={x(1)} y1="1.5" y2="14.5" stroke="var(--faint)" strokeWidth="1" />
+      <rect x={Math.min(x(1), x(ratio))} y="6" width={Math.max(1, Math.abs(x(ratio) - x(1)))} height="4" rx="2" fill={ink} />
+      <circle cx={x(ratio)} cy="8" r="3.4" fill={ink} stroke="var(--panel)" strokeWidth="1" />
+    </svg>
+  );
+}
+
+function Fairness({ report }: { report: ReportResponse }) {
+  const v = auditVerdict(report);
+  // Every row carries its own FNR and its ratio to the cohort, so the cohort's own rate is
+  // whichever row you divide -- no row has to happen to sit exactly at 1.00 for this to work.
+  const ref = report.fairness.find((f) => f.fnr_ratio_to_cohort > 0);
+  const cohortFnr = ref ? ref.fnr / ref.fnr_ratio_to_cohort : undefined;
+  let previous = "";
+  return (
+    <div className="card">
+      <div className="ch">
+        <h3>Fairness audit: calibration and missed events by group</h3>
+        <span className="sp" />
+        <span className="pillbadge">simulated outcomes · synthetic cohort</span>
+      </div>
+      <div className={`auditbanner ${v.tone}`}>
+        <span className={`ic ${v.tone === "crit" ? "ic-critical" : v.tone === "warn" ? "ic-medium" : "ic-low"}`}>
+          {v.icon === "shield" ? <IconShield /> : <IconAlert />}
+        </span>
+        <span>
+          <b>{v.headline}</b>
+          <div className="muted" style={{ marginTop: 2 }}>{v.detail}</div>
+        </span>
+      </div>
+      {report.model_rung === 0 && report.fairness.length > 0 && (
+        <p className="lede">
+          Read the ratio column, not the level: at rung 0 the model is prior-only, so the
+          false-negative rate is near 1 in every group — almost nothing is caught anywhere.
+          What this table can tell you today is whether the misses fall evenly
+          {cohortFnr === undefined ? "" : `, against a cohort rate of ${PCT(cohortFnr)}`}.
+        </p>
+      )}
+      <div className="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Stratum</th>
+              <th>Group</th>
+              <th className="n">Veteran-days</th>
+              <th className="n">ECE</th>
+              <th className="n">FNR</th>
+              <th style={{ width: 130 }}>FNR vs cohort</th>
+              <th className="n">Ratio</th>
+              <th>Audit</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.fairness.map((f) => {
+              const head = f.stratum !== previous;
+              previous = f.stratum;
+              return (
+                <tr key={`${f.stratum}/${f.group}`} className={f.flagged ? "flagrow" : ""}>
+                  <td className="muted">{head ? f.stratum.replace(/_/g, " ") : ""}</td>
+                  <td>{f.group.replace(/_/g, " ")}</td>
+                  <td className="n">{fmtInt(f.n)}</td>
+                  <td className="n">{NUM(f.ece, 4)}</td>
+                  <td className="n">{PCT(f.fnr)}</td>
+                  <td><RatioBar ratio={f.fnr_ratio_to_cohort} flagged={f.flagged} /></td>
+                  <td className="n">{NUM(f.fnr_ratio_to_cohort)}×</td>
+                  <td>{f.flagged
+                    ? <span className="rb rb-critical">flagged</span>
+                    : <span className="muted">within {PCT(FNR_GAP, 0)}</span>}</td>
+                </tr>
+              );
+            })}
+            {!report.fairness.length && (
+              <tr><td colSpan={8} className="muted">
+                No group was audited in this report — not audited is not the same as passed.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <div className="legend">
+        <span>Shaded band: the ±{PCT(FNR_GAP, 0)} relative gap the audit tests</span>
+        <span><i style={{ background: "var(--crit)", height: 9, width: 9, borderRadius: 9 }} /> flagged group</span>
+      </div>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
+
 export function Report({ onSource }: { onSource: (s: Source) => void }) {
-  const [rep, setRep] = useState<ReportResponse | null>(null);
+  const [report, setReport] = useState<ReportResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getReport().then((r) => { setRep(r); onSource(lastSource()); }).catch((e) => setError(String(e)));
+    getReport()
+      .then((r) => { setReport(r); onSource(lastSource()); })
+      .catch((e) => setError(String(e)));
   }, [onSource]);
 
-  if (error) return <div className="page"><div className="empty"><div className="eh">Report unavailable</div>{error}</div></div>;
-  if (!rep) return <div className="page"><div className="skgrid"><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /></div></div>;
+  if (error) return <div className="page"><div className="empty"><div className="eh">Could not load the report</div>{error}</div></div>;
+  if (!report) return <div className="page"><div className="skgrid">{[0, 1, 2, 3, 4].map((i) => <div key={i} className="sk" style={{ height: 96 }} />)}</div></div>;
 
-  const ks = [...new Set(rep.decision_quality.map((r) => r.k))].sort((a, b) => a - b);
-  const at = (k: number, s: string) => rep.decision_quality.find((r) => r.k === k && r.strategy === s)?.harm_averted ?? 0;
-  const k40 = ks.includes(40) ? 40 : ks[0];
-  const ratio = k40 !== undefined && at(k40, "rank_by_age") > 0 ? at(k40, "leeward") / at(k40, "rank_by_age") : null;
-  const fairnessRows = rep.fairness;
+  const missed = report.recovery.filter((r) => !r.covered).length;
+  const eces = Object.entries(report.ece_by_need).sort((a, b) => b[1] - a[1]);
+  const flagged = report.fairness.filter((f) => f.flagged).length;
+  const audited = report.fairness.length;
+  const ks = [...new Set(report.decision_quality.map((r) => r.k))].sort((a, b) => a - b);
+  const mid = ks.includes(40) ? 40 : ks[Math.floor(ks.length / 2)];
+  const leeward = report.decision_quality.find((r) => r.k === mid && r.strategy === "leeward")?.harm_averted;
+  const bestBaseline = report.decision_quality
+    .filter((r) => r.k === mid && r.strategy !== "leeward")
+    .sort((a, b) => b.harm_averted - a.harm_averted)[0];
+  const lift = leeward && bestBaseline?.harm_averted ? leeward / bestBaseline.harm_averted : null;
+
+  let auditTile = "pillbadge pill-healthy";
+  if (!audited) auditTile = "pillbadge pill-watch";
+  else if (flagged) auditTile = "pillbadge pill-critical";
 
   return (
     <div className="page dash">
       <div className="strip">
         <div className="stat">
-          <div className="k">Model</div>
-          <div className="vrow"><div className="v" style={{ fontSize: 18 }}>{RUNG_LABEL[rep.model_rung]}</div></div>
-          <div className="s">say the rung on stage</div>
+          <div className="k">Which model produced this</div>
+          <div className="vrow"><div className="v" style={{ fontSize: 19 }}>{RUNG_LABEL[report.model_rung] ?? `rung ${report.model_rung}`}</div></div>
+          <div className="s">run {fmtRun(report.generated_at)}</div>
         </div>
         <div className="stat">
-          <div className="k">Worst r-hat</div>
-          <div className="vrow"><div className="v">{rep.rhat_max == null ? "—" : rep.rhat_max.toFixed(3)}</div></div>
-          <div className="s">{rep.rhat_max == null ? "no MCMC at rung 0" : rep.rhat_max < 1.05 ? "converged" : "did not converge"}</div>
+          <div className="k">Sampler</div>
+          <div className="vrow">
+            <div className="v">{report.rhat_max === null || report.rhat_max === undefined ? "—" : NUM(report.rhat_max, 3)}</div>
+            <span className="muted" style={{ fontSize: 12 }}>max r-hat</span>
+          </div>
+          <div className="s">
+            {report.rhat_max === null || report.rhat_max === undefined
+              ? "prior-only: no MCMC ran, so there is no r-hat to report"
+              : `${report.divergences ?? 0} divergences · bar is r-hat ≤ 1.01`}
+          </div>
         </div>
         <div className="stat">
-          <div className="k">Divergences</div>
-          <div className="vrow"><div className="v">{rep.divergences == null ? "—" : rep.divergences}</div></div>
-          <div className="s">after warmup</div>
+          <div className="k">{report.model_rung === 0 ? "Truth inside the prior interval" : "Truth inside its interval"}</div>
+          <div className="vrow">
+            <div className="v">{report.recovery.length - missed}/{report.recovery.length}</div>
+            {report.recovery_coverage !== null && report.recovery_coverage !== undefined && (
+              <span className={missed ? "pillbadge pill-watch" : "pillbadge pill-healthy"}>{PCT(report.recovery_coverage, 0)}</span>
+            )}
+          </div>
+          <div className="s">bar is 0.90 · {missed} missed</div>
+        </div>
+        <div className="stat">
+          <div className="k">Calibration, worst need</div>
+          <div className="vrow">
+            <div className="v">{eces.length ? NUM(eces[0][1], 4) : "—"}</div>
+            <span className={eces.length && eces[0][1] > 0.03 ? "pillbadge pill-critical" : "pillbadge pill-healthy"}>bar 0.03</span>
+          </div>
+          <div className="s">{eces.length ? `${NEED_LABEL[eces[0][0]] ?? eces[0][0]} · mean ${NUM(eces.reduce((s, e) => s + e[1], 0) / eces.length, 4)}` : "not run"}</div>
         </div>
         <div className="stat hero">
-          <div className="k">Harm averted vs oldest-first</div>
-          <div className="vrow"><div className="v">{ratio ? `${ratio.toFixed(1)}×` : "—"}</div></div>
-          <div className="s">realised, at {k40 ?? 40} calls a day</div>
-        </div>
-        <div className="stat">
-          <div className="k">Recovery coverage</div>
-          <div className="vrow"><div className="v">{rep.recovery_coverage == null ? "—" : `${(rep.recovery_coverage * 100).toFixed(0)}%`}</div></div>
-          <div className="s">true coefficients inside the 90% interval</div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="ch">
-          <h3>Decision quality</h3>
-          <span className="sub">realised harm averted per day on the held-out window, from the planted outcomes</span>
-          <span className="sp" />
-          {rep.generated_at && <span className="tag">generated {rep.generated_at.replace("T", " ")}</span>}
-        </div>
-        {ks.length === 0 ? (
-          <Pending what="Decision quality" cmd="python -m leeward.eval.decision_quality" />
-        ) : (
-          <div className="row g3">
-            {ks.map((k) => {
-              const rows = ["leeward", "rank_by_age", "rank_by_chronic", "random"].map((s) => ({ label: BASELINE_LABEL[s], value: at(k, s), lead: s === "leeward" }));
-              const r = at(k, "rank_by_age") > 0 ? at(k, "leeward") / at(k, "rank_by_age") : null;
-              return (
-                <div key={k}>
-                  <div className="kx"><b>{k} calls a day</b>{r && <span className="ratio">{r.toFixed(1)}× oldest-first</span>}</div>
-                  <HBars rows={rows} max={Math.max(...ks.map((kk) => at(kk, "leeward")))} />
-                </div>
-              );
-            })}
+          <div className="k">Harm averted at {mid ?? 40} actions/day</div>
+          <div className="vrow">
+            <div className="v">{leeward === undefined ? "—" : NUM(leeward)}</div>
+            {lift ? <span className="delta up">▲ {NUM(lift)}×</span> : null}
           </div>
-        )}
-        <div className="muted small" style={{ marginTop: 12 }}>
-          Same K-call budget for every strategy. The action list's own "expected" ratio is smaller because it counts expected harm on the day; this counts what the simulated outcomes then showed. Both are correct and they are labelled.
+          <div className="s" title={EHA_REALIZED.line}>vs. the best baseline · {EHA_REALIZED.short}</div>
+        </div>
+        <div className={`stat ${flagged ? "crit" : ""}`}>
+          <div className="k">Fairness audit</div>
+          <div className="vrow">
+            <div className="v">{flagged}/{audited}</div>
+            <span className={auditTile}>{!audited ? "not audited" : flagged ? "failed" : "passed"}</span>
+          </div>
+          <div className="s">groups flagged at a {PCT(FNR_GAP, 0)} relative FNR gap</div>
         </div>
       </div>
 
+      <h2>1 · Does the fit find the world it was trained on?</h2>
+      <Recovery report={report} />
+
+      <h2>2 · When it says 3%, does it happen 3% of the time?</h2>
+      <Calibration report={report} />
+
+      <h2>3 · Does the ranking avert more harm than the alternatives?</h2>
       <div className="row g2">
-        <div className="card">
-          <div className="ch"><h3>Calibration</h3><span className="sub">predicted 30% risks should happen about 30% of the time</span></div>
-          {rep.calibration.length === 0 ? (
-            <Pending what="Calibration" cmd="python -m leeward.eval.calibration" />
-          ) : (
-            <table>
-              <thead><tr><th>Need</th><th className="n">Predicted</th><th className="n">Observed</th><th className="n">n</th></tr></thead>
-              <tbody>
-                {rep.calibration.map((c, i) => (
-                  <tr key={i}><td>{NEED_LABEL[c.need] ?? c.need}</td><td className="n">{(c.predicted * 100).toFixed(1)}%</td><td className="n">{(c.observed * 100).toFixed(1)}%</td><td className="n">{c.n}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-          {Object.keys(rep.ece_by_need).length > 0 && (
-            <div className="chips" style={{ marginTop: 10 }}>
-              {Object.entries(rep.ece_by_need).map(([need, ece]) => <span key={need} className={`flagpill${ece < 0.03 ? " info" : " crit"}`}>{NEED_LABEL[need] ?? need} · ECE {ece.toFixed(3)}</span>)}
-            </div>
-          )}
-        </div>
-
-        <div className="card">
-          <div className="ch"><h3>Parameter recovery</h3><span className="sub">planted truth inside the posterior's 90% interval</span></div>
-          {rep.recovery.length === 0 ? (
-            <Pending what="Recovery" cmd="python -m leeward.eval.recovery" />
-          ) : (
-            <table>
-              <thead><tr><th>Parameter</th><th className="n">Truth</th><th className="n">Posterior</th><th className="n">90% interval</th><th></th></tr></thead>
-              <tbody>
-                {rep.recovery.map((r) => (
-                  <tr key={r.parameter}><td>{r.parameter}</td><td className="n">{r.truth.toFixed(2)}</td><td className="n">{r.post_mean.toFixed(2)}</td><td className="n">{r.lo90.toFixed(2)} – {r.hi90.toFixed(2)}</td><td>{r.covered ? <span className="rb rb-low">covered</span> : <span className="rb rb-critical">missed</span>}</td></tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <DecisionQuality report={report} />
+        <Ablations report={report} />
       </div>
 
-      <div className="card">
-        <div className="ch">
-          <h3>Fairness audit</h3>
-          <span className="sub">calibration and false-negative rate by borough, HVI band, evacuation zone, income, caregiver status, race and ethnicity</span>
-          <span className="sp" />
-          {fairnessRows.length > 0 && (rep.fairness_failed ? <span className="rb rb-critical">gaps flagged</span> : <span className="rb rb-low">no gap over 20%</span>)}
-        </div>
-        {fairnessRows.length === 0 ? (
-          <Pending what="Fairness audit" cmd="python -m leeward.eval.fairness" />
-        ) : (
-          <table>
-            <thead><tr><th>Stratum</th><th>Group</th><th className="n">n</th><th className="n">ECE</th><th className="n">FNR</th><th className="n">vs cohort</th><th></th></tr></thead>
-            <tbody>
-              {fairnessRows.map((f, i) => (
-                <tr key={i}><td>{f.stratum}</td><td>{f.group}</td><td className="n">{f.n}</td><td className="n">{f.ece.toFixed(3)}</td><td className="n">{(f.fnr * 100).toFixed(1)}%</td><td className="n">{f.fnr_ratio_to_cohort.toFixed(2)}×</td><td>{f.flagged ? <span className="rb rb-critical">flagged</span> : <span className="rb rb-quiet">ok</span>}</td></tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div className="muted small" style={{ marginTop: 10 }}>A failing audit is displayed, never suppressed. When a group's false-negative rate runs more than 20% above the cohort, the allocator can apply a per-group capacity floor.</div>
-      </div>
+      <h2>4 · Do the misses fall evenly?</h2>
+      <Fairness report={report} />
 
-      {rep.ablations.length > 0 && (
-        <div className="card">
-          <div className="ch"><h3>Ablations</h3><span className="sub">what each model component buys</span></div>
-          <table>
-            <thead><tr><th>Dropped</th><th className="n">ECE</th><th className="n">Harm averted at 40</th></tr></thead>
-            <tbody>{rep.ablations.map((a) => <tr key={a.dropped}><td>{a.dropped}</td><td className="n">{a.ece.toFixed(3)}</td><td className="n">{a.harm_averted_at_40.toFixed(1)}</td></tr>)}</tbody>
-          </table>
-        </div>
-      )}
+      <p className="muted" style={{ fontSize: 12.5 }}>
+        Every number on this screen is <code>report/report.json</code> as <code>make report</code>{" "}
+        wrote it, drawn without filtering. The same run also writes{" "}
+        <code>report/recovery.csv</code>, <code>calibration.csv</code>,{" "}
+        <code>decision_quality.csv</code> and <code>fairness.csv</code>, plus offline Plotly
+        copies of these four charts. Outcomes are simulated and the cohort is synthetic.
+      </p>
     </div>
   );
 }
