@@ -194,6 +194,20 @@ fall risk. Leeward uses the same 0–3 convention in `med_climate_risk.csv`.
 - VA Lighthouse Clinical Health API (FHIR R4) — https://developer.va.gov/explore/api/clinical-health
 - Oracle Health Millennium FHIR R4 APIs — https://docs.oracle.com/en/industries/health/millennium-platform-apis/index.html
 
+### Where the convergence thresholds come from
+
+`report/fit.json` reports the sampler against two bars, and both are somebody's published
+recommendation rather than ours:
+
+| Number | What it is | Source |
+| --- | --- | --- |
+| **r-hat < 1.05** | SPEC §6.5's acceptance bar, and what `make fit` exits non-zero on | `docs/SPEC.md` §6.5 |
+| **r-hat < 1.01**, **bulk and tail ESS > 400** | the stricter modern bar, reported alongside | Vehtari, Gelman, Simpson, Carpenter & Bürkner, *Rank-normalization, folding, and localization: an improved R̂ for assessing convergence of MCMC*, **Bayesian Analysis 16(2), 2021, 667–718** — https://doi.org/10.1214/20-BA1221 |
+
+The statistic itself is the rank-normalised split-R̂ from that paper: it is what ArviZ's
+`az.rhat` computes by default, so the number we print is already the one the paper argues
+for rather than the 1992 original.
+
 ---
 
 ## 2. Data sources, as fetched

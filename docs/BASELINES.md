@@ -203,3 +203,5 @@ The rung-0 baseline — your "before"
 **Pipeline** — hazards 0.2s · cohort 0.37s · simulate 2.05s · score 20.25s · allocate 10.08s · report 19.8s · total 52.8s
 
 ---
+
+---
