@@ -126,3 +126,33 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .kx .ratio { font-size: 12px; color: var(--green); font-weight: 600; }
 .pending { display: flex; align-items: center; gap: 10px; padding: 14px; border: 1px dashed var(--line); border-radius: var(--r2); color: var(--muted); font-size: 12.5px; background: var(--panel2); }
 .pending b { color: var(--ink2); }
+
+/* ---------- model report ----------
+   A recovery row is a whisker in a table cell, a reliability curve is a square log-log
+   panel, and a flagged fairness row is marked in the row, not only in a cell. */
+
+.whisk { width: 176px; height: 14px; display: block; }
+tr.missrow td { background: var(--redbg); }
+tr.missrow td:first-child { box-shadow: inset 3px 0 0 var(--crit); font-weight: 600; }
+.mk.ok { color: var(--green); font-weight: 700; }
+
+.rel { display: grid; grid-template-columns: repeat(auto-fit, minmax(196px, 1fr)); gap: 14px; }
+.relpanel { border: 1px solid var(--line); border-radius: var(--r2); padding: 10px 11px 6px; background: var(--panel); }
+.relhead { display: flex; flex-direction: column; gap: 0; margin-bottom: 4px; }
+.relhead .rl { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relhead .re { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.relhead .re.red { color: var(--crit); font-weight: 600; }
+
+.ratiobar { width: 118px; height: 16px; display: block; }
+tr.flagrow td { background: var(--redbg); }
+tr.flagrow td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
+tr.flagrow td:nth-child(2) { font-weight: 700; color: var(--crit); }
+
+/* The audit verdict. It is the first thing on the card in all three states, and the only
+   one that changes colour: a failing audit should not need to be looked for. */
+.auditbanner { display: flex; gap: 11px; align-items: flex-start; padding: 11px 14px; margin-bottom: 12px; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--r2); font-size: 13.5px; background: var(--panel2); }
+.auditbanner .ic { width: 30px; height: 30px; border-radius: 9px; display: flex; align-items: center; justify-content: center; flex: none; }
+.auditbanner .ic svg { width: 16px; height: 16px; }
+.auditbanner.ok { border-left-color: var(--green); background: var(--greenbg); }
+.auditbanner.warn { border-left-color: var(--amber); background: var(--amberbg); }
+.auditbanner.crit { border-left-color: var(--crit); background: var(--redbg); }

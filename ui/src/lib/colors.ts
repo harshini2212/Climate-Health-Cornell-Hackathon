@@ -51,6 +51,18 @@ export const SERIES_1_DARK = "#3987e5";
 export const FACILITY_OPEN: RGBA = hex("#2a78d6");
 export const FACILITY_DOWN: RGBA = hex(STATUS_HEX.critical);
 
+/**
+ * Ranking strategies on the harm-averted chart. One hue, four steps: Leeward is the
+ * darkest, the two informed baselines step down it, and `random` -- the strategy with no
+ * information in it -- is the neutral gray, so the eye reads "model, rules, chance".
+ */
+export const STRATEGY_STEP: Record<string, string> = {
+  leeward: "#1c5cab",
+  rank_by_chronic: "#5598e7",
+  rank_by_age: "#9ec5f4",
+  random: "#c3c2b7",
+};
+
 /** Tier is ordinal: act now is darkest, everyday is the neutral ink. */
 export const TIER_STEP: Record<string, string> = {
   act_now: "#1c5cab",
