@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
+from leeward.decision import tau
 from leeward.schema import (
     ACTION_COST_UNIT,
     CAREGIVER,
@@ -300,6 +301,10 @@ def make_actions(cohort: pl.DataFrame, scores: pl.DataFrame, day: date, seed: in
     The fixture is not just shaped right, it is *behaviourally* right -- so the guardrails
     in tests/test_guardrails.py pass against it, and a real allocator that breaks them
     fails loudly rather than quietly replacing a correct fixture with a wrong table.
+
+    `day` is the **do-by day**: one work list, capped at one day's capacity. Each row's
+    `lead_days` comes from tau.yaml, so its risk day is `day + lead_days` -- inside the
+    scored window, because `main()` puts the fixture day in the middle of it.
     """
     r = _rng(seed + 4)
     todays = (scores.filter(pl.col("date") == day)
@@ -341,6 +346,7 @@ def make_actions(cohort: pl.DataFrame, scores: pl.DataFrame, day: date, seed: in
     n = len(kept)
     acts = [k["action"] for k in kept]
     vets = [k["veteran_id"] for k in kept]
+    leads = tau.leads()
     aid = [hashlib.sha1(f"{day}{v}{a}".encode()).hexdigest()[:12] for v, a in zip(vets, acts, strict=False)]
     owners = ["pharmacist" if a == "pharmacist_med_review"
               else "automated" if a == "verified_text" else "care_team" for a in acts]
@@ -352,6 +358,7 @@ def make_actions(cohort: pl.DataFrame, scores: pl.DataFrame, day: date, seed: in
         "tier": [k["tier"] for k in kept],
         "eha": [k["eha"] for k in kept],
         "rank": np.arange(1, n + 1, dtype=np.int32),
+        "lead_days": pl.Series("lead_days", [leads[a] for a in acts], dtype=pl.Int32),
         "capacity_bucket": [ACTION_COST_UNIT[a] for a in acts],
         "rationale": [RATIONALES[i] for i in r.integers(0, len(RATIONALES), n)],
         "owner": owners,

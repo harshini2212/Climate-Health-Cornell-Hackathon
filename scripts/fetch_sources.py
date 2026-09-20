@@ -532,21 +532,19 @@ def fetch_nws_snapshot():
     return res
 
 
-@source("acs_veterans", "https://www2.census.gov/programs-surveys/acs/summary_file/2023/"
-        "table-based-SF/data/5YRData/acsdt5y2023-b21001.dat",
-        "ACS 5-year B21001 (sex by age by veteran status) per ZCTA, used to weight where "
-        "the synthetic cohort is re-homed. "
-        "NOTE: api.census.gov now 302s to missing_key.html for every request, so the "
-        "keyed API is NOT a demo-day dependency; this Summary File path is keyless.",
-        heavy=True)
-def fetch_acs_veterans():
+ACS_SF = "https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF"
+
+
+def _acs_zcta_table(table: str) -> pl.DataFrame:
+    """One table of the ACS 2023 5-year Summary File, NYC ZCTAs only, with a `zcta` column.
+
+    Keyless, and one file per table: `acsdt5y2023-<table>.dat` beside the shared geography
+    file. Both are cached in data/raw/, which is gitignored.
+    """
     RAW.mkdir(parents=True, exist_ok=True)
-    geo_path, dat_path = RAW / "acs2023_geos.txt", RAW / "acsdt5y2023-b21001.dat"
-    for path, url in [
-        (geo_path, "https://www2.census.gov/programs-surveys/acs/summary_file/2023/"
-                   "table-based-SF/documentation/Geos20235YR.txt"),
-        (dat_path, "https://www2.census.gov/programs-surveys/acs/summary_file/2023/"
-                   "table-based-SF/data/5YRData/acsdt5y2023-b21001.dat")]:
+    geo_path, dat_path = RAW / "acs2023_geos.txt", RAW / f"acsdt5y2023-{table}.dat"
+    for path, url in [(geo_path, f"{ACS_SF}/documentation/Geos20235YR.txt"),
+                      (dat_path, f"{ACS_SF}/data/5YRData/acsdt5y2023-{table}.dat")]:
         if not path.exists():
             with get(url, stream=True) as r, path.open("wb") as fh:
                 for chunk in r.iter_content(1 << 20):
@@ -565,9 +563,18 @@ def fetch_acs_veterans():
     dat = pl.read_csv(dat_path, separator="|", infer_schema_length=0, truncate_ragged_lines=True)
     dcol = next(c for c in dat.columns if c.upper() in {"GEO_ID", "GEOID"})
     dat = dat.join(zc, left_on=dcol, right_on="geo_id", how="inner")
+    return dat.filter(pl.col("zcta").is_in(list(_nyc_zctas())))
 
-    zctas = _nyc_zctas()
-    dat = dat.filter(pl.col("zcta").is_in(list(zctas)))
+
+@source("acs_veterans", "https://www2.census.gov/programs-surveys/acs/summary_file/2023/"
+        "table-based-SF/data/5YRData/acsdt5y2023-b21001.dat",
+        "ACS 5-year B21001 (sex by age by veteran status) per ZCTA, used to weight where "
+        "the synthetic cohort is re-homed. "
+        "NOTE: api.census.gov now 302s to missing_key.html for every request, so the "
+        "keyed API is NOT a demo-day dependency; this Summary File path is keyless.",
+        heavy=True)
+def fetch_acs_veterans():
+    dat = _acs_zcta_table("b21001")
     # B21001 is SEX BY AGE BY VETERAN STATUS, 39 cells. Verified by identity on the
     # real file: E002 == E005 + E023, and each sex total is the sum of its five
     # veteran age cells. Male veteran cells are 008/011/014/017/020 and female are
@@ -598,6 +605,41 @@ def fetch_acs_veterans():
                .drop(list(SENIOR.values()))
     return write(df, "acs_veterans_by_zcta", "https://www2.census.gov/programs-surveys/acs/"
                  "summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b21001.dat")
+
+
+#: B03002 (HISPANIC OR LATINO ORIGIN BY RACE) lines -> column. Verified against Census's own
+#: table shells (ACS20235YR_Table_Shells.txt), and by identity on the real file below.
+#: "multi" is line 9 / 19 (two or more races); its two sub-lines are not kept.
+ACS_RACE_LINES = {
+    "pop_total": 1, "nh_total": 2, "hisp_total": 12,
+    **{f"{origin}_{race}": first + i
+       for origin, first in (("nh", 3), ("hisp", 13))
+       for i, race in enumerate(("white", "black", "aian", "asian", "nhpi", "other", "multi"))},
+}
+ACS_RACE_NH = [c for c in ACS_RACE_LINES if c.startswith("nh_") and c != "nh_total"]
+ACS_RACE_HISP = [c for c in ACS_RACE_LINES if c.startswith("hisp_") and c != "hisp_total"]
+
+
+@source("acs_race", f"{ACS_SF}/data/5YRData/acsdt5y2023-b03002.dat",
+        "ACS 5-year B03002 (Hispanic or Latino origin by race) per ZCTA, total population. "
+        "The per-ZIP distribution the cohort draws `race` and `ethnicity` from, because CDC "
+        "SVI's EP_MINRTY is one composite number and cannot say Black from Asian from "
+        "Hispanic. Same keyless Summary File path as acs_veterans.",
+        heavy=True)
+def fetch_acs_race():
+    dat = _acs_zcta_table("b03002")
+    df = dat.select("zcta", *[pl.col(f"B03002_E{line:03d}").cast(pl.Float64).alias(name)
+                              for name, line in ACS_RACE_LINES.items()]).sort("zcta")
+    # Identities on the real file, so a shifted line number fails loudly instead of silently
+    # feeding the fairness audit the wrong group.
+    holds = ((pl.col("pop_total") == pl.col("nh_total") + pl.col("hisp_total"))
+             & (pl.col("nh_total") == pl.sum_horizontal(ACS_RACE_NH))
+             & (pl.col("hisp_total") == pl.sum_horizontal(ACS_RACE_HISP)))
+    bad = df.filter(~holds)
+    if bad.height:
+        raise RuntimeError(f"B03002 identities fail for {bad.height} ZCTAs, e.g. "
+                           f"{bad['zcta'].head(3).to_list()}: the line map is wrong")
+    return write(df, "acs_race_by_zcta", f"{ACS_SF}/data/5YRData/acsdt5y2023-b03002.dat")
 
 
 @source("synthea_sample", "https://synthetichealth.github.io/synthea-sample-data/downloads/"

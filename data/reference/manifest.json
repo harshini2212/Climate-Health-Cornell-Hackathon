@@ -1,4 +1,14 @@
 {
+  "acs_race": {
+    "bytes": 14422,
+    "cols": 18,
+    "fetched_utc": "2026-09-20T03:42:18Z",
+    "file": "acs_race_by_zcta.parquet",
+    "note": "ACS 5-year B03002 (Hispanic or Latino origin by race) per ZCTA, total population. The per-ZIP distribution the cohort draws `race` and `ethnicity` from, because CDC SVI's EP_MINRTY is one composite number and cannot say Black from Asian from Hispanic. Same keyless Summary File path as acs_veterans.",
+    "rows": 212,
+    "sha256": "afbc8622ed227f8f",
+    "url": "https://www2.census.gov/programs-surveys/acs/summary_file/2023/table-based-SF/data/5YRData/acsdt5y2023-b03002.dat"
+  },
   "acs_veterans": {
     "bytes": 14765,
     "cols": 20,

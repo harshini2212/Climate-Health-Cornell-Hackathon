@@ -13,7 +13,9 @@ from `data/reference/`, never typed in:
       COPD, asthma, cancer,
       depression, diabetes, CHF,
       low income
-    powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP
+    powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP; dialysis is
+                                                            rescaled to the VA's own ESRD rate
+    race, ethnicity             acs_race_by_zcta           ACS B03002, one joint draw per ZIP
     evac zone, stormwater, HVI   evac_zone_by_modzcta, stormwater_by_modzcta, hvi_by_zcta
     facility                     va_facilities_nyc_hazard   nearest care site (see below)
     PTSD                         VA National Center for PTSD, past-year rate by era
@@ -25,9 +27,13 @@ This is the *parametric* cohort. The VA Synthea release is a 4 GB CSV (data/READ
 until a Synthea reader lands, the health columns Synthea would supply are drawn here. The
 medication columns are not drawn at all: `leeward/cohort/medications.py` gives each veteran
 a real active-medication list from Synthea's public sample and derives every flag from the
-VA drug class and CDC mechanism it maps to. `race` and `ethnicity` are null. Nothing in
-`data/reference/` gives a veteran's race, and inventing one would give the fairness audit a
-stratum that means nothing.
+VA drug class and CDC mechanism it maps to.
+
+`race` and `ethnicity` are drawn jointly from the composition of the veteran's own ZIP
+(ACS B03002, all residents: no public table gives veterans' race per ZIP). That grounds the
+fairness audit's strata in a measured distribution, but a ZIP's all-ages population is
+younger and more diverse than its veterans, so the draw likely overstates diversity among the
+oldest. Both columns are `_synthetic`: a real ZIP composition does not make a person's race real.
 
 Facility: the nearest VA care site *in the veteran's own borough* by haversine. Straight
 lines cross water in New York, and would send half of Staten Island to Brooklyn. Dialysis
@@ -77,8 +83,32 @@ PLACES_RATES = {
 #: takes its lowest one (WWII/Korea, 2%). That last number is an assumption.
 PTSD_PAST_YEAR = {"post911": 0.15, "gulf": 0.14, "vietnam": 0.05, "peacetime": 0.02}
 
+#: ESRD prevalence among veterans enrolled in the VA: 604 per 100,000 (about 35,000 people),
+#: against 187 per 100,000 in the general US population. Wang et al., "Comparison of outcomes
+#: for veterans receiving dialysis care from VA and non-VA providers", BMC Health Serv Res
+#: 2013;13:26, https://doi.org/10.1186/1472-6963-13-26, citing USRDS 2012 and the VA's FY2011
+#: workload report (docs/sources.md). ESRD includes people with a functioning transplant, so
+#: this slightly overstates dialysis alone (the paper does not split it), and it is not
+#: age-adjusted to this panel. It is the level `ckd_dialysis` is drawn at.
+VA_ESRD_PER_100K = 604
+
 #: Sites that can dispense methadone for an opioid treatment program (docs/SPEC.md §5.2).
 OTP_STATIONS = ("630", "630A4")
+
+#: Census asks Hispanic origin and race as two questions, so B03002 is a joint table and the
+#: two cohort columns are one draw from it. Each cell -> (ethnicity, race, the B03002 columns
+#: of data/reference/acs_race_by_zcta.parquet that make it up). "Hispanic" is an origin of any
+#: race; "Other" folds AIAN, NHPI, some other race and two-or-more, none big enough to audit alone.
+RACE_ETHNICITY_CELLS = {
+    "nh_white": ("Non-Hispanic", "White", ("nh_white",)),
+    "nh_black": ("Non-Hispanic", "Black", ("nh_black",)),
+    "nh_asian": ("Non-Hispanic", "Asian", ("nh_asian",)),
+    "nh_other": ("Non-Hispanic", "Other", ("nh_aian", "nh_nhpi", "nh_other", "nh_multi")),
+    "hisp_white": ("Hispanic", "White", ("hisp_white",)),
+    "hisp_black": ("Hispanic", "Black", ("hisp_black",)),
+    "hisp_asian": ("Hispanic", "Asian", ("hisp_asian",)),
+    "hisp_other": ("Hispanic", "Other", ("hisp_aian", "hisp_nhpi", "hisp_other", "hisp_multi")),
+}
 
 # --------------------------------------------------------------------------- #
 # ASSUMPTIONS. No public per-person or per-ZIP source exists for any of these. They are
@@ -218,9 +248,14 @@ def zip_frame() -> pl.DataFrame:
     evac = _ref("evac_zone_by_modzcta").select(
         "modzcta", pl.col("evac_zone_min").cast(pl.Int32).alias("evac_zone"))
     storm = _ref("stormwater_by_modzcta")
+    b03002 = sorted({c for _, _, cols in RACE_ETHNICITY_CELLS.values() for c in cols})
+    race = (_ref("acs_race_by_zcta").join(members, on="zcta")
+            .group_by("modzcta").agg(pl.col(b03002).sum())
+            .select("modzcta", *[pl.sum_horizontal(cols).alias(f"pop_{cell}")
+                                 for cell, (_, _, cols) in RACE_ETHNICITY_CELLS.items()]))
 
     frame = _ref("nyc_modzcta").select("modzcta", "lon", "lat")
-    for table in (acs, empower, borough, places, hvi, evac, storm):
+    for table in (acs, empower, borough, places, hvi, evac, storm, race):
         frame = frame.join(table, on="modzcta", how="inner")
     frame = frame.filter(pl.col("borough").is_in(schema.BOROUGHS))
     return (frame.with_columns(
@@ -266,6 +301,48 @@ def rehome(n: int, seed: int, zips: pl.DataFrame) -> pl.DataFrame:
                   .with_row_index("_row")
                   .join(zips, on="modzcta", how="left")
                   .sort("_row").drop("_row"))
+
+
+# --------------------------------------------------------------------------- #
+# Dialysis
+# --------------------------------------------------------------------------- #
+
+def dialysis_probability(rate: np.ndarray, age: np.ndarray) -> np.ndarray:
+    """P(on dialysis) per veteran: the VA's ESRD level, shaped by emPOWER's geography.
+
+    emPOWER counts Medicare beneficiaries at a dialysis *facility*, which put 7 of 10,000
+    veterans on dialysis. It is still the only per-ZIP measure there is, so it supplies the
+    shape (which ZIPs run high, and 65+ against under-65) and the VA's own ESRD prevalence
+    supplies the level: one constant rescales the shape until the panel's mean is
+    VA_ESRD_PER_100K. A flat citywide rate would throw the measured geography away.
+    """
+    shape = rate * np.where(age >= 65, 1.0, UNDER_65_EQUIPMENT_RATIO)
+    if shape.mean() <= 0:
+        raise SystemExit("no veteran lives in a ZIP with emPOWER dialysis beneficiaries; "
+                         "a reference join is broken")
+    return shape * (VA_ESRD_PER_100K / 100_000 / shape.mean())
+
+
+# --------------------------------------------------------------------------- #
+# Race and ethnicity
+# --------------------------------------------------------------------------- #
+
+def draw_race_ethnicity(people: pl.DataFrame, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """(race, ethnicity) per veteran: one draw from the B03002 cells of their own ZIP.
+
+    Its own named stream, so adding these columns reshuffled nobody's COPD or address.
+    """
+    cells = list(RACE_ETHNICITY_CELLS)
+    weight = np.column_stack([people[f"pop_{cell}"].to_numpy() for cell in cells])
+    cdf = np.cumsum(weight, axis=1)
+    total = cdf[:, -1]
+    if (total <= 0).any():
+        raise SystemExit("a ZIP in the cohort has no B03002 population; a reference join is broken")
+    u = _stream(seed, "race_ethnicity").random(people.height)
+    pick = np.minimum((u[:, None] * total[:, None] >= cdf).sum(axis=1), len(cells) - 1)
+    ethnicity = np.array([RACE_ETHNICITY_CELLS[c][0] for c in cells])[pick]
+    race = np.array([RACE_ETHNICITY_CELLS[c][1] for c in cells])[pick]
+    return race, ethnicity
 
 
 # --------------------------------------------------------------------------- #
@@ -335,9 +412,10 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
     ptsd = bern("ptsd", np.vectorize(PTSD_PAST_YEAR.get)(era))
     severity = np.where(ptsd, _categorical(uniform("ptsd_severity"), PTSD_SEVERITY), 0)
 
-    # Dialysis and powered equipment, at the ZIP's emPOWER rate.
+    # Powered equipment at the ZIP's emPOWER rate; dialysis at the VA's ESRD level, shaped
+    # by the same per-ZIP emPOWER rate (dialysis_probability).
     scale = np.where(older, 1.0, UNDER_65_EQUIPMENT_RATIO)
-    dialysis = bern("dialysis", col("rate_dialysis") * scale)
+    dialysis = bern("dialysis", dialysis_probability(col("rate_dialysis"), age))
     u_eq = uniform("equipment")
     device = _categorical(uniform("device"), NON_OXYGEN_DEVICE)
     equipment = np.where(u_eq < col("rate_oxygen") * scale, "oxygen",
@@ -388,6 +466,8 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         MISSED_APPTS_BASE + MISSED_APPTS_TRANSPORT * places["transport_barrier"]
         + MISSED_APPTS_DEPRESSION * places["depression"])
 
+    race, ethnicity = draw_race_ethnicity(people, seed)
+
     r = _stream(seed, "names")
     first_m, first_f = r.integers(len(FIRST_M), size=n), r.integers(len(FIRST_F), size=n)
     last = r.integers(len(LAST), size=n)
@@ -400,8 +480,8 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         "name_display": names,
         "age": i32(age),
         "sex": sex,
-        "race": pl.Series([None] * n, dtype=pl.Utf8),
-        "ethnicity": pl.Series([None] * n, dtype=pl.Utf8),
+        "race": race,
+        "ethnicity": ethnicity,
         "modzcta": col("modzcta"),
         "borough": col("borough"),
         "facility_id": assign_facility(people, dialysis, otp),

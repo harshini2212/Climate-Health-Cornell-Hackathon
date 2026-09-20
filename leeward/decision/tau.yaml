@@ -1,23 +1,33 @@
 # tau[a, k]: the fraction of need k that action a prevents, if it is done. SPEC §7.2.
+# lead_days:  how many days BEFORE the risk day the action has to happen to work at all.
 #
-# Literature priors, editable. Every row names all five needs, each between 0 and 1.
-# tau.load() refuses anything else.
+# Literature priors, editable. Every row names all five needs, each between 0 and 1, and a
+# whole number of lead days. tau.load() and tau.leads() refuse anything else.
+#
+# The lead times are docs/proposal.md §6's action catalog, which lays the same actions out in
+# "5 days out / 2 days out / during-after" columns. They are the same kind of clinician-set
+# judgement as tau and belong in the same file: an alternate dialysis site booked on the day
+# of the surge averts nothing, and a mail-order refill does not arrive the same afternoon.
+# A call and a text still work on the day, so their lead is zero -- and so is evacuation
+# assistance, because a flash flood gives no notice and help must still be offerable.
 #
 # check_in_call is deliberately absent: it prevents nothing by itself, it finds out.
-# Its value is the information it buys -- see leeward/decision/eha.py.
+# Its value is the information it buys -- see leeward/decision/eha.py -- and its lead is
+# fixed at zero in tau.py, because a find-out call that is not made today cannot re-score
+# today.
 #
 # assign_buddy and heap_application (SPEC §7.4b) join this table with caregiver routing.
 
-#                             breathing   heat  mental  treatment_gap  access_loss   bucket
-care_team_call:              {breathing: 0.25, heat: 0.30, mental: 0.35, treatment_gap: 0.40, access_loss: 0.20}  # call
-early_refill:                {breathing: 0.15, heat: 0.10, mental: 0.05, treatment_gap: 0.60, access_loss: 0.00}  # refill
-cooling_center_ride:         {breathing: 0.05, heat: 0.60, mental: 0.05, treatment_gap: 0.00, access_loss: 0.10}  # ride
-clean_air_room:              {breathing: 0.50, heat: 0.05, mental: 0.00, treatment_gap: 0.00, access_loss: 0.00}  # ride
-backup_power_plan:           {breathing: 0.20, heat: 0.00, mental: 0.05, treatment_gap: 0.50, access_loss: 0.10}  # call
-alt_site_booking:            {breathing: 0.00, heat: 0.00, mental: 0.05, treatment_gap: 0.70, access_loss: 0.30}  # booking
-evacuation_assist:           {breathing: 0.05, heat: 0.10, mental: 0.10, treatment_gap: 0.30, access_loss: 0.75}  # evac
-verified_text:               {breathing: 0.05, heat: 0.15, mental: 0.10, treatment_gap: 0.10, access_loss: 0.05}  # free
-switch_to_local_pickup:      {breathing: 0.10, heat: 0.05, mental: 0.05, treatment_gap: 0.65, access_loss: 0.10}  # refill
-pharmacist_med_review:       {breathing: 0.15, heat: 0.45, mental: 0.10, treatment_gap: 0.20, access_loss: 0.00}  # pharmacist_slot
-cold_chain_plan:             {breathing: 0.05, heat: 0.10, mental: 0.00, treatment_gap: 0.55, access_loss: 0.05}  # call
-controlled_substance_bridge: {breathing: 0.00, heat: 0.00, mental: 0.20, treatment_gap: 0.70, access_loss: 0.20}  # va_fill
+#                             breathing   heat  mental  treatment_gap  access_loss   lead   bucket
+care_team_call:              {breathing: 0.25, heat: 0.30, mental: 0.35, treatment_gap: 0.40, access_loss: 0.20, lead_days: 0}  # call
+early_refill:                {breathing: 0.15, heat: 0.10, mental: 0.05, treatment_gap: 0.60, access_loss: 0.00, lead_days: 5}  # refill
+cooling_center_ride:         {breathing: 0.05, heat: 0.60, mental: 0.05, treatment_gap: 0.00, access_loss: 0.10, lead_days: 1}  # ride
+clean_air_room:              {breathing: 0.50, heat: 0.05, mental: 0.00, treatment_gap: 0.00, access_loss: 0.00, lead_days: 1}  # ride
+backup_power_plan:           {breathing: 0.20, heat: 0.00, mental: 0.05, treatment_gap: 0.50, access_loss: 0.10, lead_days: 2}  # call
+alt_site_booking:            {breathing: 0.00, heat: 0.00, mental: 0.05, treatment_gap: 0.70, access_loss: 0.30, lead_days: 2}  # booking
+evacuation_assist:           {breathing: 0.05, heat: 0.10, mental: 0.10, treatment_gap: 0.30, access_loss: 0.75, lead_days: 0}  # evac
+verified_text:               {breathing: 0.05, heat: 0.15, mental: 0.10, treatment_gap: 0.10, access_loss: 0.05, lead_days: 0}  # free
+switch_to_local_pickup:      {breathing: 0.10, heat: 0.05, mental: 0.05, treatment_gap: 0.65, access_loss: 0.10, lead_days: 2}  # refill
+pharmacist_med_review:       {breathing: 0.15, heat: 0.45, mental: 0.10, treatment_gap: 0.20, access_loss: 0.00, lead_days: 5}  # pharmacist_slot
+cold_chain_plan:             {breathing: 0.05, heat: 0.10, mental: 0.00, treatment_gap: 0.55, access_loss: 0.05, lead_days: 5}  # call
+controlled_substance_bridge: {breathing: 0.00, heat: 0.00, mental: 0.20, treatment_gap: 0.70, access_loss: 0.20, lead_days: 2}  # va_fill
