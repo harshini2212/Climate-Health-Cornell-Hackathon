@@ -196,6 +196,7 @@ Vulnerability Index. Map the cohort fields onto these columns rather than invent
 | transport barrier | `lacktrpt_crudeprev` | Gates whether a ride is suggested or booked |
 | `copd`, `asthma`, `active_cancer_tx`, `depression` | `copd_`, `casthma_`, `cancer_`, `depression_crudeprev` | |
 | `powered_equipment` | `empower_ny_zip.parquet` ÷ ACS 65+ | Per-ZIP rate, capped |
+| `ckd_dialysis` | VA ESRD prevalence (604 per 100,000) × `empower_ny_zip.parquet` shape | emPOWER's 1,948 NYC facility-dialysis beneficiaries put only 7 of 10,000 veterans on dialysis. The VA's own ESRD rate sets the level (~60 of 10,000); emPOWER ÷ ACS 65+ still says which ZIPs run high, and under-65s stay scaled down. See `docs/sources.md` for the paper and its caveats (ESRD includes transplant; FY2011; not age-adjusted). |
 | `race`, `ethnicity` | `acs_race_by_zcta.parquet` (ACS B03002) | One joint draw per veteran from their own ZIP's cells. The ZIP's all-ages population, not its veterans, so it likely overstates diversity among the oldest. `_synthetic`. |
 | ZIP sampling weights | `acs_veterans_by_zcta.parquet` | `P(zip | age_band) ∝ vet_<band>` |
 

@@ -74,6 +74,24 @@ nobody re-discovers it at 03:00.
 - The **Brooklyn campus absorbed the largest increase in dialysis encounters**; VA patients'
   dialysis encounters at non-VA facilities also rose.
 
+> Wang V, Maciejewski ML, Patel UD, Stechuchak KM, Hynes DM, Weinberger M., *Comparison of
+> outcomes for veterans receiving dialysis care from VA and non-VA providers*, BMC Health Serv
+> Res 2013;13:26 (open access, CC BY) — https://doi.org/10.1186/1472-6963-13-26 ·
+> https://pmc.ncbi.nlm.nih.gov/articles/PMC3559268/
+
+- "Approximately **35,000** veterans enrolled in the Veterans Health Administration (VA) have
+  end-stage renal disease (ESRD), reflecting a higher prevalence in the VA population than in
+  the general US population (**604 vs. 187 per 100,000**)". The paper cites the USRDS 2012
+  Annual Data Report and the VA Allocation Resource Center's FY2011 workload report.
+- **This is the level the cohort's `ckd_dialysis` is drawn at** (`VA_ESRD_PER_100K = 604` in
+  `leeward/cohort/build.py`): 0.604%, about 60 of 10,000 veterans, up from 7 when emPOWER's
+  Medicare facility-dialysis count was used alone. emPOWER still supplies the per-ZIP shape.
+- Read it with three caveats. **ESRD includes people with a functioning transplant**, and the
+  paper does not split them out, so it slightly overstates dialysis. It is **FY2011-vintage**
+  and **not age-adjusted** to this panel. And although the paper says "enrolled", its two
+  figures imply a denominator of about 5.8 million, so it is probably a rate among the
+  veterans the VA actually serves.
+
 > The American Legion, *VA updates Legion on Manhattan facility*, November 2012 —
 > https://www.legion.org/information-center/news/veterans-healthcare/2012/november/va-updates-legion-on-manhattan-facility
 

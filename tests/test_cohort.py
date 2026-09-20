@@ -9,6 +9,7 @@ that build.py computed for itself -- a wrong join in build.py cannot also fix it
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -141,6 +142,63 @@ def test_powered_equipment_follows_empower(cohort: pl.DataFrame) -> None:
     realised, source = powered.mean(), older["rate"].mean()
     assert abs(realised / source - 1) < 0.25, (
         f"65+ powered equipment {realised:.2%}, ZIP-weighted emPOWER {source:.2%}")
+
+
+# --------------------------------------------------------------------------- #
+# Dialysis: the level is the VA's own, the geography is emPOWER's
+# --------------------------------------------------------------------------- #
+
+# ESRD prevalence among VA-enrolled veterans: 604 per 100,000. Wang et al., BMC Health
+# Serv Res 2013;13:26, https://doi.org/10.1186/1472-6963-13-26 (docs/sources.md). Written out
+# here rather than imported, so the test cannot agree with a wrong constant in build.py.
+VA_ESRD_PER_100K = 604
+
+
+def test_dialysis_prevalence_is_the_vas_own_esrd_rate(cohort: pl.DataFrame) -> None:
+    """emPOWER counts only Medicare *facility* dialysis, which put 7 of 10,000 veterans on it
+    (0.07%). The VA's own figure is 0.604%: about 60 of 10,000. Under 40 or over 85 is more
+    than 3 standard deviations from it."""
+    n = cohort["ckd_dialysis"].sum()
+    assert 40 <= n <= 85, (
+        f"{n} of {N:,} veterans on dialysis; the VA's ESRD rate of {VA_ESRD_PER_100K} per "
+        f"100,000 puts it near {N * VA_ESRD_PER_100K / 100_000:.0f}")
+
+
+def test_dialysis_probability_takes_its_level_from_the_va_and_its_shape_from_empower() -> None:
+    """Flattening to a citywide 0.604% would pass the count test above and throw away a
+    measured per-ZIP pattern. So: the mean is exactly the VA's, and within an age group each
+    veteran's probability stays proportional to their own ZIP's emPOWER rate."""
+    people = build.rehome(N, 0, build.zip_frame())
+    rate, age = people["rate_dialysis"].to_numpy(), people["age"].to_numpy()
+    p = build.dialysis_probability(rate, age)
+
+    assert abs(p.mean() - VA_ESRD_PER_100K / 100_000) < 1e-9
+    assert p.min() >= 0 and p.max() < 0.10, "rescaling made some ZIP's rate implausible"
+    for group in (age >= 65, age < 65):
+        keep = group & (rate > 0)
+        assert np.allclose(p[keep] / rate[keep], (p[keep] / rate[keep])[0]), (
+            "probability is no longer proportional to the ZIP's emPOWER rate")
+    older, younger = (age >= 65) & (rate > 0), (age < 65) & (rate > 0)
+    assert (p[younger] / rate[younger]).mean() < (p[older] / rate[older]).mean(), (
+        "under-65s should sit below 65+ at the same emPOWER rate; emPOWER counts Medicare")
+
+
+def test_the_sandy_dialysis_story_is_more_than_a_handful_of_people(cohort: pl.DataFrame) -> None:
+    """It rested on seven people. Station 630 is the campus that evacuated in 2012, and at
+    least five of the veterans sent there for dialysis are what makes that scenario land."""
+    on = cohort.filter(pl.col("ckd_dialysis"))
+    assert on.height >= 40
+    at_630 = on.filter(pl.col("facility_id") == "630").height
+    assert at_630 >= 5, f"only {at_630} dialysis veterans at station 630"
+
+
+def test_the_va_esrd_rate_is_cited_with_its_url() -> None:
+    """CLAUDE.md: every real number shown anywhere is in docs/sources.md with a URL."""
+    text = (Path(__file__).resolve().parents[1] / "docs" / "sources.md").read_text("utf-8")
+    assert build.VA_ESRD_PER_100K == VA_ESRD_PER_100K
+    assert f"{VA_ESRD_PER_100K} vs. 187 per 100,000" in text, (
+        "the paper's sentence giving the VA ESRD rate is not quoted in docs/sources.md")
+    assert "10.1186/1472-6963-13-26" in text, "the ESRD rate has no URL in docs/sources.md"
 
 
 # --------------------------------------------------------------------------- #

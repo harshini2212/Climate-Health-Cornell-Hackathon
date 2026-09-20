@@ -13,8 +13,9 @@ from `data/reference/`, never typed in:
       COPD, asthma, cancer,
       depression, diabetes, CHF,
       low income
-    powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP
-    race, ethnicity              acs_race_by_zcta           ACS B03002, one joint draw per ZIP
+    powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP; dialysis is
+                                                            rescaled to the VA's own ESRD rate
+    race, ethnicity             acs_race_by_zcta           ACS B03002, one joint draw per ZIP
     evac zone, stormwater, HVI   evac_zone_by_modzcta, stormwater_by_modzcta, hvi_by_zcta
     facility                     va_facilities_nyc_hazard   nearest care site (see below)
     PTSD                         VA National Center for PTSD, past-year rate by era
@@ -81,6 +82,15 @@ PLACES_RATES = {
 #: OEF/OIF 15%, Gulf War 14%, Vietnam 5%. The page gives no peacetime figure, so peacetime
 #: takes its lowest one (WWII/Korea, 2%). That last number is an assumption.
 PTSD_PAST_YEAR = {"post911": 0.15, "gulf": 0.14, "vietnam": 0.05, "peacetime": 0.02}
+
+#: ESRD prevalence among veterans enrolled in the VA: 604 per 100,000 (about 35,000 people),
+#: against 187 per 100,000 in the general US population. Wang et al., "Comparison of outcomes
+#: for veterans receiving dialysis care from VA and non-VA providers", BMC Health Serv Res
+#: 2013;13:26, https://doi.org/10.1186/1472-6963-13-26, citing USRDS 2012 and the VA's FY2011
+#: workload report (docs/sources.md). ESRD includes people with a functioning transplant, so
+#: this slightly overstates dialysis alone (the paper does not split it), and it is not
+#: age-adjusted to this panel. It is the level `ckd_dialysis` is drawn at.
+VA_ESRD_PER_100K = 604
 
 #: Sites that can dispense methadone for an opioid treatment program (docs/SPEC.md §5.2).
 OTP_STATIONS = ("630", "630A4")
@@ -294,6 +304,26 @@ def rehome(n: int, seed: int, zips: pl.DataFrame) -> pl.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
+# Dialysis
+# --------------------------------------------------------------------------- #
+
+def dialysis_probability(rate: np.ndarray, age: np.ndarray) -> np.ndarray:
+    """P(on dialysis) per veteran: the VA's ESRD level, shaped by emPOWER's geography.
+
+    emPOWER counts Medicare beneficiaries at a dialysis *facility*, which put 7 of 10,000
+    veterans on dialysis. It is still the only per-ZIP measure there is, so it supplies the
+    shape (which ZIPs run high, and 65+ against under-65) and the VA's own ESRD prevalence
+    supplies the level: one constant rescales the shape until the panel's mean is
+    VA_ESRD_PER_100K. A flat citywide rate would throw the measured geography away.
+    """
+    shape = rate * np.where(age >= 65, 1.0, UNDER_65_EQUIPMENT_RATIO)
+    if shape.mean() <= 0:
+        raise SystemExit("no veteran lives in a ZIP with emPOWER dialysis beneficiaries; "
+                         "a reference join is broken")
+    return shape * (VA_ESRD_PER_100K / 100_000 / shape.mean())
+
+
+# --------------------------------------------------------------------------- #
 # Race and ethnicity
 # --------------------------------------------------------------------------- #
 
@@ -382,9 +412,10 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
     ptsd = bern("ptsd", np.vectorize(PTSD_PAST_YEAR.get)(era))
     severity = np.where(ptsd, _categorical(uniform("ptsd_severity"), PTSD_SEVERITY), 0)
 
-    # Dialysis and powered equipment, at the ZIP's emPOWER rate.
+    # Powered equipment at the ZIP's emPOWER rate; dialysis at the VA's ESRD level, shaped
+    # by the same per-ZIP emPOWER rate (dialysis_probability).
     scale = np.where(older, 1.0, UNDER_65_EQUIPMENT_RATIO)
-    dialysis = bern("dialysis", col("rate_dialysis") * scale)
+    dialysis = bern("dialysis", dialysis_probability(col("rate_dialysis"), age))
     u_eq = uniform("equipment")
     device = _categorical(uniform("device"), NON_OXYGEN_DEVICE)
     equipment = np.where(u_eq < col("rate_oxygen") * scale, "oxygen",
