@@ -189,7 +189,7 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
             <div className="aiask-sub">Written from today's hazards, the site status table and the action list. No model call: every sentence is a number on this page.</div>
             <div className="brief"><p className="bt">{brief}</p></div>
             <div className="askchips">
-              <span onClick={() => onOpen("week")}>Open the week board</span>
+              <span onClick={() => onOpen("command")}>Open the command center</span>
               <span onClick={() => onOpen("careteam")}>Today's action list</span>
               <span onClick={() => onOpen("report")}>How do we know it works?</span>
             </div>

@@ -5,7 +5,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { AskPanel } from "../components/AskPanel";
-import { eventDays } from "../components/EventPanel";
+import { eventDays } from "../components/EventFeed";
 import { getForecast, postActions, postActionsWeek } from "../lib/api";
 import type { AskContext } from "../lib/ask";
 import { LIBRARY } from "../lib/library";
@@ -34,7 +34,7 @@ export function Ask({ scenario, day, onGoto }: { scenario: string; day?: number;
 
   const days = useMemo(() => (forecast ? eventDays(forecast.dates.slice(0, 7), forecast.zips) : []), [forecast]);
   const ctx: AskContext = useMemo(() => ({
-    days: days.map((d) => ({ date: d.date, flood: d.flood, heat: d.heat, smoke: d.smoke, surge: d.surge, outage: d.outage, maxHeatIndex: d.maxHeatIndex, maxPm25: d.maxPm25 })),
+    days: days.map((d) => ({ date: d.date, flood: d.flood, heat: d.heat, smoke: d.smoke, surge: d.surge, outage: d.outagePeak, maxHeatIndex: d.maxHeatIndex, maxPm25: d.maxPm25 })),
     week,
     facilities: forecast?.facilities ?? [],
     panel: week[0]?.n_panel ?? 0,
