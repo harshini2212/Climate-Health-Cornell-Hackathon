@@ -452,6 +452,60 @@ design — which is right for the care-team drill-down, and wrong for a wall boa
 >
 > Run `make check`; green; commit; push; two lines in `status/demo.md`; stop.
 
+
+### 16 · `api` — half of Leeward's call budget buys information the Impact chart scores at zero  ← the Impact bar chart is on the never-cut list
+
+Found while wiring `leeward/eval/report.py`. On the 500-veteran fixtures, under
+`decision_quality`'s calls-only budget, `allocate()` spends its 80 call slots like this:
+
+```
+care_team_call   40      tau 0.20-0.40 across the five needs
+check_in_call    40      no tau row at all -- it prevents nothing, it finds out
+```
+
+`tau.yaml` leaves `check_in_call` out on purpose ("it prevents nothing by itself, it finds
+out") and `eha.py` values it by VOI instead — `sum_k w_k * epistemic_var`. That is a
+defensible decision layer. But `decision_quality.harm_averted` only counts realized harm, so
+every slot spent on information scores exactly 0, and the chart reads:
+
+```
+K=80, mean harm averted per day, 30 held-out days
+  leeward           49.6
+  random            54.4        <- beats Leeward
+  rank_by_age       51.2        <- beats Leeward
+  leeward's own picks, scored as if each got a care_team_call:   76.6
+```
+
+So the **ranking is not the problem** — Leeward's choice of who to call is worth +41% over
+random and +50% over rank-by-age. It loses on the scoreboard because it is playing 40 slots
+against their 80. A baseline that only knows how to make one generic call is structurally
+advantaged by a metric that only scores prevention.
+
+This is fixture-scale; item 15 records 4.2x over rank-by-age on the real 10,000-veteran run,
+where epistemic share is lower and fewer slots go to check-ins. The mechanism is the same at
+both scales, and it is the chart the deck opens on.
+
+> Read `leeward/decision/eha.py` (VOI), `leeward/decision/tau.yaml` (the deliberate absence)
+> and `leeward/eval/decision_quality.py` (`harm_averted`, `call_budget`). Decide which of
+> these three it is, and say which in the commit:
+>
+> 1. **VOI should not spend a scarce `call` slot at rung 0.** Prior-only scores make
+>    epistemic share high everywhere, so VOI is nearly uniform and buys little — gate
+>    check-ins behind a rung or an epistemic-share floor.
+> 2. **The comparison should price information.** Score a check-in at the harm averted by
+>    the action it would unlock, or report a second series, so the chart stops valuing
+>    "find out" at zero.
+> 3. **It is correct and belongs on the slide**: Leeward buys information the baselines
+>    cannot, and the honest chart shows both bars with a label.
+>
+> Do not fix it inside `decision_quality.harm_averted` by quietly giving `check_in_call` a
+> tau — that would make the Impact chart disagree with the allocator it is scoring.
+>
+> Whatever you choose, `tests/test_report.py::test_decision_quality_carries_every_strategy_as_measured`
+> pins that the assembler reports the comparison rather than curating it. Leave that pinned.
+>
+> Run `make check`; green; commit; push; two lines in `status/api.md`; stop.
+
 ---
 
 ## Merge 2 → Round C is rehearsal only
