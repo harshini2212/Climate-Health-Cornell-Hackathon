@@ -72,3 +72,7 @@ The gate caught that and it was right; reverted. If the board should carry it, `
 comparison split scarce from free capacity live, which it cannot today.
 `make check` GREEN on this tree (venv verified pointing at this worktree, not the primary).
 Verified headless at 1600px on the dev server: action list, week board, dot plot.
+## 21:50 — dashboard: event panel, 3-tier patient list, Ask Leeward, resource library
+New opening screen (src/screens/Dashboard.tsx). Event panel with computed severity, countdown, NY map and an update feed built from real hazard-table transitions; patient list in three tiers with risk-factor and action counts at a glance, hover detail and click-through to the chart; Ask Leeward answering deterministically offline from the forecast, the allocator's list and the library; 12-card resource library by event and topic with sources. Opens on the first alert day. Six separate commits on lane/ui-redesign so any piece can be reverted alone. npm run build clean.
+
+Rahul: tests/test_api.py::test_the_slider_answers_inside_300ms fails on this Windows machine — median 1412 ms at 10k veterans, budget 300 ms (your note says 127 ms on CI). Pre-existing and not UI: my commits touch only ui/. The client already caches per request and allows 30 s, but the slider will feel slow if the demo runs on a machine like this one.
