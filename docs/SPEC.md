@@ -584,7 +584,7 @@ Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or 
 | `GET /forecast?scenario=&day=` | hazards for the next 7 days by ZIP and facility |
 | `GET /scores?date=&need=` | ZIP and facility aggregates with intervals |
 | `GET /veteran/{id}?date=` | card: p per need, interval, epistemic share, drivers, tier |
-| `POST /actions` body `{date, capacity, group_floor?, prior_scale?}` | the work list for the **do-by day** `date` (each row carries `lead_days`; its risk day is `date + lead_days`) + total EHA + baselines' EHA + `n_too_late` |
+| `POST /actions` body `{date, capacity, group_floor?, prior_scale?, limit?}` | the work list for the **do-by day** `date` (each row carries `lead_days`; its risk day is `date + lead_days`) + total EHA + baselines' EHA + `n_too_late` + `n_not_reached` |
 | `GET /message/{action_id}` | rendered message |
 | `POST /log` | outcome log row |
 | `GET /report` | eval JSON for the Model report screen |
@@ -597,9 +597,11 @@ Stub with fake data by hour 2 so Track D can build against it.
 `leeward/api/main.py` implements all eight. Every route reads cached parquets through
 `schema.read`; only `POST /actions` computes, and it answers in about 130 ms at 10,000 veterans.
 
-- **`day`** in `/forecast` is the offset from the scenario's first day; the window is seven days from there (shorter at the end), and a site is `site_down` if it is down on any day of the window.
+- **`day`** in `/forecast` is the offset from the scenario's first day; the window is seven days from there (shorter at the end). `facilities` is one `FacilityStatus` **per facility per day**, keyed like `site_status` itself, so a closure lands on the day it starts rather than over the whole window; a caller that wants "is this site there at all this week?" takes `.any()` over the window's rows.
 - **`scenario`** and **`prior_scale`** are accepted only for what is cached: `sandy_then_heat` and `1.0`. Anything else is a 422 that says so; it is never answered with other data under the requested name.
 - **`POST /actions`** merges a partial `capacity` onto `DEFAULT_CAPACITY` and echoes the merged dict. `counts_by_tier` counts action rows, not veterans. Unknown buckets, negative capacity and a bad `group_floor` are 422s. `date` is the day the team works, so the route reads the risk days that day can still act on (`date` .. `date` + the longest lead in `tau.yaml`) and returns what has to be done on `date`. Do-by days share no capacity, so this is still one request.
+- **`n_not_reached`** is the other half of the slider, in the same answer: the Act-now and Find-out veterans a team with no capacity limit reaches with a person and this capacity reaches with nobody. A free `verified_text` is not being reached. It is one more greedy pass inside `compare(headroom=True)` over candidates the request has already valued -- about 5% of the request -- not a second allocation, so a board never has to ask twice.
+- **`limit`** cuts the rows returned, highest EHA first, and nothing else: `n_selected`, `total_eha`, `counts_by_tier`, `baselines`, `n_too_late` and `n_not_reached` all describe the whole allocation, so a board rendering a top slice can say "40 of 6,303". It defaults to no limit, and every issued row is still resolvable by `GET /message`.
 - **`baselines`** are the same team with the same capacity and the same candidate actions valued the same way, working the veterans in a different order: oldest first, most chronic conditions first, or a shuffle seeded by the date. Each veteran's own actions are still tried best first. So the gap to `leeward` is what risk-ranking who goes first is worth, not a strawman with fewer tools. Most of every total is the free `verified_text` bucket, which no ordering changes, so the gap is modest. Measured over every scored day (rung 0): 22-33% on the 500-veteran fixtures, and 0-17% (median 9%) on the 10,000-veteran run, where the days at 0% are the ones with no competition for a scarce slot. No baseline beat `leeward` on any day.
 - **`GET /message/{action_id}`** accepts the `action_id` or the `msg-` `message_id`, and finds any action from a recent `POST /actions` as well as the cached plan. 503 until `leeward.outreach.messages` exists.
 - **`POST /log`** is append-only, one row per `action_id`: a repeat is a 409. Unknown veteran is a 404.

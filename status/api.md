@@ -28,3 +28,53 @@ Slider: 283–320 ms at 10,000 veterans, budget 300, on a machine at load 20 wit
 ## 00:59 — Makefile `fit`/`score`, tests/test_make_targets.py
 `make score` runs the scorer that exists (rung-0 `score_prior`, then `decision.allocate` — baseline.py's own STAGES, 1.0s on fixtures) and `make fit` exits 1 naming the rung that is built and the module that would have to land, instead of `No module named`. Both resolve through `$(wildcard ...)`: when C10 lands `model/fit.py` and `model/score.py` they are picked up with no edit — verified by dropping both in and re-running.
 New gate test reads every documented target's command line out of `make -n` and asserts each module it names is findable and each script it runs exists; `make demo` is checked without booting (the `module:attr` given to uvicorn must import and have that attr, `npm run dev` must exist in ui/package.json); `make setup` is excluded, being the target that creates the environment. Docs: the three now-wrong `make fit` references fixed (README table, BUILD_PLAN T+6:00); PROMPTS.md's four `make cohort && make score` lines became true rather than wrong, so they are untouched. 855 passed, 2 skipped; red only on the 300 ms /actions perf test, 320–365 ms under load avg 17–38 from five concurrent lanes, identical at HEAD before this change.
+
+## 02:15 — C9: FacilityStatus.date, ActionsResponse.n_not_reached, ActionsRequest.limit
+All three contract gaps the week board was working around are closed. `/forecast` now returns
+one `FacilityStatus` **per facility per day** (98 rows, not 14) straight off `site_status`,
+which was always keyed that way — the window-level `.any()` collapse and the comment
+apologising for it are gone, and the headline says when: "Site down: Margaret Cochran Corbin
+VA Campus from Mon 03 Aug". `POST /actions` returns `n_not_reached`: the Act-now and Find-out
+veterans a limitless team reaches with a person and this capacity reaches with nobody — a
+free verified text is not being reached. It is the same number the board was computing from
+a second uncapped request, and `test_n_not_reached_is_the_second_call_the_board_no_longer_has_to_make`
+pins it to that definition by making both calls and comparing. `limit` cuts the rows and
+nothing else: `n_selected`, `total_eha`, `counts_by_tier`, `n_not_reached`, `baselines` and
+`n_too_late` all describe the whole allocation, and `store.remember` still sees every row so
+`GET /message` answers for rows the caller never rendered. On the fixture panel: 630 selected
+at default capacity with 125 not reached, 144 at call=10, 107 at call=80; `limit=40` gives
+40 rows of 630 with the totals untouched.
+
+`n_not_reached` costs one more greedy pass inside `compare(headroom=True)`, not a second
+allocation. Every candidate is valued once and only the pass repeats — the same thing that
+buys the three baselines — so it is **+5.0% on the request** (min 346 -> 364 ms, 25 interleaved
+runs at 10,000 veterans on a box at load 52). A second `compare()` from the route would have
+been +90%. That is the whole reason it is in the allocator and not in main.py.
+
+**Rahul / `ui`:** three things, all independent.
+1. `FacilityStatus` has a required `date`. `forecast.facilities` is 7x longer, so
+   `Map.tsx:102/146/147` and `Forecast.tsx:52` will show each facility once per day and
+   count "5 down" where they meant "1 down" — they need `.filter(f => f.date === <the day>)`.
+   `Week.tsx:159` (`downSites`) needs the same or a dedupe. **This is a visible wrong number
+   on the Map screen until you do it.** `ui/public/fixtures/forecast.json` is regenerated
+   per-day from `ingest.hazards.assemble` (station 630 goes down 2026-08-03, landfall, and
+   stays down); nothing else in that fixture moved and no other fixture was touched.
+2. `ActionsResponse.n_not_reached` replaces the `UNCAPPED` week load. Delete the second
+   `postActionsWeek` call in `Week.tsx:146` and `boardFor`'s `free` argument: 14 requests
+   become 7. Definition is exactly `boardFor`'s `missed`, including that a `free` bucket
+   action does not count as reached.
+3. `ActionsRequest.limit` is optional and defaults to no limit, so nothing you have changes.
+   Pass `limit: 40` on the week load and the board can say "40 of 6,303" from `n_selected`.
+   `ui/src/lib/types.ts` is yours; I did not touch it.
+
+**Partner / `cohort`, `model`, `eval`:** `compare()` now returns **four** values,
+`(actions, baseline_totals, n_too_late, n_not_reached)`; the fourth is 0 unless you pass
+`headroom=True`, which is not "nobody". `allocate()` is unchanged. I updated the seven
+unpack sites in `tests/test_allocate.py` and `tests/test_schedule.py` — one `, _` each,
+no assertion moved. No contract file changed: `schema.py` and `design.py` are untouched.
+
+Gate: `make check` is red only on `test_the_slider_answers_inside_300ms...`, and it is the
+machine, not this change — the model lane is running a 4-chain fit at 537% CPU and the box
+is at load avg 52-57. A/B through the same test minutes apart: 498 ms median with the
+headroom pass off, 520 ms with it on, both far over the 300 ms budget, i.e. red at HEAD too.
+Everything else passes; re-run it when the fit finishes.

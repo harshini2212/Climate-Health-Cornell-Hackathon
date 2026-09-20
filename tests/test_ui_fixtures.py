@@ -35,7 +35,8 @@ def test_forecast_fixture_is_a_forecast_response() -> None:
         per_day[z.date] = per_day.get(z.date, 0) + 1
     assert set(per_day) == set(fx.dates)
     assert min(per_day.values()) == 178 == max(per_day.values()), "every MODZCTA every day"
-    assert len(fx.facilities) == 14
+    assert len(fx.facilities) == 14 * len(fx.dates), "every facility every day"
+    assert {f.date for f in fx.facilities} == set(fx.dates)
     assert any(f.facility_id == "630" for f in fx.facilities)
 
 

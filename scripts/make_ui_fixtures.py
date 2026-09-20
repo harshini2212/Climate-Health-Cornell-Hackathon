@@ -58,13 +58,10 @@ def _dump(obj, path: Path) -> None:
 
 def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
     hz = schema.read("hazards").filter(pl.col("date").is_in(dates))
-    # FacilityStatus carries no date, so a site counts as down if it is down on any day
-    # of the forecast window: "will this site be there when the veteran needs it?"
+    # One row per facility per day, like the route: a closure is a fact about a day, so the
+    # ribbon can put it on the day it starts rather than over the whole window.
     site = (schema.read("site_status").filter(pl.col("date").is_in(dates))
-                  .group_by("facility_id")
-                  .agg(pl.col("site_down").any(), pl.col("evac_zone").first(),
-                       pl.col("site_dependent_services").first())
-                  .sort("facility_id"))
+                  .sort("facility_id", "date"))
     fac = pl.read_parquet(schema.REFERENCE / "va_facilities_nyc_hazard.parquet")
     site = site.join(fac.select("station_no", "name", "lat", "lon"),
                      left_on="facility_id", right_on="station_no", how="left")
@@ -72,7 +69,11 @@ def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
     zips = [api.ZipHazard(**{k: r[k] for k in zip_fields}) for r in hz.select(zip_fields).to_dicts()]
     facilities = [api.FacilityStatus(**{k: r[k] for k in api.FacilityStatus.model_fields})
                   for r in site.to_dicts()]
-    down = [f.name for f in facilities if f.site_down]
+    #: The first day of the window each site is down, so the banner says when, not just who.
+    down: dict[str, date] = {}
+    for f in facilities:
+        if f.site_down and f.name not in down:
+            down[f.name] = f.date
     alerts = hz.group_by("date").agg(pl.col("flood_warning").any(), pl.col("heat_alert").any(),
                                      pl.col("smoke_alert").any()).sort("date")
     bits = []
@@ -86,7 +87,8 @@ def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
             bits.append(f"smoke {d}")
     headline = "; ".join(dict.fromkeys(bits)) or "No active alerts in the 7-day window"
     if down:
-        headline += f". Site down: {', '.join(down)}"
+        headline += ". Site down: " + ", ".join(
+            f"{name} from {on.strftime('%a %d %b')}" for name, on in down.items())
     return api.ForecastResponse(scenario="sandy_then_heat", day=day_index, dates=dates,
                                 zips=zips, facilities=facilities, headline=headline)
 

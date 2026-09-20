@@ -167,7 +167,7 @@ def test_an_action_whose_do_by_day_has_passed_is_not_offered_and_is_counted() ->
     """A forecast that arrives on the day of the surge cannot buy a booking any more."""
     cohort = _cohort([{"veteran_id": "V1", "ckd_dialysis": True, "n_active_meds": 2}])
     late = _scores({"V1": {"treatment_gap": (0.40, 0.1)}}, day=SURGE)
-    got, _, too_late = compare(late, cohort, DEFAULT_CAPACITY)
+    got, _, too_late, _ = compare(late, cohort, DEFAULT_CAPACITY)
 
     assert got.height > 0, "same-day actions still work and must still be offered"
     assert got["lead_days"].max() == 0
@@ -175,7 +175,7 @@ def test_an_action_whose_do_by_day_has_passed_is_not_offered_and_is_counted() ->
     assert "alt_site_booking" not in got["action"].to_list()
 
     in_time = _window({"V1": {"treatment_gap": (0.40, 0.1)}})
-    _, _, none_late = compare(in_time, cohort, DEFAULT_CAPACITY)
+    _, _, none_late, _ = compare(in_time, cohort, DEFAULT_CAPACITY)
     assert none_late == 0, "five days of warning is enough for every lead time there is"
 
 
