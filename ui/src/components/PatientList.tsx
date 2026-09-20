@@ -1,7 +1,11 @@
 /**
  * The at-risk patient list, in three tiers. Each row shows at a glance how many risk
  * factors flagged the patient and how many actions are suggested; hovering shows them;
- * clicking opens the chart. This is the clinician's workstation, so it shows names.
+ * clicking opens the chart.
+ *
+ * The row carries a handle, never a name: this list sits on the command center, which
+ * hangs in a shared clinical space. The name, the age and the facility open in the hover
+ * card, for the person who has a reason to look.
  *
  * Risk factors come from the veteran card (the posterior's own drivers per need), fetched
  * lazily for the rows on screen and cached, so the list itself renders at once.
@@ -9,9 +13,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getVeteran } from "../lib/api";
-import { ACTION_LABEL, NEED_SHORT, fmtInt, pct } from "../lib/labels";
+import { ACTION_LABEL, NEED_SHORT, fmtInt, handleFor, pct } from "../lib/labels";
 import type { ActionRow, ActionsResponse, VeteranCard } from "../lib/types";
-import type { VeteranFocus } from "../screens/Week";
+import type { VeteranFocus } from "../screens/CommandCenter";
 import { IconArrow } from "./Icons";
 
 const TIER3 = [
@@ -111,7 +115,7 @@ export function PatientList({ resp, onOpen, limit = 8 }: Props) {
               return (
                 <div key={p.veteranId} className={`prow${hover === p.veteranId ? " hov" : ""}`} onMouseEnter={() => setHover(p.veteranId)} onMouseLeave={() => setHover(null)} onClick={() => onOpen({ veteranId: p.veteranId, actionId: p.actions[0].action_id, date: resp.date })} role="button" tabIndex={0}>
                   <span className="pr-rank">{i + 1}</span>
-                  <span className="pr-name"><b>{p.name}</b><span>{p.borough} · {p.modzcta}{top ? ` · ${NEED_SHORT[top.need]} ${pct(top.p_mean)}` : ""}</span></span>
+                  <span className="pr-name"><b>{handleFor(p.name, p.veteranId)}</b><span>{p.borough} · {p.modzcta}{top ? ` · ${NEED_SHORT[top.need]} ${pct(top.p_mean)}` : ""}</span></span>
                   <span className="pr-glance">
                     <span className={`gl${rf && rf.length >= 4 ? " hot" : ""}`} title="Risk factors flagged by the model"><b>{rf ? rf.length : "…"}</b> risk factor{rf && rf.length === 1 ? "" : "s"}</span>
                     <span className="gl" title="Suggested actions"><b>{p.actions.length}</b> action{p.actions.length === 1 ? "" : "s"}</span>

@@ -104,7 +104,7 @@ def test_fixture_mode_cut_obeys_capacity_and_is_monotone() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# The week board's detail views. Week.tsx opens VeteranCard.tsx and Message.tsx
+# The week board's detail views. CommandCenter.tsx opens VeteranCard.tsx and Message.tsx
 # from these two fixtures when the network is off, so they carry the same
 # promises the live routes will have to carry.
 # --------------------------------------------------------------------------- #
@@ -155,7 +155,7 @@ CLINICAL_WORDS = ("copd", "asthma", "ptsd", "dialysis", "insulin", "cancer", "de
 
 
 def test_no_queue_card_line_names_a_diagnosis() -> None:
-    """`headline` is the only reason line Week.tsx puts on the de-identified queue card.
+    """`headline` is the only reason line CommandCenter.tsx puts on the de-identified queue card.
 
     It carries urgency and timing; the condition, the medicine and the service stay in
     `rationale` and `top_driver`, which only VeteranCard.tsx and CareTeam.tsx open.
@@ -184,7 +184,7 @@ def test_the_drilldown_keeps_the_rich_rationale() -> None:
 
 
 def _uncommented(src: str) -> str:
-    """`src` with its comments blanked out. The test below asks what Week.tsx *renders*,
+    """`src` with its comments blanked out. The test below asks what CommandCenter.tsx *renders*,
     and a comment naming a banned field to explain why it is banned renders nothing."""
     src = re.sub(r"/\*.*?\*/", "", src, flags=re.S)
     return re.sub(r"^\s*//.*$", "", src, flags=re.M)
@@ -198,8 +198,8 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
     `handleFor`, and the clinical fields -- driver phrases, conditions, medicines -- stay
     in VeteranCard.tsx behind a click.
     """
-    src = _uncommented((ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8"))
-    body = src.split("export function Week(", 1)[1]
+    src = _uncommented((ROOT / "ui" / "src" / "screens" / "CommandCenter.tsx").read_text(encoding="utf-8"))
+    body = src.split("export function CommandCenter(", 1)[1]
 
     for banned, why in [
         ("top_driver", "driver phrases name conditions and medicines"),
@@ -208,15 +208,33 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
         ("medications", "the medication panel belongs behind the reveal"),
         ("rationale", "it names the service and the driver; the board gets `headline`"),
     ]:
-        assert banned not in body, f"Week.tsx renders {banned!r}: {why}"
-
-    assert "a.headline" in body, "the queue card must still say why it is there"
+        assert banned not in body, f"CommandCenter.tsx renders {banned!r}: {why}"
 
     uses = [ln.strip() for ln in src.splitlines() if "name_display" in ln]
-    assert uses, "Week.tsx no longer builds a handle at all"
     for line in uses:
         assert "handleFor(" in line or "nameDisplay" in line, (
-            f"Week.tsx touches name_display outside handleFor: {line!r}")
+            f"CommandCenter.tsx touches name_display outside handleFor: {line!r}")
+
+
+def test_the_patient_row_is_de_identified_and_the_chart_is_behind_a_reveal() -> None:
+    """The at-risk list is the command center's always-visible surface, so the same rule
+    the queue card used to carry now applies to the row: a handle and a reason, never a
+    name and never a condition. The hover card is the reveal and may carry everything,
+    which is why this asserts the card is gated on hover rather than scanning the file."""
+    src = _uncommented((ROOT / "ui" / "src" / "components" / "PatientList.tsx").read_text(encoding="utf-8"))
+    row = src.split("className={`prow", 1)[1].split("{hover === p.veteranId && (", 1)[0]
+
+    assert "handleFor(" in row, "the row must show a handle, not a name"
+    assert "p.name}" not in row, "the row renders the veteran's name; it belongs in the reveal"
+    for banned in ("top_driver", "conditions", "medications", "rationale"):
+        assert banned not in row, f"the row renders {banned!r}; it belongs in the reveal"
+    assert "ACTION_LABEL" in row, "the row must still say why the veteran is on it"
+
+    # The clinical detail exists, and it is behind the hover.
+    assert "{hover === p.veteranId && (" in src, "the reveal is not gated on hover any more"
+    popup = src.split("{hover === p.veteranId && (", 1)[1]
+    assert "Risk factors" in popup and "{p.name}" in popup, (
+        "the reveal lost the detail it exists to carry")
 
 
 def test_handle_never_leaks_more_than_initials() -> None:
