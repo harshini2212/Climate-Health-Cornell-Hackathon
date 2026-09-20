@@ -446,7 +446,14 @@ Report the rung you reached, its r-hat and what did not converge. A model that s
 failed to fit is worse than a simpler one that did.
 
 ### 6.1 design.py — shared by simulator and model
-Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)`, `lag stacks`, and **binomial cells**: group by `(zip, stratum, date)` where stratum = the tuple of binary vulnerability flags used in interactions, now including `no_caregiver` and `low_assets` (≤ 256 strata; still ~50× fewer rows than Bernoulli). Output `cells.parquet: zip, stratum_id, date, need, n, y`.
+Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)` and `lag stacks`: one row per veteran-day, columns in `design.FEATURES` order.
+
+**The binomial cells moved to `hazard.cells()`** (rung 1, September 2026) and `design.py` was left alone, because the simulator shares it and the cohort lane owns it. Two changes to what this section originally specified, both in the safer direction:
+
+- The grouping key is **the exact design row**, not `(zip, stratum, date)`. The likelihood depends on a veteran-day only through its row of `X`, so identical rows are one cell whatever ZIP or day they came from — which is *exactly* equal to the Bernoulli likelihood rather than approximately, and `tests/test_hazard_toy.py` asserts that against the panel. Measured over the 120-day panel: 1,200,000 veteran-days → **135,743 cells, 8.8×** (and the same 8.8× on the 6M Bernoulli terms — a cell still carries one binomial term per need, not one in total).
+- Grouping is on the **active** columns for the rung, so at rung 1 two veterans who differ only in a medication interaction are one cell.
+
+No `cells.parquet` is written: cells are derived from `cohort × hazards × site_status × outcomes` in about a second, and a cached copy is one more thing that can go stale against `truth.json`.
 
 ### 6.2 hazard.py — NumPyro
 

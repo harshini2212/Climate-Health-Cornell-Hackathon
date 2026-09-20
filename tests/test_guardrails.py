@@ -45,6 +45,53 @@ def test_every_table_matches_its_contract(name: str) -> None:
     schema.validate(table(name), name)
 
 
+def test_no_test_depends_on_whether_make_fit_has_run() -> None:
+    """The same rule as below, for the file a path-literal scan cannot see.
+
+    `eval.recovery.POSTERIOR` is `data/posterior.nc` and it is the *default* argument of
+    `recovery.coefficient_draws`, `recovery.diagnostics` and `report.assemble`. So a test
+    that simply omits `posterior=` reads pipeline state without ever naming a path: it
+    passes on a machine where `make fit` has not run and fails on one where it has, which
+    is exactly what happened when rung 1 landed -- `report.json` grew an r-hat next to
+    `model_rung: 0`, and recovery coverage fell from prior coverage to a fitted model's.
+    Every call site in the suite therefore has to say which it means.
+    """
+    # `assemble` and `coefficient_draws` take `posterior` keyword-only, so it has to be
+    # named. `diagnostics(path)` takes it first and positionally, so only a bare call is a
+    # problem there -- a test that hands it a file it wrote itself is the point.
+    keyword_only = re.compile(r"\b(?:rep\.)?assemble\(|coefficient_draws\(")
+    positional = re.compile(r"\bdiagnostics\(")
+    offenders = []
+    for path in sorted((ROOT / "tests").glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        if "leeward.eval" not in src:
+            continue
+        for call in _call_sites(src, keyword_only):
+            if "posterior=" not in call:
+                offenders.append(f"{path.name}: {call.splitlines()[0].strip()}")
+        for call in _call_sites(src, positional):
+            if call.endswith("()"):
+                offenders.append(f"{path.name}: {call.strip()}")
+    assert not offenders, (
+        "these reach data/posterior.nc through a default argument; pass posterior=None "
+        "(or a tmp_path) so the gate does not depend on whether `make fit` ran: "
+        + "; ".join(offenders))
+
+
+def _call_sites(src: str, pattern: re.Pattern) -> list[str]:
+    """Each match of `pattern` plus the rest of its (possibly wrapped) call, to the ')'."""
+    out = []
+    for m in pattern.finditer(src):
+        depth, i = 0, m.end() - 1
+        while i < len(src):
+            depth += (src[i] == "(") - (src[i] == ")")
+            i += 1
+            if depth == 0:
+                break
+        out.append(src[m.start():i])
+    return out
+
+
 def test_no_test_reads_a_contract_table_out_of_data() -> None:
     """`data/` is pipeline state, not test input, and the gate must not depend on it.
 

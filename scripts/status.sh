@@ -26,6 +26,8 @@ cohort·simulate leeward/cohort/simulate.py
 model·design leeward/model/design.py
 model·score_prior leeward/model/score_prior.py
 model·hazard(NUTS) leeward/model/hazard.py
+model·fit leeward/model/fit.py
+model·score leeward/model/score.py
 decision·eha leeward/decision/eha.py
 decision·allocate leeward/decision/allocate.py
 outreach·messages leeward/outreach/messages.py
@@ -62,6 +64,20 @@ for x in rung:
 PYEOF
 else echo "  no scores yet"; fi
 [ -f data/posterior.nc ] && echo "  posterior.nc present" || echo "  posterior.nc absent (rung 0 needs none)"
+if [ -f report/fit.json ]; then
+  $PY - <<'PYEOF' 2>/dev/null || echo "  fit.json unreadable"
+import json
+f = json.load(open("report/fit.json"))
+d = f["data"]
+print(f"  last fit: rung {f['model_rung']}, {d['veteran_days']:,} veteran-days in "
+      f"{d['cells']:,} cells ({d['reduction']}x), {d['days']} days to {d['last_date']}")
+print(f"  r-hat max {f['rhat_max']:.4f} · {f['divergences']} divergences · "
+      f"ESS min {f['ess_bulk_min']:,.0f} bulk / {f['ess_tail_min']:,.0f} tail · "
+      f"{f['runtime_s']}s")
+print(f"  {len(f['fitted_terms'])} terms fitted, {len(f['carried_terms'])} carried at "
+      f"their priors and not in the prediction")
+PYEOF
+fi
 
 echo
 echo "GATE"
