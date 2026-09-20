@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ScreenKey } from "../App";
 import { IconAlert, IconArrow, IconBolt, IconDrop, IconMail, IconSun } from "../components/Icons";
 import { getForecast, lastSource, postActions, type Source } from "../lib/api";
-import { ACTION_LABEL, TIER_BADGE, TIER_LABEL, fmtDate } from "../lib/labels";
+import { ACTION_LABEL, EHA_EXPECTED, TIER_BADGE, TIER_LABEL, fmtDate } from "../lib/labels";
 import { DEFAULT_CAPACITY, type ActionsResponse, type ForecastResponse } from "../lib/types";
 
 interface DayRow {
@@ -63,15 +63,15 @@ function Spark({ rows, pick, threshold, unit }: { rows: DayRow[]; pick: (r: DayR
   );
 }
 
-export function Forecast({ scenario, onSource, onOpen }: { scenario: string; onSource: (s: Source) => void; onOpen: (s: ScreenKey) => void }) {
+export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string; day?: number; onSource: (s: Source) => void; onOpen: (s: ScreenKey) => void }) {
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [actions, setActions] = useState<ActionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getForecast(scenario, 0).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
+    getForecast(scenario, day).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
     postActions({ date: "", capacity: { ...DEFAULT_CAPACITY }, scenario }).then(setActions).catch((e) => setError(String(e)));
-  }, [scenario, onSource]);
+  }, [scenario, day, onSource]);
 
   const days = useMemo(() => (forecast ? summarise(forecast) : []), [forecast]);
   const down = forecast?.facilities.filter((f) => f.site_down) ?? [];
@@ -94,7 +94,7 @@ export function Forecast({ scenario, onSource, onOpen }: { scenario: string; onS
     landfall ? `A coastal flood warning covers ${landfall.flood} ZIPs on ${fmtDate(landfall.date)}, with ${peakOutage} ZIPs facing an outage and mail delivery disrupted in ${peakMail}.` : "No flood warning in the window.",
     down.length ? `${down.map((d) => d.name).join(", ")} is down: dialysis, infusion and OTP patients there need an alternate site booked before the closure.` : "All 14 VA sites are open.",
     firstHeat ? `A heat alert starts ${fmtDate(firstHeat.date)}, while power is still being restored.` : "No heat alert in the window.",
-    `At ${callsCap} calls today the list averts ${leeward.toFixed(0)} severity-weighted need-days${ratio ? `, ${ratio.toFixed(2)}× calling the oldest patients first` : ""}.`,
+    `At ${callsCap} calls today the list is expected to avert ${leeward.toFixed(0)} severity-weighted need-days${ratio ? `, ${ratio.toFixed(2)}× calling the oldest patients first at the same capacity` : ""}.`,
   ].join(" ");
 
   return (
@@ -116,9 +116,9 @@ export function Forecast({ scenario, onSource, onOpen }: { scenario: string; onS
           <div className="prog" style={{ marginTop: 8 }}><i style={{ width: `${(100 * callsUsed) / callsCap}%` }} /></div>
         </div>
         <div className="stat hero">
-          <div className="k">Harm averted at {callsCap} calls</div>
+          <div className="k">Expected harm averted at {callsCap} calls</div>
           <div className="vrow"><div className="v">{leeward.toFixed(1)}</div>{ratio && <span className="delta up">▲ {ratio.toFixed(2)}×</span>}</div>
-          <div className="s">vs. oldest-first ranking</div>
+          <div className="s" title={EHA_EXPECTED.line}>vs. oldest-first ranking · {EHA_EXPECTED.short}</div>
         </div>
         <div className="stat">
           <div className="k">VA sites down</div>

@@ -75,9 +75,14 @@ report:             ## full eval harness incl. the fairness audit -> report/repo
 # Demo
 # --------------------------------------------------------------------------- #
 
-demo:               ## boot API + UI. Must work with the network off.
+# Which scenario day the board opens on. Unset -- the normal case -- means the UI asks for
+# no day and takes the window `leeward/demo.py` picks: two days in front of landfall. Set it
+# to replay a different beat by hand: `make demo DAY=0` is the calm week nine weeks earlier.
+DAY ?=
+
+demo:               ## boot API + UI, offline. `make demo DAY=0` opens on the calm week.
 	$(PY) -m uvicorn leeward.api.main:app --port 8000 & \
-	  cd ui && npm run dev
+	  cd ui && VITE_DEMO_DAY="$(DAY)" npm run dev
 
 smoke:              ## boot the API and hit every route; fails if any shape is wrong
 	@bash scripts/smoke_demo.sh

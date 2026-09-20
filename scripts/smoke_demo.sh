@@ -38,6 +38,10 @@ DAY=$($PY -c "import polars as pl;print(pl.read_parquet('data/actions.parquet')[
 VET=$($PY -c "import polars as pl;print(pl.read_parquet('data/cohort.parquet')['veteran_id'][0])")
 
 echo "smoke test against http://127.0.0.1:$PORT (network blocked)"
+# No `day`: the board opens where something is happening. A quiet headline here means
+# the demo opens on an empty ribbon, which is the one screen we cannot show first.
+hit GET  "/forecast?scenario=sandy_then_heat" \
+     "len(d['zips'])>100 and 'No active alerts' not in d['headline']"
 hit GET  "/forecast?scenario=sandy_then_heat&day=0" "len(d['zips'])>100"
 hit GET  "/scores?date=$DAY&need=heat"              "len(d['zips'])>0"
 hit GET  "/veteran/$VET?date=$DAY"                  "len(d['needs'])==5"

@@ -124,6 +124,8 @@ export interface VeteranFocus {
 
 interface Props {
   scenario: string;
+  /** Scenario-relative start day; undefined lets the API open on the landfall window. */
+  day?: number;
   onSource: (s: Source) => void;
   /** Clicking a day hands the date to the action list and its capacity slider. */
   onOpenDay: (date: string) => void;
@@ -131,7 +133,7 @@ interface Props {
   onOpenVeteran: (f: VeteranFocus) => void;
 }
 
-export function Week({ scenario, onSource, onOpenDay, onOpenVeteran }: Props) {
+export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Props) {
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [week, setWeek] = useState<ActionsResponse[] | null>(null);
   const [headroom, setHeadroom] = useState<ActionsResponse[] | null>(null);
@@ -141,7 +143,7 @@ export function Week({ scenario, onSource, onOpenDay, onOpenVeteran }: Props) {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const fc = await getForecast(scenario, 0);
+      const fc = await getForecast(scenario, day);
       setForecast(fc);
       const dates = fc.dates.slice(0, 7);
       // Two passes: the real cut, and the same week with capacity removed. The difference
@@ -158,7 +160,7 @@ export function Week({ scenario, onSource, onOpenDay, onOpenVeteran }: Props) {
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [scenario, onSource]);
+  }, [scenario, day, onSource]);
 
   useEffect(() => {
     void load();
@@ -292,8 +294,9 @@ export function Week({ scenario, onSource, onOpenDay, onOpenVeteran }: Props) {
             <span className="rb rb-quiet">Fixtures</span>
             <span>
               Hazards and capacity are per-day; the queue is one modelled day ({week[0].date})
-              repeated, because the offline candidate list is single-day. The live API returns
-              a distinct list per day.
+              repeated, because the offline candidate list is single-day. There is also one
+              forecast window offline, so the day picker in the topbar needs the live API.
+              The live API returns a distinct list per day.
             </span>
           </div>
         )}

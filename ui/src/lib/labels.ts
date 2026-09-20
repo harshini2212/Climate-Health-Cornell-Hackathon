@@ -48,6 +48,26 @@ export const BASELINE_LABEL: Record<string, string> = {
   random: "Random",
 };
 
+/**
+ * Two harm-averted numbers, two labels, so nobody on the floor has to ask which is which.
+ *
+ * `POST /actions` and `make report`'s `decision_quality` disagree by a factor of several
+ * and both are right, because they measure different things. `/actions` holds the
+ * candidates and the capacity fixed and changes only the ordering, so its ratio is what
+ * the model *expects* to gain from ranking. `decision_quality` scores the same choices
+ * against the simulated outcomes on held-out days, so its ratio is what the ranking
+ * actually *realized*. The second is the larger number and the harder claim.
+ */
+export const EHA_EXPECTED = {
+  short: "expected · ranking only",
+  line: "Expected harm averted: the same candidates at the same capacity, only the order changes.",
+} as const;
+
+export const EHA_REALIZED = {
+  short: "realized · vs simulated outcomes",
+  line: "Realized harm averted: the same choices scored against the simulated outcomes on held-out days.",
+} as const;
+
 export const RUNG_LABEL: Record<number, string> = {
   0: "rung 0 · prior-only",
   1: "rung 1 · pooled NUTS",

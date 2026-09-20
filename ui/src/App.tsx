@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { IconCalendar, IconChart, IconHome, IconList, IconMap, IconMessage, IconSearch, IconUser } from "./components/Icons";
-import { postActions, type Source } from "./lib/api";
-import { RUNG_LABEL } from "./lib/labels";
+import { getForecast, postActions, type Source } from "./lib/api";
+import { CHOICES, INITIAL_CHOICE } from "./lib/demo";
+import { EHA_REALIZED, RUNG_LABEL } from "./lib/labels";
 import { DEFAULT_CAPACITY } from "./lib/types";
 import { CareTeam } from "./screens/CareTeam";
 import { Forecast } from "./screens/Forecast";
@@ -60,21 +61,44 @@ export default function App() {
   const [source, setSource] = useState<Source>("fixture");
   const [actNow, setActNow] = useState<number | null>(null);
   const [rung, setRung] = useState<number | null>(null);
+  /**
+   * Which beat the demo is on. `undefined` asks the API for the window it opens on --
+   * two days in front of landfall, decided in leeward/demo.py off the hazards table --
+   * and `0` is the calm week nine weeks earlier. `make demo DAY=n` sets the initial one.
+   */
+  const [choice, setChoice] = useState(INITIAL_CHOICE);
+  const startDay = CHOICES.find((c) => c.key === choice)?.day;
+  /** The first day of that window, once the forecast has said what it is. */
+  const [openDate, setOpenDate] = useState<string | null>(null);
   /** Set when a day on the week ribbon is clicked, so the action list opens on that date. */
   const [day, setDay] = useState<string | null>(null);
   /** Set when a queue card is clicked, so the Veteran card and Message screens have a subject. */
   const [focus, setFocus] = useState<{ veteranId: string; actionId: string; date: string } | null>(null);
   const onSource = useCallback((s: Source) => setSource(s), []);
 
+  // Resolve the opening window once, so every screen and the action list agree on which
+  // day "today" is. A ribbon click overrides it; changing the beat clears that override.
+  useEffect(() => {
+    let live = true;
+    setDay(null);
+    getForecast(scenario, startDay)
+      .then((f) => live && setOpenDate(f.dates[0] ?? null))
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [scenario, startDay]);
+
   // The nav badge on "Action list" is today's Act-now count at default capacity.
   useEffect(() => {
-    postActions({ date: "", capacity: { ...DEFAULT_CAPACITY }, scenario })
+    if (!openDate) return;
+    postActions({ date: openDate, capacity: { ...DEFAULT_CAPACITY }, scenario })
       .then((r) => {
         setActNow(r.counts_by_tier.act_now ?? 0);
         setRung(r.model_rung);
       })
       .catch(() => undefined);
-  }, [scenario]);
+  }, [scenario, openDate]);
 
   const openDay = useCallback((d: string) => {
     setDay(d);
@@ -132,6 +156,17 @@ export default function App() {
               </option>
             ))}
           </select>
+          <select
+            value={choice}
+            onChange={(e) => setChoice(e.target.value)}
+            title="Which week the board opens on. The calm week is the same team, nine weeks earlier."
+          >
+            {CHOICES.map((c) => (
+              <option key={c.key} value={c.key}>
+                {c.label}
+              </option>
+            ))}
+          </select>
           <span className={`pill src ${source}`} title="Where the numbers on screen come from">
             <span className="live" />
             {source === "api" ? "live API" : "fixtures"}
@@ -150,6 +185,7 @@ export default function App() {
           {screen === "week" && (
             <Week
               scenario={scenario}
+              day={startDay}
               onSource={onSource}
               onOpenDay={openDay}
               onOpenVeteran={(f: VeteranFocus) => {
@@ -158,9 +194,9 @@ export default function App() {
               }}
             />
           )}
-          {screen === "forecast" && <Forecast scenario={scenario} onSource={onSource} onOpen={setScreen} />}
-          {screen === "map" && <Map scenario={scenario} onSource={onSource} />}
-          {screen === "careteam" && <CareTeam scenario={scenario} date={day} onSource={onSource} />}
+          {screen === "forecast" && <Forecast scenario={scenario} day={startDay} onSource={onSource} onOpen={setScreen} />}
+          {screen === "map" && <Map scenario={scenario} day={startDay} onSource={onSource} />}
+          {screen === "careteam" && <CareTeam scenario={scenario} date={day ?? openDate} onSource={onSource} />}
           {screen === "veteran" && (
             <VeteranScreen
               focus={focus}
@@ -171,7 +207,7 @@ export default function App() {
           {screen === "message" && (
             <MessageScreen focus={focus} onBack={() => setScreen("veteran")} />
           )}
-          {screen === "report" && <ComingSoon what="Recovery dot-whisker, reliability curves, harm averted vs baselines, ablations, fairness table" lane="eval" />}
+          {screen === "report" && <ComingSoon what={`Recovery dot-whisker, reliability curves, harm averted vs baselines (${EHA_REALIZED.short}), ablations, fairness table`} lane="eval" />}
         </main>
       </div>
     </div>

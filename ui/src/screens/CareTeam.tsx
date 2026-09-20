@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { CapacitySlider } from "../components/CapacitySlider";
 import { HarmCounter } from "../components/HarmCounter";
 import { lastSource, postActions, type Source } from "../lib/api";
-import { ACTION_LABEL, TIER_BADGE, TIER_LABEL } from "../lib/labels";
+import { ACTION_LABEL, EHA_EXPECTED, EHA_REALIZED, TIER_BADGE, TIER_LABEL } from "../lib/labels";
 import { DEFAULT_CAPACITY, TIERS, type ActionsResponse } from "../lib/types";
 
 interface Props {
@@ -61,7 +61,7 @@ export function CareTeam({ scenario, date, onSource }: Props) {
         <div className="stat hero">
           <div className="k">Expected harm averted today</div>
           <div className="vrow"><div className="v"><HarmCounter total={resp.total_eha} /></div></div>
-          <div className="s">severity-weighted need-days · {resp.n_selected} actions</div>
+          <div className="s" title={EHA_EXPECTED.line}>severity-weighted need-days · {resp.n_selected} actions · {EHA_EXPECTED.short}</div>
         </div>
         <div className="stat">
           <div className="k">Calls used</div>
@@ -83,7 +83,12 @@ export function CareTeam({ scenario, date, onSource }: Props) {
           <CapacitySlider value={calls} onCommit={commit} disabled={busy} />
         </div>
         <div className="card">
-          <div className="ch"><h3>Versus the baselines</h3><span className="sp" /><span className="muted" style={{ fontSize: 12 }}>same capacity, different ranking</span></div>
+          <div className="ch"><h3>Versus the baselines</h3><span className="sp" /><span className="muted" style={{ fontSize: 12 }}>{EHA_EXPECTED.short}</span></div>
+          {/* Two harm-averted numbers live in this demo and they are not the same number.
+              Say which one this is on the screen it is on, not in the answer to a question. */}
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            {EHA_EXPECTED.line} The model report carries the other one — {EHA_REALIZED.line.toLowerCase()}
+          </div>
           <div className="bars">
             {[{ name: "leeward", total_eha: resp.total_eha }, ...resp.baselines.filter((b) => b.name !== "leeward")].map((b) => {
               const max = Math.max(resp.total_eha, ...resp.baselines.map((x) => x.total_eha), 1e-9);

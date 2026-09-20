@@ -35,7 +35,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
 
-from leeward import schema
+from leeward import demo, schema
 from leeward.api import schemas as api
 from leeward.api import store
 from leeward.decision import tiers
@@ -133,11 +133,20 @@ def _need_scored_day(scores: pl.DataFrame, day: Date) -> pl.DataFrame:
 # --------------------------------------------------------------------------- #
 
 @app.get("/forecast", response_model=api.ForecastResponse)
-def forecast(scenario: str = SCENARIO, day: int = Query(0, ge=0)) -> Response:
-    """Hazards for the seven days from scenario day `day` (0 = the scenario's first day)."""
+def forecast(scenario: str = SCENARIO, day: int | None = Query(None, ge=0)) -> Response:
+    """Hazards for the seven days from scenario day `day` (0 = the scenario's first day).
+
+    Leave `day` out and the route answers with the window the demo opens on, which
+    `leeward.demo.opening_day` reads off the cached hazards table: two days in front of the
+    first alert. Day 0 of `sandy_then_heat` is 1 June and the storm is on 3 August, so a
+    caller that asks for nothing used to get nine weeks of nothing. `day=0` still means the
+    scenario's first day, and the response says which day it answered with either way.
+    """
     _check_scenario(scenario)
     hazards = store.table("hazards")
     dates = _dates(hazards)
+    if day is None:
+        day = demo.opening_day(hazards, store.table("site_status"), window=FORECAST_DAYS)
     if day >= len(dates):
         raise HTTPException(404, f"day {day} is past the end of the scenario, which has "
                                  f"{len(dates)} days (0 to {len(dates) - 1})")
