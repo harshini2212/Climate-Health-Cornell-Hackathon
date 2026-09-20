@@ -327,6 +327,16 @@ risk outranks an act-now veteran with one sharp high risk. **The spec is under-s
 the proposal promises something else** — §6's tier table says Act now → "Call today, VA care
 team" and Self-serve → "Verified text, automated".
 
+**DECIDED 2026-09-20: (A), shipped in `lane/api-hazard-rules`.** Two things had to change,
+not one. The band alone cost **17.3%** of total EHA — over the 15% bar — because an Act-now
+veteran holds three slots and the band let them take all three before a Find-out veteran got
+one, and second and third actions are valued on residual risk, so they are worth a fraction
+of somebody else's untouched first. Adding a **round** above the band (everyone's first
+action before anyone's second, Act-now first inside each round) costs **5.8%** and serves the
+same Act-now veterans: on the suite's panel, calls to Act-now veterans go 371 → 652. The band
+is applied per **veteran per work day**, not per candidate, which is what keeps capacity
+monotonicity — see `allocate.py`'s docstring. SPEC §7.4 and §7.5 now say all of this.
+
 Two coherent resolutions. Rahul picks:
 
 - **(A) Tier gates the action class.** Expensive/clinical actions are offered act_now first,

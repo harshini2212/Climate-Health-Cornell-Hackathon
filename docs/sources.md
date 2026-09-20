@@ -104,7 +104,7 @@ These are not quotes. They are joins you can re-run; the script is `scripts/fetc
 | The Manhattan VA is in the first evacuation zone | Station **630**, Margaret Cochran Corbin VA Campus, **evacuation zone 1** | `va_facilities_nyc_hazard.parquet` — VHA facility registry × NYC hurricane evacuation zones |
 | Veterans in NYC | **131,195**, of whom **53.5% are 65+** | `acs_veterans_by_zcta.parquet` — ACS 2023 5-year B21001, summed over NYC ZCTAs |
 | NYC residents by race and Hispanic origin | **8,575,512** residents in NYC ZCTAs: **28.3%** Hispanic, **31.1%** non-Hispanic white, **20.9%** non-Hispanic Black, **14.7%** non-Hispanic Asian | `acs_race_by_zcta.parquet` — ACS 2023 5-year B03002, summed over NYC ZCTAs. All residents, not veterans |
-| Electricity-dependent Medicare beneficiaries in NYC | **36,146**; **3,165** on oxygen; **1,948** facility ESRD dialysis | `empower_ny_zip.parquet` — HHS emPOWER, five-borough ZIPs |
+| Electricity-dependent Medicare beneficiaries in NYC | **36,146**; **3,165** receiving oxygen services; **1,948** facility ESRD dialysis. Medicare beneficiaries **living independently in the community**, not all electricity-dependent New Yorkers; the oxygen and dialysis figures are overlapping subsets, not a disjoint tally. Re-verified against the live emPOWER service 2026-09-20, to the unit | `empower_ny_zip.parquet` — HHS emPOWER, five-borough ZIPs. Updates monthly |
 | June 2023 smoke peak | **203.5 µg/m³ PM2.5, AQI 254**, Queens monitor, 7 June 2023 | `airnow_pm25_nyc_smoke2023.parquet` — EPA AirNow daily files |
 | Patients on ≥1 heat-impairing medication | **65%** of the 77 Synthea patients with active meds (**77%** are on a crosswalk medication of *some* hazard); **16%** on the CDC-named ACE-inhibitor/ARB-plus-diuretic pair; 10% on a controlled substance; 9% cold-chain; 12% at ACB ≥ 3 | `med_climate_risk.csv` × `va_drug_class_members.parquet` × `synthea_med_profiles.parquet`, re-derived from the bundles in `tests/test_medications.py` |
 | Vulnerability stacks along the heat gradient | Utility-shutoff threat rises **5.3% → 17.2%** from HVI band 1 to 5; mobility difficulty **9.3% → 18.8%**; lacks transport **6.0% → 16.6%** | `places_zcta_nyc.parquet` × `hvi_by_zcta.parquet` |
@@ -158,12 +158,19 @@ fall risk. Leeward uses the same 0–3 convention in `med_climate_risk.csv`.
   stimulant or methadone is precisely the one the retail workaround does not cover, and so
   needs an earlier, different action.
 
-> VA, *Refill prescriptions and manage medications* — https://www.va.gov/health-care/manage-prescriptions-medications/ ·
-> VA News, *Automated pharmacy means more Veterans get prescriptions faster* — https://news.va.gov/133691/automated-pharmacy-veterans-get-prescriptions/
+> VA PBM, *VA Mail Order Pharmacy* — https://www.pbm.va.gov/pbm/cmop/va_mail_order_pharmacy.asp ·
+> VA News, *Automated pharmacy means more Veterans get prescriptions faster* — https://news.va.gov/133691/automated-pharmacy-veterans-get-prescriptions/ ·
+> VA, *Dallas CMOP Privacy Impact Assessment* (v. 1 Oct 2024) — https://department.va.gov/privacy/wp-content/uploads/sites/5/2026/04/FY26DallasCMOPPIA.pdf
 
-- VA delivers roughly **80% of outpatient prescriptions by mail** through the Consolidated
-  Mail Outpatient Pharmacy network — on the order of **518,000 prescriptions a day**, reaching
-  about **330,000 veterans daily**. CMOP handled ~129.6 million prescriptions in FY2022.
+- VA delivers roughly **80% of outpatient prescriptions by mail** through the seven
+  Consolidated Mail Outpatient Pharmacies — VA News put it at **almost 84%** in August 2024.
+  The CMOP system fills **over 120 million prescriptions a year**, and **over 330,000
+  veterans** receive a package every work day.
+- **Corrected 2026-09-20.** This bullet previously said "518,000 prescriptions a day" and
+  "~129.6 million in FY2022". Neither number is VA's: both trace to an uncited vendor
+  marketing page. VA's own per-day figure (470,000) is FY2016 and is not worth quoting on
+  stage; the PIA's "over 120 million a year" is current and sourced. The 80% share, which is
+  the only one of these Leeward actually depends on, was correct and is unchanged.
 - Mail delivery has failed before for non-climate reasons: the 2020 USPS slowdown produced
   a bipartisan congressional letter about delayed veteran prescriptions
   (https://www.duckworth.senate.gov/news/press-releases/duckworth-durbin-join-tester-peters-in-demanding-postal-service-address-delivery-delays-of-veterans-prescription-drugs).
@@ -183,6 +190,29 @@ fall risk. Leeward uses the same 0–3 convention in `med_climate_risk.csv`.
 - Membership: `/REST/rxclass/classMembers.json?classId=<id>&relaSource=VA&rela=has_VAClass`
   (the `rela` parameter is required; without it the response is `{}`).
 - Reverse lookup: `/REST/rxclass/class/byRxcui.json?rxcui=<code>&relaSource=VA`.
+
+### Outages, equipment and who is in the room
+
+The `unattended_powered_equipment_in_an_outage` rule in `leeward/decision/act_now.yaml` asks
+two things at once — powered equipment, and no caregiver. emPOWER counts the first. It sets
+no multiplier for the second, so the second rests on these:
+
+> Casey et al., *Power outages and community health: a narrative review*, Curr Environ Health
+> Rep 2020;7(4):371–383 — https://pmc.ncbi.nlm.nih.gov/articles/PMC7749027/
+
+- The higher-risk subgroups during an outage are "older adults, **those reliant on
+  electricity-dependent durable medical equipment** (DME, e.g., oxygen concentrators), those
+  unable to evacuate … **those reliant on others to complete activities of daily living**".
+
+> Semenza et al., *Heat-related deaths during the July 1995 heat wave in Chicago*,
+> NEJM 1996;335(2):84–90 — https://pubmed.ncbi.nlm.nih.gov/8649494/
+
+- The strongest risk factors for heat death were being **confined to bed (OR 8.2)** and
+  **living alone (OR 2.3)**; being unable to care for oneself gave **OR 4.1**, and "having
+  social contacts such as group activities or friends in the area was **protective**".
+- This is heat rather than outage, and it is 1995. It is quoted for the direction of the
+  effect, which is the only thing the rule uses: nobody in the home is a risk factor in its
+  own right, on top of the equipment.
 
 ### Policy context
 

@@ -294,6 +294,7 @@ DECISION_INTERFACE = {
     "leeward.decision.eha": [("eha_matrix", None), ("voi", None), ("needs_wide", None)],
     "leeward.decision.allocate": [("allocate", None), ("total_eha", None)],
     "leeward.decision.tiers": [("assign", None)],
+    "leeward.decision.rules": [("load", dict), ("fired", None)],
 }
 
 
@@ -311,9 +312,15 @@ def test_decision_layer_public_interface(module: str, expected: list) -> None:
 
 
 def test_severity_and_tau_are_yaml_backed_not_hardcoded() -> None:
-    """SPEC 7.1 and 7.2: a clinician retunes these without touching code."""
+    """SPEC 7.1, 7.2 and 7.5: a clinician retunes these without touching code.
+
+    `act_now.yaml` belongs in this list for the same reason the other two do, and one more:
+    the four Act-now rules are the four stories the deck is made of, and hard-coding one
+    would put a clinical judgement somewhere no clinician will ever find it.
+    """
     for mod_name, fname in (("leeward.decision.severity", "severity.yaml"),
-                            ("leeward.decision.tau", "tau.yaml")):
+                            ("leeward.decision.tau", "tau.yaml"),
+                            ("leeward.decision.rules", "act_now.yaml")):
         mod = _mod(mod_name)
         path = getattr(mod, "PATH", None)
         assert path is not None and Path(path).name == fname, f"{mod_name}.PATH must point at {fname}"

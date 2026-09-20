@@ -22,7 +22,7 @@ from typing import Any, TypeVar
 import polars as pl
 
 from leeward import schema
-from leeward.decision import severity
+from leeward.decision import rules, severity
 from leeward.decision import tau as tau_table
 
 T = TypeVar("T")
@@ -101,6 +101,13 @@ def leads() -> dict[str, int]:
     """
     return _cached(tau_table.PATH, tau_table.leads, f"{tau_table.PATH.name} is missing",
                    key="leads")
+
+
+def act_now_rules() -> dict:
+    """The four hazard-triggered Act-now rules, cached like `tau()` and for the same reason:
+    `act_now.yaml` carries a paragraph of prose per rule and re-parsing it inside the
+    capacity slider is time that request does not have."""
+    return _cached(rules.PATH, rules.load, f"{rules.PATH.name} is missing")
 
 
 def report() -> dict | None:
