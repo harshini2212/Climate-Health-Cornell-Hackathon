@@ -1,0 +1,2 @@
+# The committed UI bundle is build output: collapse it in diffs and keep it out of language stats.
+ui/dist/** -diff linguist-generated=true

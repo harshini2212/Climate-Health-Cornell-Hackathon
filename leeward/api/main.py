@@ -12,6 +12,10 @@ Response bodies are the frozen models in `schemas.py`. The large ones are built 
 and validated against the model in one pass, then serialized straight to JSON, which is the
 same contract as constructing every row by hand and several times faster.
 
+If `ui/dist` exists (it is committed; `make ui` rebuilds it) the app also serves it at `/`, and
+answers `/api/*` as `/*`, so `make demo` is this one process and needs neither Node nor a dev
+server. Routes are declared first and the static mount last, so no route is ever shadowed.
+
 What is honest about the parameters the models carry but the data cannot yet honour:
 
 * `scenario` -- one hazards table is cached and it does not record which scenario built it, so
@@ -27,13 +31,16 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date as Date
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from leeward import demo, schema
 from leeward.api import schemas as api
@@ -50,6 +57,9 @@ log = logging.getLogger("uvicorn.error")
 SCENARIO = "sandy_then_heat"
 PRIOR_SCALE = 1.0
 FORECAST_DAYS = 7
+
+#: The committed UI bundle (`make ui` rebuilds it). Served at `/` when it is there.
+UI_DIST = schema.ROOT / "ui" / "dist"
 
 #: name -> the cohort column a team working "by the book" sorts on, highest first.
 #: `_random` is added per request from a seed keyed by the date, so the same click gives the
@@ -84,6 +94,30 @@ app = FastAPI(
 # The UI proxies /api in dev; this covers a build pointed straight at :8000 (VITE_API_URL).
 app.add_middleware(CORSMiddleware, allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
                    allow_methods=["GET", "POST"], allow_headers=["content-type"])
+
+
+class _StripApiPrefix:
+    """`/api/forecast` is answered as `/forecast`.
+
+    The UI calls `/api/*`. Under `npm run dev`, Vite's proxy strips the prefix before the request
+    reaches this app (ui/vite.config.ts); the built bundle is served by this app itself, so the
+    same rewrite has to happen here. Doing it on the path rather than per route means a bundle
+    built with any `VITE_API_URL` still reaches the API instead of quietly answering from fixtures.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] in ("http", "websocket") and (
+                scope["path"] == "/api" or scope["path"].startswith("/api/")):
+            scope = {**scope, "path": scope["path"][4:] or "/"}
+            if "raw_path" in scope:
+                scope["raw_path"] = scope["raw_path"][4:] or b"/"
+        await self.app(scope, receive, send)
+
+
+app.add_middleware(_StripApiPrefix)
 
 
 @app.exception_handler(store.DataUnavailable)
@@ -468,3 +502,24 @@ def export(date: Date) -> Response:
     sheet = partner_sheet(actions=plan, cohort=store.table("cohort"))
     return Response(sheet.write_csv(), media_type="text/csv", headers={
         "Content-Disposition": f'attachment; filename="partner_sheet_{date}.csv"'})
+
+
+# --------------------------------------------------------------------------- #
+# The UI, if it has been built -- keep this last
+# --------------------------------------------------------------------------- #
+
+def mount_ui(target: FastAPI, dist: Path = UI_DIST) -> bool:
+    """Serve the built UI at `/`, so the demo is one process with no dev server.
+
+    A mount at `/` matches every path, so it has to come after every route above: routes are
+    tried in declaration order and the API must win. The UI has no client-side router, which
+    is why plain static serving (no index.html fallback) is enough.
+    """
+    if not (dist / "index.html").is_file():
+        log.warning("no built UI at %s; the API is up, the page is not (run `make ui`)", dist)
+        return False
+    target.mount("/", StaticFiles(directory=dist, html=True), name="ui")
+    return True
+
+
+mount_ui(app)

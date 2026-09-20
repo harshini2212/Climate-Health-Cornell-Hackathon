@@ -15,6 +15,7 @@ scenario moves and nobody moves the demo with it.
 from __future__ import annotations
 
 import re
+import subprocess
 from datetime import date
 from pathlib import Path
 
@@ -194,5 +195,18 @@ def test_make_demo_can_be_pinned_to_a_day() -> None:
     """`make demo DAY=0` is how the calm week is reached without editing a file."""
     makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
     body = makefile.split("\ndemo:", 1)[1].split("\n\n", 1)[0]
-    assert "VITE_DEMO_DAY" in body, "make demo must pass DAY through to the UI"
+    dev = makefile.split("\ndemo-dev:", 1)[1].split("\n\n", 1)[0]
+    assert "?day=$(DAY)" in body, "make demo must pass DAY through to the built bundle"
+    assert "VITE_DEMO_DAY" in dev, "make demo-dev must pass DAY through to the Vite dev server"
     assert re.search(r"^DAY\s*\?=", makefile, re.M), "DAY must be overridable on the command line"
+
+
+def test_a_built_bundle_takes_the_pinned_day_from_the_url() -> None:
+    """`VITE_DEMO_DAY` is read when Vite builds, so it cannot steer the committed ui/dist.
+    `make demo DAY=0` therefore prints `/?day=0`, and the UI reads it at runtime."""
+    src = (UI / "lib" / "demo.ts").read_text(encoding="utf-8")
+    assert re.search(r'URLSearchParams\(window\.location\.search\)\.get\("day"\)', src), (
+        "demo.ts no longer reads ?day= from the URL, so `make demo DAY=0` opens the wrong week")
+    out = subprocess.run(["make", "-n", "demo", "DAY=0"], cwd=ROOT, capture_output=True,
+                         text=True).stdout
+    assert "?day=0" in out, f"`make demo DAY=0` does not tell you the URL that pins the day:\n{out}"
