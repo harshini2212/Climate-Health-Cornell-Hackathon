@@ -347,6 +347,31 @@ def build_messages(cohort: pl.DataFrame, candidates: list[dict]) -> dict:
         out[aid] = msg.model_dump(mode="json")
     return out
 
+def build_report(scores: pl.DataFrame) -> dict:
+    """ReportResponse for the Model report screen.
+
+    Until leeward/eval/report.py assembles the full report, this carries what has actually
+    been run: the rung, and decision quality from report/decision_quality.csv if
+    `python -m leeward.eval.decision_quality` has produced it (mean realised harm averted
+    per day, by K and strategy). Every other section stays empty and the screen says so;
+    an empty fairness table means "not audited", never "passed".
+    """
+    from datetime import datetime
+
+    rows = []
+    csv = ROOT / "report" / "decision_quality.csv"
+    if csv.exists():
+        tidy = pl.read_csv(csv)
+        agg = (tidy.group_by("k", "strategy").agg(pl.col("harm_averted").mean())
+                   .sort("k", "strategy"))
+        rows = [api.DecisionQualityRow(k=int(r["k"]), strategy=r["strategy"],
+                                       harm_averted=round(float(r["harm_averted"]), 3))
+                for r in agg.to_dicts()]
+    resp = api.ReportResponse(model_rung=int(scores["model_rung"][0]), decision_quality=rows,
+                              generated_at=datetime.now().isoformat(timespec="minutes") if rows else None)
+    return resp.model_dump(mode="json")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7, help="forecast window length")
@@ -393,6 +418,12 @@ def main(argv: list[str] | None = None) -> int:
     _dump(cands, OUT / "actions_candidates.json")
     _dump(build_veterans(cohort, scores, cands["candidates"], day), OUT / "veterans.json")
     _dump(build_messages(cohort, cands["candidates"]), OUT / "messages.json")
+    report = build_report(scores)
+    _dump(report, OUT / "report.json")
+    if report["decision_quality"] and not (ROOT / "report" / "report.json").exists():
+        # The API serves report/report.json; give it the same partial report so the live
+        # screen and the offline screen agree. `make report` overwrites this.
+        _dump(report, ROOT / "report" / "report.json")
     return 0
 
 

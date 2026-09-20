@@ -1,4 +1,4 @@
-/** Plain-language labels shared by every screen. */
+/** Plain-language labels shared by every screen. The UI never shows a raw enum. */
 
 export const NEED_LABEL: Record<string, string> = {
   breathing: "Breathing flare-up",
@@ -6,6 +6,14 @@ export const NEED_LABEL: Record<string, string> = {
   mental: "Mental-health crisis",
   treatment_gap: "Treatment or medication gap",
   access_loss: "Loss of access to care",
+};
+
+export const NEED_SHORT: Record<string, string> = {
+  breathing: "Breathing",
+  heat: "Heat",
+  mental: "Mental health",
+  treatment_gap: "Treatment gap",
+  access_loss: "Access to care",
 };
 
 export const ACTION_LABEL: Record<string, string> = {
@@ -41,6 +49,25 @@ export const TIER_BADGE: Record<string, string> = {
   everyday: "rb rb-quiet",
 };
 
+export const OWNER_LABEL: Record<string, string> = {
+  care_team: "Care team",
+  pharmacist: "Pharmacist",
+  partner: "Partner",
+  automated: "Automated",
+};
+
+export const BUCKET_LABEL: Record<string, string> = {
+  call: "calls",
+  refill: "refills",
+  ride: "rides",
+  booking: "bookings",
+  evac: "evacuation slots",
+  partner_slot: "partner slots",
+  pharmacist_slot: "pharmacist slots",
+  va_fill: "VA fills",
+  free: "texts",
+};
+
 export const BASELINE_LABEL: Record<string, string> = {
   leeward: "Leeward",
   rank_by_age: "Oldest first",
@@ -69,13 +96,41 @@ export const EHA_REALIZED = {
 } as const;
 
 export const RUNG_LABEL: Record<number, string> = {
-  0: "rung 0 · prior-only",
-  1: "rung 1 · pooled NUTS",
-  2: "rung 2 · interactions + SiteDown",
-  3: "rung 3 · ICAR + latent dose",
+  0: "Rung 0 · prior-only",
+  1: "Rung 1 · pooled NUTS",
+  2: "Rung 2 · interactions + SiteDown",
+  3: "Rung 3 · ICAR + latent dose",
 };
 
-export function fmtDate(iso: string): string {
-  const d = new Date(iso + "T00:00:00");
-  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+const DOW = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** ISO date -> local Date, so a column never slips a day across time zones. */
+export function parseDay(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
+export const dayName = (iso: string) => DOW[parseDay(iso).getDay()];
+export const dayLabel = (iso: string) => {
+  const d = parseDay(iso);
+  return `${d.getDate()} ${MON[d.getMonth()]}`;
+};
+/** "Mon 3 Aug" */
+export const fmtDate = (iso: string) => `${dayName(iso)} ${dayLabel(iso)}`;
+
+export const fmtInt = (n: number) => n.toLocaleString("en-US");
+export const fmt1 = (n: number) => n.toFixed(1);
+export const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
+
+/**
+ * "W.O. · 4471". A board on a wall in a shared clinical space shows a handle, never a
+ * name. The full card is one click away for the person who needs it.
+ */
+export function handleFor(nameDisplay: string, veteranId: string): string {
+  const initials = nameDisplay.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join(".");
+  const digits = veteranId.replace(/\D/g, "").slice(-4) || veteranId.slice(-4);
+  return `${initials ? `${initials}.` : "—"} · ${digits}`;
+}
+
+export const initialsOf = (name: string) =>
+  name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]?.toUpperCase()).join("");
