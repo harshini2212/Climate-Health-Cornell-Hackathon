@@ -61,9 +61,10 @@ cohort: hazards     ## 10k synthetic veterans + truth.json + 120 days of outcome
 	$(PY) -m leeward.cohort.build
 	$(PY) -m leeward.cohort.simulate
 
-# Scoring is whichever scorer exists, and `scripts/baseline.py` records the same two stages.
-# `model/score.py` -- the posterior scorer -- takes over from the rung-0 `model/score_prior.py`
-# the day it lands, and neither this target nor `make baseline` needs an edit for that.
+# Scoring is two stages, the same two `scripts/baseline.py` records. `model/score.py` -- the
+# posterior scorer -- takes over from the rung-0 `model/score_prior.py` the day it lands, with
+# no edit here. baseline.py names its stages outright, so that one does need an edit; whoever
+# lands score.py should make the two agree, or a recorded row describes a run nobody made.
 SCORER := $(if $(wildcard leeward/model/score.py),leeward.model.score,leeward.model.score_prior)
 
 # `make fit` has nothing to run until the model lane lands `model/fit.py` (SPEC 6.0, rung 1).
