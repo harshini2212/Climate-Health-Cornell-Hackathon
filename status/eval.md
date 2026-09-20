@@ -117,11 +117,16 @@ columns are pooled over the window. Per-day selection — the same argument as w
 gives heat 10.7x, not 18.2x; the pooled figure assumes a month of call budget banked for the
 heat wave. Needs with no day effect are identical either way, which is what confirms it.
 
-**Committed with one red test, deliberately, and here is the evidence.**
-`test_api.py::test_the_slider_answers_inside_300ms_at_ten_thousand_veterans` failed at a 424 ms
-median (budget 300; the test's own comment records 127 ms on an idle machine). It is load, not
-this diff: `leeward/api/**` has **zero** runtime imports of `leeward.eval`, so nothing here is
-reachable from POST /actions, and the machine was at load average 22→66 with the model lane
-running `leeward.model.fit --chains 4` at ~400% CPU and a cohort worktree running `score_prior`
-at ~320%. Lint and every other test pass. **Re-run it on a quiet machine before the demo** —
-if it is still red then, it is a real regression from some other lane and not from this one.
+**The slider perf test, and what it was actually measuring.** Through this task
+`test_api.py::test_the_slider_answers_inside_300ms_at_ten_thousand_veterans` was red at a
+424 ms median (budget 300; its own comment records 127 ms idle) while the model lane ran
+`leeward.model.fit --chains 4` at ~400% CPU and a cohort worktree ran `score_prior` at ~320%,
+load average 22-66. It stayed red at a 404 ms median on a reading of 5.48 load average, which
+looked like a refutation -- but that was the 1-minute figure decaying while the fit was still
+finishing (5-min 17.4, 15-min 30.7) and the machine still thrashing. **Once both jobs actually
+exited it passes, three runs out of three, at load average 16-29.** So it is contention, as the
+import graph said it had to be: `leeward/api/**` has zero runtime imports of `leeward.eval`, so
+nothing in this lane is reachable from POST /actions.
+Worth writing down because the 1-minute load average lies on the way down: it read "quiet"
+while a 400%-CPU job was still unwinding. Wait for the process to be gone, not for the number
+to drop, before trusting any timing on this box.
