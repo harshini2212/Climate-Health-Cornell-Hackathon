@@ -211,6 +211,60 @@ def test_veterans_with_a_gap_are_less_certain_than_veterans_without(
 
 
 # --------------------------------------------------------------------------- #
+# Imputing a gap from what the record does have
+# --------------------------------------------------------------------------- #
+
+def test_a_missing_field_is_imputed_from_this_veterans_own_neighbourhood(
+        cohort: pl.DataFrame) -> None:
+    """Not from one population rate.
+
+    `home_ac` is the case that matters: among the records that have it, P(no AC) runs from
+    about 0.04 in a cool, resourced ZIP to about 0.31 in a hot one where PLACES says people
+    cannot afford to run what they own. Pooling that into a single number would understate
+    exactly the veterans the fairness audit watches, and would do it by discarding per-ZIP
+    numbers that are already in `data/reference/`.
+    """
+    unknowns = {u.field: u for u in score_prior._unknowns(cohort)}
+    assert "home_ac" in unknowns, "home_ac is not being marginalised over at all"
+    u = unknowns["home_ac"]
+    p_no_ac = u.weights[:, u.values.index(False)]
+
+    assert p_no_ac.max() - p_no_ac.min() > 0.05, (
+        f"P(no AC) spans only {p_no_ac.min():.3f}-{p_no_ac.max():.3f} across the panel, so "
+        f"it is being imputed from one pooled rate -- see the boolean-vs-text cell-key bug "
+        f"this test was written for, which failed silently by matching no cell at all")
+    assert u.given, "no conditioning columns were chosen"
+
+
+def test_every_imputed_rate_is_a_probability(cohort: pl.DataFrame) -> None:
+    for u in score_prior._unknowns(cohort):
+        w = u.weights
+        assert w.shape == (cohort.height, len(u.values)), f"{u.field}: wrong shape {w.shape}"
+        assert (w >= 0).all(), f"{u.field}: negative weight"
+        assert w.sum(axis=1) == pytest.approx(1.0), f"{u.field}: rows do not sum to 1"
+
+
+def test_the_imputed_rate_tracks_the_rate_it_cannot_see(cohort: pl.DataFrame) -> None:
+    """Held to the truth column, which the scorer may not read but the test may.
+
+    The imputation only sees the ~80% of records that kept their `home_ac`; this checks it
+    lands on the rate the whole panel actually has, cell by cell. It is the test that says
+    the conditioning is doing real work rather than reproducing the marginal with extra steps.
+    """
+    unknowns = {u.field: u for u in score_prior._unknowns(cohort)}
+    u = unknowns["home_ac"]
+    per_cell = (cohort.with_columns(
+                    pl.Series("imputed", u.weights[:, u.values.index(False)]))
+                  .group_by("hvi", "low_assets")
+                  .agg(pl.col("imputed").mean(),
+                       (~pl.col("home_ac")).mean().alias("truth"), pl.len())
+                  .filter(pl.col("len") >= 50))
+    assert per_cell.height >= 4, "too few populated cells to check"
+    err = (per_cell["imputed"] - per_cell["truth"]).abs().max()
+    assert err < 0.05, f"imputed rate is off the true cell rate by {err:.3f}"
+
+
+# --------------------------------------------------------------------------- #
 # What the gap is worth: p_gap_lo / p_gap_hi and the tier that spends a call on them
 # --------------------------------------------------------------------------- #
 

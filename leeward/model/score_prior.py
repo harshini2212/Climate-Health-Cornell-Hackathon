@@ -84,13 +84,28 @@ _PHRASES = [design.TERMS[j].phrase for j in _DRIVER_TERMS]
 # call on the first and not the second.
 
 
+#: Observed columns a hidden field may be conditioned on when its own value is missing.
+#: Every one is either a real per-ZIP number from `data/reference/` or a fact the record
+#: always carries -- never another hidden field, and never the truth column being imputed.
+CONDITION_ON = ("hvi", "low_assets", "transport_barrier", "mobility_impaired",
+                "stormwater_flooded_frac", "evac_zone", "income_band", "borough", "age")
+CONDITION_COLS = 2          # hvi x low_assets is the real structure; 1 misses low_assets
+CONDITION_BINS = 4          # quartiles for the continuous ones
+CONDITION_SHRINK = 20.0     # pseudo-counts pulling a thin cell back toward the marginal
+
+
 @dataclass(frozen=True)
 class _Unknown:
-    """One hidden field: who is missing it, what it could be, and how often."""
+    """One hidden field: who is missing it, what it could be, and how likely each is."""
     field: str
     hidden: np.ndarray      # (n_veterans,) bool
     values: tuple           # candidate values; values[0] is the stand-in in the seen cohort
-    weights: np.ndarray     # (n_values,) population rate over the veterans who do have it
+    #: (n_veterans, n_values) -- P(value | this veteran's observed covariates), estimated
+    #: from the veterans who do have the field. Per veteran, not one population rate: see
+    #: `_conditional_weights`.
+    weights: np.ndarray
+    #: the columns that rate was conditioned on, for `main` to print
+    given: tuple = ()
 
 
 @dataclass(frozen=True)
@@ -113,12 +128,93 @@ def _design_reads(field: str) -> bool:
     return any(field in e.meta.root_names() for t in design.TERMS for e in t.exprs)
 
 
+def _bin(s: pl.Series) -> pl.Series:
+    """A column as a conditioning key: continuous ones cut into quartiles, the rest as-is."""
+    if s.dtype.is_numeric() and s.n_unique() > CONDITION_BINS * 2:
+        r = s.rank("ordinal") * CONDITION_BINS // (s.len() + 1)
+        return r.cast(pl.Utf8)
+    return s.cast(pl.Utf8).fill_null("?")
+
+
+def _conditional_weights(cohort: pl.DataFrame, obs: str,
+                         values: tuple) -> tuple[np.ndarray, tuple[str, ...]]:
+    """P(value | this veteran's observed covariates), estimated off the records that have it.
+
+    Imputing from the *unconditional* rate is the textbook mistake, and here it is not a
+    small one. `home_ac` is missing for a fifth of the panel, and among the records that
+    have it, P(no AC) runs from 0.04 in a cool, resourced ZIP to 0.31 in a hot one where
+    PLACES says people cannot afford to run what they own -- an eightfold spread that a
+    single population rate flattens. Flattening it would understate the risk of exactly the
+    veterans the fairness audit watches, and it would do it by throwing away per-ZIP numbers
+    that are sitting in `data/reference/`, which `CLAUDE.md` forbids outright.
+
+    Worth knowing before reading a baseline diff against this: `harm_averted_k40` is not
+    precise to a percent. Marginal, one conditioning column and two give 16.31, 16.25 and
+    16.14 -- all three defensible, spanning 1% -- off `p_mean` changes averaging 5e-05. The
+    allocator is greedy under a capacity cap, so a hair's-breadth reordering reshuffles who
+    makes the cut. `CONDITION_COLS` is set from which one recovers the true per-cell rate,
+    not from which one scores best; picking it off the metric would be fitting the metric.
+
+    So: pick the `CONDITION_COLS` observed columns whose cells move the rate most, and read
+    the rate off those cells, shrunk toward the marginal by `CONDITION_SHRINK` pseudo-counts
+    so a thin cell cannot invent a confident number. The veterans being imputed have these
+    covariates -- that is what makes them conditionable -- so every row gets a cell.
+    """
+    seen = cohort.filter(pl.col(obs).is_not_null())
+    # Values are carried as their index in `values`, never as text: polars renders a boolean
+    # as "true" where Python renders it "True", and a mismatch there fails silently by
+    # missing every cell and falling back to the marginal -- which looks exactly like a
+    # field that genuinely does not vary. It did.
+    code = {v: i for i, v in enumerate(values)}
+    seen_code = seen[obs].replace_strict(list(code), list(code.values()),
+                                         return_dtype=pl.Int32)
+    counts = np.bincount(seen_code.to_numpy(), minlength=len(values)).astype(float)
+    marginal = counts / counts.sum()
+
+    usable = [c for c in CONDITION_ON if c in cohort.columns and cohort[c].n_unique() > 1]
+    keys = {c: _bin(cohort[c]) for c in usable}
+    is_seen = cohort[obs].is_not_null()
+
+    def spread(col: str) -> float:
+        """How much this column moves the rate: the cell rates' count-weighted variance."""
+        cell = (pl.DataFrame({"k": keys[col].filter(is_seen), "v": seen_code})
+                  .group_by("k").agg((pl.col("v") == 0).mean().alias("p"),
+                                     pl.len().alias("n")))
+        p, n = cell["p"].to_numpy(), cell["n"].to_numpy().astype(float)
+        return float(np.average((p - np.average(p, weights=n)) ** 2, weights=n))
+
+    given = tuple(sorted(usable, key=spread, reverse=True)[:CONDITION_COLS])
+    if not given:
+        return np.tile(marginal, (cohort.height, 1)), ()
+
+    key_all = (pl.DataFrame({c: keys[c] for c in given})
+                 .select(pl.concat_str(given, separator="|").alias("k"))["k"])
+    tab = (pl.DataFrame({"k": key_all.filter(is_seen), "v": seen_code})
+             .group_by("k", "v").len()
+             .pivot(on="v", index="k", values="len")
+             .fill_null(0))
+
+    cells = {k: i for i, k in enumerate(tab["k"].to_list())}
+    raw = np.stack([tab[str(i)].to_numpy().astype(float) if str(i) in tab.columns
+                    else np.zeros(tab.height) for i in range(len(values))], axis=1)
+    # Shrink toward the marginal, then normalise: a cell of three people stays near it.
+    smoothed = raw + CONDITION_SHRINK * marginal
+    smoothed /= smoothed.sum(axis=1, keepdims=True)
+
+    idx = np.array([cells.get(k, -1) for k in key_all.to_list()])
+    out = np.tile(marginal, (cohort.height, 1))
+    out[idx >= 0] = smoothed[idx[idx >= 0]]
+    return out, given
+
+
 def _unknowns(cohort: pl.DataFrame) -> list[_Unknown]:
     """The hidden fields worth marginalising over, with their population rates.
 
     Rates come from the veterans whose value *is* on file, not from a constant in this file:
     the scorer is not allowed to know the truth column, and a hand-written rate would drift
-    from the cohort the moment either changed.
+    from the cohort the moment either changed. They are conditioned on what the record does
+    have, per veteran, rather than pooled into one population number -- `_conditional_weights`
+    says why that distinction is not cosmetic here.
     """
     out = []
     for field in missingness.HIDDEN_FIELDS:
@@ -129,10 +225,9 @@ def _unknowns(cohort: pl.DataFrame) -> list[_Unknown]:
         seen = cohort[obs].drop_nulls()
         if not hidden.any() or seen.is_empty():
             continue
-        counts = seen.value_counts(sort=True)
-        values = tuple(counts[obs].to_list())
-        weights = counts["count"].to_numpy().astype(float)
-        out.append(_Unknown(field, hidden, values, weights / weights.sum()))
+        values = tuple(seen.value_counts(sort=True)[obs].to_list())
+        weights, given = _conditional_weights(cohort, obs, values)
+        out.append(_Unknown(field, hidden, values, weights, given))
     return out
 
 
@@ -163,8 +258,12 @@ def _draw_unknowns(unknowns: list[_Unknown], n_draws: int, seed: int) -> list[np
     for u in unknowns:
         rng = missingness.stream(seed, f"marginalise_{u.field}")
         pick = np.zeros((u.hidden.size, n_draws), dtype=np.int8)
-        pick[u.hidden] = rng.choice(len(u.values), size=(int(u.hidden.sum()), n_draws),
-                                    p=u.weights)
+        # Each veteran draws from their own conditional distribution, so this is an inverse
+        # CDF per row rather than one `rng.choice(p=...)` over a shared vector.
+        cdf = np.cumsum(u.weights[u.hidden], axis=1)            # (n_hidden, n_values)
+        cdf[:, -1] = 1.0
+        draw = rng.random((int(u.hidden.sum()), n_draws))
+        pick[u.hidden] = (draw[:, :, None] >= cdf[:, None, :]).sum(axis=2).astype(np.int8)
         picks.append(pick)
     return picks
 
@@ -272,7 +371,9 @@ def _summarise(d: design.Design, B_flat: np.ndarray, B_mean: np.ndarray,
             for c, cand in enumerate(m.deltas, start=1):
                 if cand is not None:
                     cols, delta = cand
-                    X_exp[:, cols] += m.unknown.weights[c] * delta
+                    # This veteran's own P(value), not the panel's.
+                    w = m.unknown.weights[d.vet_index, c][:, None]
+                    X_exp[:, cols] += w * delta
 
     contrib = design.term_contributions(X_exp, B_mean)[:, _DRIVER_TERMS, :]   # (N, T', K)
     contrib = contrib.transpose(0, 2, 1).reshape(n * _K, -1)                 # (N*K, T')
