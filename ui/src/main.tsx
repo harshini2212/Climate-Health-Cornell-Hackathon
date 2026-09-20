@@ -6,6 +6,7 @@ import "@fontsource/inter/600.css";
 import "@fontsource/inter/700.css";
 import "./design/template.css";
 import "./design/leeward.css";
+import "./design/storm.css";
 import App from "./App";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(

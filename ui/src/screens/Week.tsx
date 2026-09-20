@@ -1,20 +1,25 @@
 /**
- * The week board, the demo's opening screen. A care team glances at it and asks two
- * questions: what does the week look like, and who do I reach first. The ribbon answers
- * the first for every day; the queue answers the second for the day selected.
+ * The week board, the demo's opening screen and the one on the big screen.
  *
- * The queue is de-identified: a handle, the action, the owner. Names, conditions, driver
- * phrases and the rationale sentence live on the veteran card, one click away, because
- * this screen hangs in a shared clinical space.
+ * The storm band at the top says the one thing the room needs to know, with a countdown
+ * to it, the numbers that matter this week counting up, and the seven days as a hazard
+ * timeline. Below it: the queue for the selected day, de-identified, and a live map of
+ * expected need that re-colours as the day changes.
+ *
+ * The queue shows a handle, the action, the owner and the card-safe headline. Names,
+ * conditions, driver phrases and the full rationale live on the veteran card, one click
+ * away, because this screen hangs in a shared clinical space.
  *
  * Loading order matters on stage: today's queue lands first, then the other six days
  * fill in behind it, two at a time, because the API allocates one day at a time.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { IconAlert, IconArrow, IconBuilding } from "../components/Icons";
+import { CountUp } from "../components/CountUp";
+import { IconArrow, IconBuilding } from "../components/Icons";
+import { NeedMap } from "../components/NeedMap";
 import { getForecast, lastSource, postActions, postActionsWeek, type Source } from "../lib/api";
-import { ACTION_LABEL, BUCKET_LABEL, OWNER_LABEL, TIER_BADGE, TIER_LABEL, dayLabel, dayName, fmtDate, fmtInt, handleFor } from "../lib/labels";
+import { ACTION_LABEL, BUCKET_LABEL, NEED_LABEL, OWNER_LABEL, TIER_BADGE, TIER_LABEL, dayLabel, dayName, fmtDate, fmtInt, handleFor } from "../lib/labels";
 import { DEFAULT_CAPACITY, type ActionRow, type ActionsResponse, type Capacity, type ForecastResponse, type ZipHazard } from "../lib/types";
 
 /** Capacity high enough that nothing is cut. The gap to the real cut is the honest half. */
@@ -31,13 +36,14 @@ interface DayHazard {
   surge: number;
   outage: number;
   maxHeatIndex: number;
+  meanHeatIndex: number;
   maxPm25: number;
   evacZone: number;
 }
 
 function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
-  const byDate = new Map<string, DayHazard>();
-  for (const d of dates) byDate.set(d, { date: d, heat: false, smoke: false, flood: false, surge: 0, outage: 0, maxHeatIndex: 0, maxPm25: 0, evacZone: 0 });
+  const byDate = new Map<string, DayHazard & { n: number; sum: number }>();
+  for (const d of dates) byDate.set(d, { date: d, heat: false, smoke: false, flood: false, surge: 0, outage: 0, maxHeatIndex: 0, meanHeatIndex: 0, maxPm25: 0, evacZone: 0, n: 0, sum: 0 });
   for (const z of zips) {
     const d = byDate.get(z.date);
     if (!d) continue;
@@ -49,8 +55,13 @@ function summarise(dates: string[], zips: ZipHazard[]): DayHazard[] {
     d.maxHeatIndex = Math.max(d.maxHeatIndex, z.heat_index_max_f);
     d.maxPm25 = Math.max(d.maxPm25, z.pm25);
     d.evacZone = Math.max(d.evacZone, z.evac_zone_ordered);
+    d.n += 1;
+    d.sum += z.heat_index_max_f;
   }
-  return dates.map((d) => byDate.get(d)!);
+  return dates.map((d) => {
+    const x = byDate.get(d)!;
+    return { ...x, meanHeatIndex: x.n ? x.sum / x.n : 0 };
+  });
 }
 
 /** Words, not pictograms: a two-metre read beats an icon nobody has learned yet. */
@@ -118,6 +129,25 @@ function boardFor(resp: ActionsResponse, free: ActionsResponse | null): DayBoard
   return { resp, human: [...human].sort((a, b) => a.rank - b.rank), automated: resp.actions.length - human.length, binding, missed, wanted };
 }
 
+/** The one line the room needs, and how far away it is. */
+function storyOf(days: DayHazard[]) {
+  const flood = days.findIndex((d) => d.flood);
+  const heat = days.findIndex((d) => d.heat);
+  const smoke = days.findIndex((d) => d.smoke);
+  const FULL: Record<string, string> = { Sun: "Sunday", Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday" };
+  const when = (i: number) => (i === 0 ? "today" : i === 1 ? "tomorrow" : `on ${FULL[dayName(days[i].date)] ?? dayName(days[i].date)}`);
+  if (flood >= 0) {
+    return {
+      title: `Coastal storm makes landfall ${when(flood)}`,
+      sub: heat > flood ? `then a heat wave from ${dayName(days[heat].date)} ${dayLabel(days[heat].date)}, while power is still out` : "surge into evacuation zones 1–2, outages along the waterfront",
+      count: flood, label: flood === 0 ? "landfall today" : flood === 1 ? "day to landfall" : "days to landfall",
+    };
+  }
+  if (heat >= 0) return { title: `Heat wave from ${when(heat)}`, sub: `heat index ${Math.round(days[heat].maxHeatIndex)}°F at the peak`, count: heat, label: heat === 1 ? "day to the heat wave" : "days to the heat wave" };
+  if (smoke >= 0) return { title: `Wildfire smoke from ${when(smoke)}`, sub: `PM2.5 up to ${Math.round(days[smoke].maxPm25)} µg/m³`, count: smoke, label: "days to the smoke" };
+  return { title: "A quiet week", sub: "no alerts in the seven-day window", count: 0, label: "alerts" };
+}
+
 export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Props) {
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [week, setWeek] = useState<(ActionsResponse | null)[]>([]);
@@ -159,8 +189,8 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
   const downSites = useMemo(() => (forecast?.facilities ?? []).filter((f) => f.site_down), [forecast]);
   const board = useMemo(() => week.map((r, i) => (r ? boardFor(r, headroom[i] ?? null) : null)), [week, headroom]);
   const loaded = board.filter((b): b is DayBoard => b !== null);
+  const story = useMemo(() => storyOf(days), [days]);
 
-  /** Capacity by unit over the loaded days: what ran out, and where there was room. */
   const lanes = useMemo(() => {
     if (loaded.length === 0) return [];
     return HUMAN_BUCKETS.map((bucket) => {
@@ -174,57 +204,101 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
   const missedKnown = loaded.filter((b) => b.missed !== null);
   const missedTotal = missedKnown.reduce((s, b) => s + (b.missed ?? 0), 0);
   const missedMax = Math.max(1, ...missedKnown.map((b) => b.missed ?? 0));
+  const peakDay = board.reduce<DayBoard | null>((best, b) => (b && (!best || (b.resp.counts_by_tier.act_now ?? 0) > (best.resp.counts_by_tier.act_now ?? 0)) ? b : best), null);
+  const actNowPeak = peakDay?.resp.counts_by_tier.act_now ?? 0;
+  const panel = board[0]?.resp.n_panel ?? 0;
 
   if (error) return <div className="page"><div className="empty"><div className="eh">The week did not load</div>{error}</div></div>;
   if (!forecast || !board[0]) {
     return (
       <div className="page dash">
-        <div className="skgrid" style={{ gridTemplateColumns: "repeat(7, minmax(0,1fr))" }}>{Array.from({ length: 7 }, (_, i) => <div key={i} className="sk" style={{ height: 118 }} />)}</div>
+        <div className="sk" style={{ height: 330, borderRadius: 22 }} />
         <div className="row g2"><div className="sk" style={{ height: 420 }} /><div className="sk" style={{ height: 420 }} /></div>
       </div>
     );
   }
 
   const cur = board[sel] ?? board[0];
+  const curDay = days[sel] ?? days[0];
   const groups = (["care_team", "pharmacist", "partner"] as const).map((k) => ({ key: k, rows: cur.human.filter((a) => a.owner === k) })).filter((g) => g.rows.length > 0);
+  const mapNeed = curDay.heat && !curDay.flood ? "heat" : "treatment_gap";
 
   return (
     <div className="page dash">
-      <div className="ribbon" role="tablist" aria-label="Days">
-        {days.map((d, i) => {
-          const b = board[i];
-          const load = b ? Math.min(1, b.binding.frac) : 0;
-          return (
-            <button key={d.date} className={`rday${i === sel ? " sel" : ""}`} role="tab" aria-selected={i === sel} onClick={() => setSel(i)} disabled={!b} title={b ? `Show the queue for ${fmtDate(d.date)}` : "Loading"}>
-              <div className="rd-top">
-                <span className="rd-dow">{i === 0 ? "Today" : dayName(d.date)}</span>
-                <span className="rd-date">{dayLabel(d.date)}</span>
-              </div>
-              <div className="rd-chips">
-                {chips(d).length === 0 && <span className="hz clear">CLEAR</span>}
-                {chips(d).map((c) => (
-                  <span key={c.key} className={`hz ${c.key}`}>{c.label}<small>{c.detail}</small></span>
-                ))}
-              </div>
-              <div className={`prog${load >= 1 ? " over" : load >= 0.8 ? " warn" : ""}`}><i style={{ width: `${load * 100}%` }} /></div>
-              <div className="rd-load">
-                {b ? <span><b>{b.binding.used}</b> of {b.binding.cap} {BUCKET_LABEL[b.binding.bucket]}</span> : <span>loading…</span>}
-                {b && b.missed !== null && b.missed > 0 && <span style={{ color: "var(--crit)", fontWeight: 600 }}>{b.missed} missed</span>}
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      <section className="storm">
+        <div className="storm-head">
+          <div className="storm-text">
+            <div className="storm-kicker"><span className="pulse" />{source === "api" ? "Live" : "Offline"} · {fmtDate(days[0].date)} · {fmtInt(panel)} veterans on the panel</div>
+            <h1 className="storm-title">{story.title}</h1>
+            <p className="storm-sub">{story.sub}{downSites.length ? ` · ${downSites.map((f) => `${f.name} (station ${f.facility_id}) closed`).join(", ")}` : ""}</p>
+          </div>
+          <div className="storm-count">
+            <div className="sc-num">{story.count}</div>
+            <div className="sc-lab">{story.label}</div>
+          </div>
+        </div>
+
+        <div className="storm-tiles">
+          <div className="st">
+            <div className="st-k">Act now at the peak</div>
+            <div className="st-v"><CountUp value={actNowPeak} /></div>
+            <div className="st-s">{peakDay ? fmtDate(peakDay.resp.date) : "—"} · narrow interval, high risk</div>
+          </div>
+          <div className={`st${downSites.length ? " st-crit" : ""}`}>
+            <div className="st-k">VA sites closed</div>
+            <div className="st-v"><CountUp value={downSites.length} /></div>
+            <div className="st-s">{downSites.length ? `station ${downSites.map((f) => f.facility_id).join(", ")} · evac zone ${downSites[0].evac_zone}` : "all 14 open"}</div>
+          </div>
+          <div className="st">
+            <div className="st-k">Alternate-site bookings</div>
+            <div className="st-v"><CountUp value={altSiteBookings} /></div>
+            <div className="st-s">dialysis, infusion, OTP moved this week</div>
+          </div>
+          <div className="st">
+            <div className="st-k">People to reach by hand</div>
+            <div className="st-v"><CountUp value={loaded.reduce((s, b) => s + b.human.length, 0)} /></div>
+            <div className="st-s">across {loaded.length} of {board.length} days · {fmtInt(loaded.reduce((s, b) => s + b.automated, 0))} verified texts automated</div>
+          </div>
+          <div className={`st${missedTotal ? " st-warn" : ""}`}>
+            <div className="st-k">Not reached at this capacity</div>
+            <div className="st-v"><CountUp value={missedTotal} /></div>
+            <div className="st-s">Act-now and Find-out veterans without a person</div>
+          </div>
+        </div>
+
+        <div className="timeline" role="tablist" aria-label="Days">
+          {days.map((d, i) => {
+            const b = board[i];
+            const load = b ? Math.min(1, b.binding.frac) : 0;
+            const cs = chips(d);
+            return (
+              <button key={d.date} className={`tl${i === sel ? " sel" : ""}${d.flood ? " storm-day" : d.heat ? " heat-day" : ""}`} role="tab" aria-selected={i === sel} onClick={() => setSel(i)} disabled={!b} title={b ? `Show the queue for ${fmtDate(d.date)}` : "Loading"}>
+                <div className="tl-top"><span className="tl-dow">{i === 0 ? "Today" : dayName(d.date)}</span><span className="tl-date">{dayLabel(d.date)}</span></div>
+                <div className="tl-temp">{Math.round(d.meanHeatIndex)}<small>°F</small></div>
+                <div className="tl-chips">
+                  {cs.length === 0 && <span className="hz clear">CLEAR</span>}
+                  {cs.slice(0, 2).map((c) => <span key={c.key} className={`hz ${c.key}`}>{c.label}<small>{c.detail}</small></span>)}
+                </div>
+                <div className={`prog${load >= 1 ? " over" : load >= 0.8 ? " warn" : ""}`}><i style={{ width: `${load * 100}%` }} /></div>
+                <div className="tl-load">
+                  {b ? <span><b>{b.binding.used}</b>/{b.binding.cap} {BUCKET_LABEL[b.binding.bucket]}</span> : <span>loading…</span>}
+                  {b && b.missed !== null && b.missed > 0 && <span className="tl-miss">{b.missed} missed</span>}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
       <div className="row g2">
         <div className="card">
           <div className="ch">
-            <h3>Queue · {sel === 0 ? "today, " : ""}{fmtDate(cur.resp.date)}</h3>
+            <h3 style={{ fontSize: 16 }}>Queue · {sel === 0 ? "today, " : ""}{fmtDate(cur.resp.date)}</h3>
             <span className="sub">{cur.human.length} people to reach, in priority order</span>
             <span className="sp" />
             <button className="sm" onClick={() => onOpenDay(cur.resp.date)}>Full list with capacity <IconArrow /></button>
           </div>
-          <div className="qlist">
+          <div className="qlist big">
             {groups.map((g) => (
               <div key={g.key}>
                 <div className="qgroup">{OWNER_LABEL[g.key]}<span className="n">{g.rows.length}</span></div>
@@ -245,26 +319,28 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
         </div>
 
         <div className="stack">
-          {downSites.map((f) => (
-            <div key={f.facility_id} className="insight">
-              <div className="ic ic-critical"><IconBuilding /></div>
-              <div className="bd">
-                <div className="t">{f.name} (station {f.facility_id}) is closed this week</div>
-                <div className="d">Evacuation zone {f.evac_zone}{f.site_dependent_services ? "; dialysis, infusion and the opioid treatment program run on site" : ""}. {altSiteBookings} alternate-site {altSiteBookings === 1 ? "booking is" : "bookings are"} queued{loaded.length < board.length ? " so far" : ""}.</div>
-              </div>
-            </div>
-          ))}
-          {forecast.headline && (
-            <div className="insight">
-              <div className="ic ic-medium"><IconAlert /></div>
-              <div className="bd"><div className="t">Forecast</div><div className="d">{forecast.headline}</div></div>
-            </div>
-          )}
+          <div className="card tight">
+            <div className="minimap"><NeedMap forecast={forecast} date={cur.resp.date} need={mapNeed} compact /></div>
+            <div className="minimap-cap"><span><b>{NEED_LABEL[mapNeed]}</b> expected per ZIP · {fmtDate(cur.resp.date)}</span>{downSites.length > 0 && <span className="rb rb-critical"><IconBuilding /> {downSites.length} site down</span>}</div>
+          </div>
 
           <div className="card">
-            <div className="ch"><h3>Capacity this week</h3><span className="sub">by unit · {loaded.length} of {board.length} days loaded</span></div>
+            <div className="ch"><h3>Not reached at this capacity</h3><span className="sub">per day</span><span className="sp" /><span className={`pillbadge ${missedTotal > 0 ? "pill-critical" : "pill-healthy"}`}>{fmtInt(missedTotal)} this week</span></div>
+            <div className="minibars">
+              {board.map((b, i) => (
+                <div key={i} className={`mb${i === sel ? " sel" : ""}`} title={b && b.missed !== null ? `${fmtDate(b.resp.date)}: ${b.missed} of ${b.wanted} who needed a person` : "loading"}>
+                  <b>{b && b.missed !== null ? b.missed : "·"}</b>
+                  <i className={b && b.missed ? "miss" : ""} style={{ height: `${b && b.missed !== null ? Math.max(3, (100 * b.missed) / missedMax) : 3}%` }} />
+                  <span>{i === 0 ? "Today" : days[i] ? dayName(days[i].date) : ""}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="ch"><h3>Capacity this week</h3><span className="sub">by unit · {loaded.length} of {board.length} days</span></div>
             <div className="lanes">
-              {lanes.map((l) => {
+              {lanes.slice(0, 5).map((l) => {
                 const frac = Math.min(1, l.used / l.total);
                 return (
                   <div key={l.bucket} className="lane">
@@ -275,20 +351,6 @@ export function Week({ scenario, day, onSource, onOpenDay, onOpenVeteran }: Prop
                 );
               })}
             </div>
-          </div>
-
-          <div className="card">
-            <div className="ch"><h3>Not reached at this capacity</h3><span className="sub">per day</span><span className="sp" /><span className={`pillbadge ${missedTotal > 0 ? "pill-critical" : "pill-healthy"}`}>{fmtInt(missedTotal)} this week</span></div>
-            <div className="minibars">
-              {board.map((b, i) => (
-                <div key={i} className="mb" title={b && b.missed !== null ? `${fmtDate(b.resp.date)}: ${b.missed} of ${b.wanted} who needed a person` : "loading"}>
-                  <b>{b && b.missed !== null ? b.missed : "·"}</b>
-                  <i className={b && b.missed ? "miss" : ""} style={{ height: `${b && b.missed !== null ? Math.max(3, (100 * b.missed) / missedMax) : 3}%` }} />
-                  <span>{i === 0 ? "Today" : days[i] ? dayName(days[i].date) : ""}</span>
-                </div>
-              ))}
-            </div>
-            <div className="muted small" style={{ marginTop: 10 }}>Veterans the allocator wanted a person to reach, minus those the day's capacity allowed.</div>
           </div>
 
           {source === "fixture" && (

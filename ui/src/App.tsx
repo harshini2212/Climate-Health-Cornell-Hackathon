@@ -58,6 +58,18 @@ export default function App() {
   /** Set when a queue row is clicked, so the Veteran card and Message screens have a subject. */
   const [focus, setFocus] = useState<VeteranFocus | null>(null);
   const onSource = useCallback((s: Source) => setSource(s), []);
+  /** Present mode: no sidebar, no topbar, the page scaled for the big screen. P toggles, Esc exits. */
+  const [present, setPresent] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if (e.key === "p" || e.key === "P") setPresent((v) => !v);
+      if (e.key === "Escape") setPresent(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -92,7 +104,8 @@ export default function App() {
   const groups = [...new Set(SCREENS.map((s) => s.group))];
 
   return (
-    <div className="app">
+    <div className={`app${present ? " present" : ""}`}>
+      <button className="present-btn primary sm" onClick={() => setPresent((v) => !v)} title="Toggle present mode (P)">{present ? "Exit present (Esc)" : "Present"}</button>
       <aside className="sidebar">
         <div className="brand">
           <div className="logo">L</div>
