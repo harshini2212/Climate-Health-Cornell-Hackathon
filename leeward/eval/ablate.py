@@ -434,11 +434,21 @@ def main(argv: list[str] | None = None) -> int:
     with pl.Config(tbl_rows=len(ABLATIONS) + 2, tbl_width_chars=150, fmt_str_lengths=40):
         print(result.table.select("dropped", "n_features", "ece", "d_ece",
                                   "harm_averted_at_k", "d_harm_averted"))
-    free = result.table.filter((pl.col("dropped") != FULL) & (pl.col("d_harm_averted") >= 0))
-    for row in free.to_dicts():
-        print(f"  NOTE: dropping {row['dropped']} cost the care team nothing "
-              f"({row['d_harm_averted']:+.2f} harm averted a day). At this rung that block "
-              f"is not earning its place, and the deck should not claim it does.")
+    if args.k != K_CALLS:
+        print(f"  NOTE: the report contract's field is `harm_averted_at_40`, so the Model "
+              f"report screen will label these {args.k}-call numbers as 40. report/"
+              f"ablations.json records the real budget under `k`.")
+    for row in result.table.filter(pl.col("dropped") != FULL).to_dicts():
+        # Exactly zero on both numbers means the block's columns of X were zero all window:
+        # it never fired, which is a different statement from "it fired and was worthless".
+        if row["d_harm_averted"] == 0.0 and row["d_ece"] == 0.0:
+            print(f"  NOTE: {row['dropped']} was never active in this window -- every scored "
+                  f"row is identical to the full model's, so this row measures nothing. "
+                  f"Choose a window the block actually fires in.")
+        elif row["d_harm_averted"] >= 0:
+            print(f"  NOTE: dropping {row['dropped']} cost the care team nothing "
+                  f"({row['d_harm_averted']:+.2f} harm averted a day). At this rung that "
+                  f"block is not earning its place, and the deck should not claim it does.")
     print("wrote " + ", ".join(str(p.relative_to(schema.ROOT)) for p in written))
     return 0
 
