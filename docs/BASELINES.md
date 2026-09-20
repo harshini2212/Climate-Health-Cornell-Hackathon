@@ -68,3 +68,58 @@ The rung-0 baseline — your "before"
 └────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────┘
 
 ---
+
+## Round C · do-by scheduling, race/ethnicity, dialysis 60, report screen — rung 0 — `42b37bf` *(uncommitted changes)*
+
+*2026-09-20T05:13:43Z · Python 3.11.14 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **16.31** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **2.4× the best baseline** |
+| **Calibration (ECE, bar 0.03)** | max **0.0075** · mean 0.005 |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.035 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0075 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 326,679 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 7.31% · find-out 0.226%
+
+**Pipeline** — hazards 0.22s · cohort 0.37s · simulate 2.02s · score 12.98s · allocate 8.01s · report 12.0s · total 35.6s
+
+---
+
+---
+
+## Round C · do-by scheduling, race + ethnicity, dialysis 60, report screen — rung 0 — `42b37bf` *(uncommitted changes)*
+
+*2026-09-20T05:17:39Z · Python 3.11.14 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **16.31** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **2.4× the best baseline** |
+| **Per call actually made** | **0.524** — **3.09×**, spending 934 of 1200 available calls |
+| **Calibration (ECE, bar 0.03)** | max **0.0075** · mean 0.005 |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.035 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0075 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 326,679 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 7.31% · find-out 0.226%
+
+**Pipeline** — not re-run · total Nones
+
+---

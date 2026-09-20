@@ -155,15 +155,27 @@ def harm_averted(actions: pl.DataFrame, outcomes: pl.DataFrame, w: Weights, tau:
     _check_weights(w, tau)
     if actions.is_empty():
         return 0.0
-    picked = actions.select("veteran_id", "date", "action")
+    # `actions.date` is the day the team does the work; the need it prevents lands on
+    # `date + lead_days`. Booking an alternate dialysis site on Monday averts Wednesday's
+    # treatment gap, so the outcome to credit it against is Wednesday's. Joining on the
+    # do-by day instead scores every lead>0 action against a day its need did not occur --
+    # and those are the high-tau ones (alt_site_booking 0.70, early_refill 0.60), so it
+    # silently halves the headline. Actions written before lead times existed have no
+    # column; treat them as same-day.
+    lead = (pl.col("lead_days") if "lead_days" in actions.columns else pl.lit(0)).cast(pl.Int32)
+    picked = actions.select(
+        "veteran_id", "action",
+        (pl.col("date").cast(pl.Date) + pl.duration(days=lead)).alias("date"))
     joined = picked.join(outcomes.select("veteran_id", "date", "need", "y"),
                          on=["veteran_id", "date"], how="left")
     ghosts = joined.filter(pl.col("need").is_null())
     if ghosts.height:
         raise ValueError(
-            f"{ghosts.height} selected veteran-days have no outcomes, e.g. "
-            f"{ghosts.select('veteran_id', 'date').row(0)}. Scoring them as 0 would quietly "
-            "undercount whichever strategy picked them.")
+            f"{ghosts.height} selected veteran risk-days have no outcomes, e.g. "
+            f"{ghosts.select('veteran_id', 'date').row(0)}. An action's risk day is "
+            "`date + lead_days`; if that falls outside the simulated window the day cannot "
+            "be scored, and counting it as 0 would quietly undercount whichever strategy "
+            "picked it.")
 
     tau_rows = pl.DataFrame(
         [(a, k, float(v)) for a, row in tau.items() for k, v in row.items()],
