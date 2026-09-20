@@ -33,3 +33,43 @@ Found and logged as **docs/PROMPTS.md 16** (not fixed — out of lane): `allocat
 the Impact chart shows Leeward below random on the fixtures (49.6 vs 54.4) even though its
 own picks scored as calls reach 76.6. The ranking is right; the metric and the budget
 disagree about what a check-in is worth.
+
+## 02:2x — eval/ablate.py
+Six blocks zeroed at the coefficient (every climate term, i.e. every `kind == "hazard"` one;
+psi_sitedown; theta_sitedown_x_sitedependent; both of those plus theta_sitedown_x_controlled;
+the medication block, derived from the design rather than listed so a C3/C4 term joins it;
+delta_heat lags 1–3 with the same-day term kept), each re-scored and re-run through the same
+`calibration.ece_overall` and the same `allocate` the Impact chart uses. 7 models × 10k ×
+30 days in **~35 s quiet** (58 s while the model lane was running NUTS), seeded. `make ablate`
+caches `report/ablations.json`; `make report` reads it and says "not run" when it is absent,
+so the Model report card fills without putting half a minute inside a target run every few
+edits. Harm averted per day at 40 calls, held-out days 2026-08-30 .. 09-28, full model 16.31:
+
+| dropped | harm@40 | Δ |
+| --- | --- | --- |
+| every climate term | 0.77 | **−15.55** |
+| the whole SiteDown block | 9.34 | **−6.97** |
+| theta_sitedown_x_sitedependent | 16.59 | +0.27 |
+| heat lags 1–3 | 16.67 | +0.35 |
+| the medication block | 16.84 | +0.53 |
+| psi_sitedown | 19.55 | **+3.24** |
+
+The premise holds: without the weather the care team averts essentially nothing (0.77/day),
+so the climate model is worth 15.55 severity-weighted events a day, not a rounding error.
+**But the SiteDown result is not what the deck assumes.** The block as a whole is worth 6.97
+— and `psi_sitedown` *on its own* costs 3.24. A flat lift for every patient of a closed
+station displaces veterans who actually have events; `theta_sitedown_x_sitedependent` is the
+part carrying the signal, and the two are strongly non-additive. Worth saying out loud rather
+than rounding off, and worth re-running after a rung-1 fit — `psi_sitedown[treatment_gap]`
+is the one parameter the 20:2x prior-coverage run missed (truth 1.5 against a prior 90% of
+[−0.30, 1.34]), so the prior may simply have it too small to rank with. ECE barely moves
+(0.00503 → 0.00599 at worst); at rung 0 with rare events it is not the discriminating
+number, harm averted is.
+Gate: `ruff` clean, whole suite green **except** `test_the_slider_answers_inside_300ms…`,
+which is the known load-bound gate — A/B'd at `origin/main` dc1c730 with none of my code in
+it: 566 ms median there against 523 ms on this branch, with the model lane running 4-chain
+NUTS at 577% CPU (load average 55). Not this diff. Re-run it on a quiet machine before
+merging anything that touches the allocator.
+Out of lane, not done: `ui/public/fixtures/report.json` still carries `ablations: []`, so
+the offline UI fixture shows the empty card until the ui lane regenerates it after a
+`make ablate && make report`.

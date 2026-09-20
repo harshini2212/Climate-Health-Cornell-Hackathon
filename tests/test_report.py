@@ -111,6 +111,27 @@ def test_a_failing_audit_reaches_the_json_rather_than_being_filtered(monkeypatch
     ReportResponse.model_validate(out)
 
 
+def test_ablations_are_empty_until_make_ablate_has_cached_them(tmp_path) -> None:
+    """An empty list means "not run" -- never "we ran it and every block was worthless"."""
+    assert rep.load_ablations(tmp_path) == []
+
+
+def test_a_cached_ablation_table_reaches_the_json(tmp_path) -> None:
+    from leeward.eval import ablate
+
+    scores, outcomes, cohort = table("scores"), table("outcomes"), table("cohort")
+    days = cal.holdout_dates(scores, outcomes, n_days=2)
+    cached = [{"dropped": ablate.FULL, "ece": 0.004, "harm_averted_at_40": 9.0},
+              {"dropped": "psi_sitedown", "ece": 0.005, "harm_averted_at_40": 6.5}]
+    (tmp_path / "ablations.json").write_text(json.dumps({"k": 40, "ablations": cached}),
+                                             encoding="utf-8")
+    assert rep.load_ablations(tmp_path) == cached
+    out = rep.assemble(scores=scores, outcomes=outcomes, cohort=cohort, dates=days,
+                       ks=(20,), n_draws=200, ablations=cached)
+    assert out.payload["ablations"] == cached
+    ReportResponse.model_validate(out.payload)
+
+
 def test_generated_at_is_an_iso_timestamp(payload: dict) -> None:
     from datetime import datetime
     assert datetime.fromisoformat(payload["generated_at"]).year >= 2025
