@@ -37,7 +37,7 @@ import tables
 from leeward import schema
 from leeward.cohort import missingness
 from leeward.decision import tiers
-from leeward.model import score_prior
+from leeward.model import score, score_prior
 
 DRAWS = 200          # enough for a stable variance, quick enough for the gate
 SEED = 0
@@ -224,7 +224,7 @@ def test_a_missing_field_is_imputed_from_this_veterans_own_neighbourhood(
     exactly the veterans the fairness audit watches, and would do it by discarding per-ZIP
     numbers that are already in `data/reference/`.
     """
-    unknowns = {u.field: u for u in score_prior._unknowns(cohort)}
+    unknowns = {u.field: u for u in score._unknowns(cohort)}
     assert "home_ac" in unknowns, "home_ac is not being marginalised over at all"
     u = unknowns["home_ac"]
     p_no_ac = u.weights[:, u.values.index(False)]
@@ -237,7 +237,7 @@ def test_a_missing_field_is_imputed_from_this_veterans_own_neighbourhood(
 
 
 def test_every_imputed_rate_is_a_probability(cohort: pl.DataFrame) -> None:
-    for u in score_prior._unknowns(cohort):
+    for u in score._unknowns(cohort):
         w = u.weights
         assert w.shape == (cohort.height, len(u.values)), f"{u.field}: wrong shape {w.shape}"
         assert (w >= 0).all(), f"{u.field}: negative weight"
@@ -251,7 +251,7 @@ def test_the_imputed_rate_tracks_the_rate_it_cannot_see(cohort: pl.DataFrame) ->
     lands on the rate the whole panel actually has, cell by cell. It is the test that says
     the conditioning is doing real work rather than reproducing the marginal with extra steps.
     """
-    unknowns = {u.field: u for u in score_prior._unknowns(cohort)}
+    unknowns = {u.field: u for u in score._unknowns(cohort)}
     u = unknowns["home_ac"]
     per_cell = (cohort.with_columns(
                     pl.Series("imputed", u.weights[:, u.values.index(False)]))

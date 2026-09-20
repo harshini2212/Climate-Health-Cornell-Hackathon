@@ -23,11 +23,20 @@ from tables import table
 
 @pytest.fixture(scope="module")
 def report() -> rep.Report:
-    """One assembled report over a two-day window -- the whole harness, run once."""
+    """One assembled report over a two-day window -- the whole harness, run once.
+
+    `posterior=None` is not decoration. `assemble` defaults to `data/posterior.nc`, and
+    these frames are `tables.py`'s rung-0 fixtures -- so once `make fit` exists and someone
+    has run it, the harness reads a real rung-1 posterior, reports an r-hat next to
+    `model_rung: 0`, and this file goes red for reasons that have nothing to do with the
+    code under review. Same reason the frames come from `tables.py` rather than `data/`:
+    the gate must not depend on which make target ran last. The with-a-posterior path is
+    covered deterministically in `tests/test_hazard_toy.py`, against a file it wrote itself.
+    """
     scores, outcomes, cohort = table("scores"), table("outcomes"), table("cohort")
     days = cal.holdout_dates(scores, outcomes, n_days=2)
     return rep.assemble(scores=scores, outcomes=outcomes, cohort=cohort, dates=days,
-                        ks=(20,), n_draws=200)
+                        ks=(20,), n_draws=200, posterior=None)
 
 
 @pytest.fixture(scope="module")
@@ -106,7 +115,7 @@ def test_a_failing_audit_reaches_the_json_rather_than_being_filtered(monkeypatch
     scores, outcomes, cohort = table("scores"), table("outcomes"), table("cohort")
     days = cal.holdout_dates(scores, outcomes, n_days=1)
     out = rep.assemble(scores=scores, outcomes=outcomes, cohort=cohort, dates=days,
-                       ks=(20,), n_draws=64).payload
+                       ks=(20,), n_draws=64, posterior=None).payload
     assert out["fairness_failed"] is True
     assert out["fairness"] == [{k: row[k] for k in fair.REPORT_COLUMNS}]
     # The direction survives the trip too: a flagged row that arrived as "reached less" must
@@ -131,7 +140,7 @@ def test_a_cached_ablation_table_reaches_the_json(tmp_path) -> None:
                                              encoding="utf-8")
     assert rep.load_ablations(tmp_path) == cached
     out = rep.assemble(scores=scores, outcomes=outcomes, cohort=cohort, dates=days,
-                       ks=(20,), n_draws=200, ablations=cached)
+                       ks=(20,), n_draws=200, ablations=cached, posterior=None)
     assert out.payload["ablations"] == cached
     ReportResponse.model_validate(out.payload)
 

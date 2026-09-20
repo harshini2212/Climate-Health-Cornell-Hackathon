@@ -107,7 +107,8 @@ PRIORS: dict[str, Prior | dict[str, Prior]] = {
 }
 
 
-def _per_need(name: str) -> dict[str, Prior]:
+def per_need(name: str) -> dict[str, Prior]:
+    """The term's prior, one entry per need it acts on -- a shared prior repeated."""
     spec = PRIORS[name]
     return dict.fromkeys(design.TERM_BY_NAME[name].needs, spec) if isinstance(spec, Prior) else spec
 
@@ -124,7 +125,7 @@ def _validate() -> None:
     for t in design.TERMS:
         if t.name not in PRIORS:
             raise ValueError(f"design term {t.name} has no prior")
-        spec = _per_need(t.name)
+        spec = per_need(t.name)
         if set(spec) != set(t.needs):
             raise ValueError(f"{t.name}: priors cover {sorted(spec)}, the term acts on "
                              f"{sorted(t.needs)}")
@@ -140,7 +141,7 @@ _validate()
 
 def mean_matrix() -> np.ndarray:
     """(P, K) prior means; zero off the design's support."""
-    return design.coef_matrix({name: {n: p.mean for n, p in _per_need(name).items()}
+    return design.coef_matrix({name: {n: p.mean for n, p in per_need(name).items()}
                                for name in PRIORS})
 
 

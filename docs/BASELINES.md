@@ -232,7 +232,7 @@ The rung-0 baseline — your "before"
 
 ---
 
-## conditional imputation of the gap — rung 0 — `07725ef` *(uncommitted changes)*
+## conditional imputation of the gap — rung 0 — `07725ef`
 
 *2026-09-20T06:29:47Z · Python 3.11.14 · arm64*
 
@@ -286,7 +286,7 @@ The rung-0 baseline — your "before"
 
 ---
 
-## Round D · re-recorded with discrimination and the ECE control — rung 0 — `d6ef34e` *(uncommitted changes)*
+## Round D · re-recorded with discrimination and the ECE control — rung 0 — `d6ef34e`
 
 *2026-09-20T11:55:04Z · Python 3.11.14 · arm64*
 
