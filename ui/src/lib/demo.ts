@@ -10,9 +10,15 @@
  * is the calm week: "here is a calm week, and here is the same team three days later".
  */
 
-/** `make demo DAY=<n>` → VITE_DEMO_DAY. Unset, empty or nonsense means "let the API pick". */
+/**
+ * `?day=<n>` in the URL, else `VITE_DEMO_DAY`. Unset, empty or nonsense means "let the API pick".
+ *
+ * The URL wins because `make demo` serves a prebuilt bundle (ui/dist), and an env var read at
+ * build time cannot change what a committed bundle does: `make demo DAY=0` opens `/?day=0`.
+ * `VITE_DEMO_DAY` is what `make demo-dev` sets on the Vite dev server.
+ */
 export const PINNED_DAY: number | undefined = (() => {
-  const raw = import.meta.env.VITE_DEMO_DAY;
+  const raw = new URLSearchParams(window.location.search).get("day") ?? import.meta.env.VITE_DEMO_DAY;
   if (raw === undefined || raw === null || `${raw}`.trim() === "") return undefined;
   const n = Number(raw);
   return Number.isInteger(n) && n >= 0 ? n : undefined;

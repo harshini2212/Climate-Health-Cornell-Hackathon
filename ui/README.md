@@ -11,7 +11,27 @@ npm run dev        # http://127.0.0.1:5173, proxies /api to the FastAPI app on :
 npm run build      # tsc --noEmit && vite build; must be clean before merging
 ```
 
-Run the API next to it for live numbers; without it every screen falls back to the
+## The built bundle (`ui/dist/`, committed)
+
+`make demo` does not run Vite. It serves the committed `ui/dist/` from the FastAPI app itself,
+so the demo is one process at http://127.0.0.1:8000/ and a clean clone with no `node_modules`
+and no wifi can boot it. That only works if the bundle is current, so:
+
+```bash
+make ui            # after editing anything under ui/src: rebuild dist, stamp it, then commit ui/dist
+make demo-dev      # while working on the UI: API + Vite with hot reload on :5173
+```
+
+`make ui` records the sha256 of every file the bundle was built from in
+`ui/dist/build-manifest.json`; `scripts/ui_dist.py check` compares against it. `make check`,
+`make demo` and `make clean-clone` all run that check, and it names the files that moved. A bare
+`npm run build` deletes the manifest, so the gate stays red until you run `make ui` instead.
+`make demo DAY=0` opens `/?day=0`; `?day=<n>` works on any URL.
+
+Served this way the app answers `/api/*` itself (it strips the prefix, as the Vite proxy does),
+so nothing in the UI changes between dev and the bundle.
+
+Run the API next to the dev server for live numbers; without it every screen falls back to the
 committed fixtures and the topbar pill says so:
 
 ```bash

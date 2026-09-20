@@ -160,6 +160,23 @@ def test_make_demo_serves_an_app_that_exists() -> None:
             f"`make demo` serves {spec}, but {name} has no {attr!r}; the API would not boot")
 
     package = json.loads((ROOT / "ui/package.json").read_text(encoding="utf-8"))
-    for script in re.findall(r"npm run (\S+)", text):
+    for script in re.findall(r"npm run (\S+)", text + recipe("demo-dev") + recipe("ui")):
         assert script in package.get("scripts", {}), (
             f"`make demo` runs `npm run {script}`, which ui/package.json does not define")
+
+
+def test_make_demo_prefers_the_built_bundle_and_says_which_one_it_booted() -> None:
+    """One process serving `ui/dist` is the demo path; Vite is the fallback, and it says so.
+
+    `make demo` is never run here (it blocks), so this reads what make would run. The committed
+    tree has a bundle, so the bundle branch is the one that is expanded.
+    """
+    assert (ROOT / "ui/dist/index.html").exists(), "ui/dist is not committed; run `make ui`"
+    text = recipe("demo")
+    assert "npm" not in text, "`make demo` starts Vite even though ui/dist is built"
+    assert "serving the built UI" in text, "`make demo` does not say it booted the bundle"
+    assert "ui_dist.py check" in text, "`make demo` boots a bundle without checking it is current"
+    fallback = (ROOT / "Makefile").read_text(encoding="utf-8").split("\ndemo:", 1)[1]
+    assert "Vite dev server" in fallback.split("\n\n", 1)[0], (
+        "with no ui/dist, `make demo` must say it is falling back to Vite")
+    assert "npm run dev" in recipe("demo-dev"), "`make demo-dev` no longer starts Vite"

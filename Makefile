@@ -1,4 +1,4 @@
-.PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo report ablate \
+.PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo demo-dev ui report ablate \
         test check status smoke clean-clone lanes
 PY  ?= .venv/bin/python
 PIP ?= .venv/bin/python -m pip
@@ -106,14 +106,33 @@ ablate:             ## what each block of the model is worth -> report/ablations
 # to replay a different beat by hand: `make demo DAY=0` is the calm week nine weeks earlier.
 DAY ?=
 
-demo:               ## boot API + UI, offline. `make demo DAY=0` opens on the calm week.
+demo:               ## boot API + UI, offline: the built ui/dist if there is one, else Vite. DAY=0 = calm week
+ifeq ($(wildcard ui/dist/index.html),)
+	@echo "make demo: ui/dist is not built, so this boots the Vite dev server (needs node_modules). \`make ui\` builds the bundle."
+	@$(MAKE) --no-print-directory demo-dev
+else
+	@$(PY) scripts/ui_dist.py check || echo "make demo: booting the bundle anyway, but it is out of date. \`make ui\` rebuilds it."
+	@echo "make demo: serving the built UI (ui/dist) from the API, one process -> http://127.0.0.1:8000/$(if $(DAY),?day=$(DAY))"
+	$(PY) -m uvicorn leeward.api.main:app --port 8000
+endif
+
+demo-dev:           ## boot API + Vite dev server (HMR), for working on ui/src. DAY=0 = calm week
 	$(PY) -m uvicorn leeward.api.main:app --port 8000 & \
+	  API=$$!; trap 'kill $$API 2>/dev/null' EXIT INT TERM; \
 	  cd ui && VITE_DEMO_DAY="$(DAY)" npm run dev
+
+# `ui/dist` is committed, so a clean clone with the wifi off can boot the demo without `npm ci`.
+# `make ui` is what regenerates it; the stamp it writes is what `make demo`, `make clean-clone`
+# and the gate check the bundle against, so a `ui/src` edit that was never rebuilt gets caught.
+ui:                 ## rebuild the committed ui/dist bundle after editing ui/src, then commit it
+	@test -d ui/node_modules || (cd ui && npm ci)
+	cd ui && npm run build
+	$(PY) scripts/ui_dist.py stamp
 
 smoke:              ## boot the API and hit every route; fails if any shape is wrong
 	@bash scripts/smoke_demo.sh
 
-clean-clone:        ## prove a fresh clone boots offline in under 60s
+clean-clone:        ## prove a fresh clone boots and serves the UI offline in under 60s
 	@bash scripts/clean_clone_test.sh
 
 lanes:              ## create the six git worktrees, each with its own venv

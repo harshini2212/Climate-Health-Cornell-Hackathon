@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import re
 import statistics
 import sys
 import time
@@ -20,6 +21,7 @@ from pathlib import Path
 
 import polars as pl
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from leeward import schema
@@ -96,6 +98,63 @@ def test_the_api_never_imports_the_model() -> None:
         src = path.read_text()
         for banned in ("numpyro", "import jax", "from jax", "arviz", "leeward.model"):
             assert banned not in src, f"{path.name} mentions {banned!r}"
+
+
+# --------------------------------------------------------------------------- #
+# The built UI, served by the API: the demo is one process
+# --------------------------------------------------------------------------- #
+
+def test_the_built_ui_is_served_at_the_root(client: TestClient) -> None:
+    """`ui/dist` is committed so a clone with no npm and no wifi can still show a page.
+
+    Fetching the page is not enough -- a page whose script 404s is a white screen -- so every
+    asset `index.html` points at has to come back too, and as itself rather than as HTML.
+    """
+    assert (api_main.UI_DIST / "index.html").is_file(), "ui/dist is not built: run `make ui`"
+    page = client.get("/")
+    assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
+    assert 'id="root"' in page.text
+    refs = re.findall(r'(?:src|href)="(/assets/[^"]+)"', page.text)
+    assert any(r.endswith(".js") for r in refs), "index.html loads no script"
+    for ref in refs:
+        got = client.get(ref)
+        assert got.status_code == 200 and "text/html" not in got.headers["content-type"], ref
+
+
+def test_the_ui_calls_the_api_under_the_prefix_vite_strips_in_dev(client: TestClient) -> None:
+    """The UI asks for `/api/forecast`. The Vite proxy strips `/api`; served from here, this
+    app has to, or a working bundle quietly falls back to fixtures and nobody sees it."""
+    query = {"scenario": "sandy_then_heat", "day": 5}
+    plain, prefixed = client.get("/forecast", params=query), client.get("/api/forecast", params=query)
+    assert prefixed.status_code == 200 and prefixed.content == plain.content
+    assert client.get("/api/report").json() == client.get("/report").json()
+    body = {"date": str(DAY), "capacity": {"call": 3}}
+    assert client.post("/api/actions", json=body).json() == client.post("/actions", json=body).json()
+
+
+def test_routes_win_over_the_ui_mount_and_unknown_paths_are_not_the_app(
+        client: TestClient) -> None:
+    """A mount at `/` matches everything, so it is only safe if it is declared last."""
+    assert client.get("/openapi.json").headers["content-type"] == "application/json"
+    assert client.get("/report").headers["content-type"] == "application/json"
+    assert client.get("/no-such-file.js").status_code == 404
+    assert client.get("/api/no-such-route").status_code == 404
+
+
+def test_mount_ui_serves_a_directory_only_if_it_has_an_index(tmp_path: Path) -> None:
+    app = FastAPI()
+
+    @app.get("/ping")
+    def ping() -> dict:
+        return {"ok": True}
+
+    assert api_main.mount_ui(app, tmp_path / "missing") is False
+    assert TestClient(app).get("/").status_code == 404, "an unbuilt UI must not half-mount"
+    (tmp_path / "index.html").write_text('<div id="root"></div>')
+    assert api_main.mount_ui(app, tmp_path) is True
+    got = TestClient(app)
+    assert 'id="root"' in got.get("/").text
+    assert got.get("/ping").json() == {"ok": True}, "the mount shadowed a route"
 
 
 # --------------------------------------------------------------------------- #
