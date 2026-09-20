@@ -143,7 +143,7 @@ leeward/
 | veteran_id | str | synthea | Patient.id |
 | age | int | synthea | |
 | sex | str | synthea | |
-| race, ethnicity | str | synthea | for fairness audit only |
+| race, ethnicity | str | augment | **from ACS B03002** (`acs_race_by_zcta.parquet`): one joint draw from the veteran's own ZIP composition, so P(race, ethnicity \| ZIP) is measured and the individual assignment is synthetic. race ∈ White / Black / Asian / Other (AIAN, NHPI, some other race and multiracial folded in); ethnicity ∈ Hispanic / Non-Hispanic (Hispanic is an origin of any race). For fairness audit only |
 | modzcta | str | rehome | NYC Modified ZCTA, one of 178. **The join key everywhere.** |
 | borough | str | rehome | |
 | facility_id | str | rehome | nearest of {NY_MANHATTAN, NY_BROOKLYN, NY_BRONX, NY_ST_ALBANS, CBOC_*} |

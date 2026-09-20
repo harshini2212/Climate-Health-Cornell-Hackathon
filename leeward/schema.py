@@ -70,6 +70,10 @@ CAREGIVER = ["none", "informal_coresident", "informal_remote", "va_pcafc"]
 INCOME_BANDS = ["low", "mid", "high"]
 FLOORS = ["basement", "ground", "upper"]
 CHANNELS = ["VEText", "MHV", "care_team_phone"]
+#: The fairness audit's strata. Census asks race and Hispanic origin as two questions, so
+#: "Hispanic" is an origin of any race; "Other" folds AIAN, NHPI, some other race and multiracial.
+RACES = ["White", "Black", "Asian", "Other"]
+ETHNICITIES = ["Hispanic", "Non-Hispanic"]
 
 #: Every outreach message must contain all of these. `test_guardrails.py` enforces it.
 MANDATORY_MESSAGE_ELEMENTS = [
@@ -131,8 +135,10 @@ _COHORT = Table(
         _c("name_display", pl.Utf8, "Synthetic display name for the demo card", synthetic=True),
         _c("age", pl.Int32, bounds=(18, 110)),
         _c("sex", pl.Utf8, values=("M", "F")),
-        _c("race", pl.Utf8, "Fairness audit only", nullable=True),
-        _c("ethnicity", pl.Utf8, "Fairness audit only", nullable=True),
+        _c("race", pl.Utf8, "Fairness audit only; drawn from the ZIP's ACS B03002 composition",
+           nullable=True, values=tuple(RACES), synthetic=True),
+        _c("ethnicity", pl.Utf8, "Fairness audit only; drawn jointly with race, same source",
+           nullable=True, values=tuple(ETHNICITIES), synthetic=True),
 
         # geography -- modzcta is the join key everywhere
         _c("modzcta", pl.Utf8, "NYC Modified ZCTA, one of 178"),

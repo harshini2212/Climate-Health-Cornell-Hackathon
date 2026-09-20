@@ -14,6 +14,7 @@ from `data/reference/`, never typed in:
       depression, diabetes, CHF,
       low income
     powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP
+    race, ethnicity              acs_race_by_zcta           ACS B03002, one joint draw per ZIP
     evac zone, stormwater, HVI   evac_zone_by_modzcta, stormwater_by_modzcta, hvi_by_zcta
     facility                     va_facilities_nyc_hazard   nearest care site (see below)
     PTSD                         VA National Center for PTSD, past-year rate by era
@@ -25,9 +26,13 @@ This is the *parametric* cohort. The VA Synthea release is a 4 GB CSV (data/READ
 until a Synthea reader lands, the health columns Synthea would supply are drawn here. The
 medication columns are not drawn at all: `leeward/cohort/medications.py` gives each veteran
 a real active-medication list from Synthea's public sample and derives every flag from the
-VA drug class and CDC mechanism it maps to. `race` and `ethnicity` are null. Nothing in
-`data/reference/` gives a veteran's race, and inventing one would give the fairness audit a
-stratum that means nothing.
+VA drug class and CDC mechanism it maps to.
+
+`race` and `ethnicity` are drawn jointly from the composition of the veteran's own ZIP
+(ACS B03002, all residents: no public table gives veterans' race per ZIP). That grounds the
+fairness audit's strata in a measured distribution, but a ZIP's all-ages population is
+younger and more diverse than its veterans, so the draw likely overstates diversity among the
+oldest. Both columns are `_synthetic`: a real ZIP composition does not make a person's race real.
 
 Facility: the nearest VA care site *in the veteran's own borough* by haversine. Straight
 lines cross water in New York, and would send half of Staten Island to Brooklyn. Dialysis
@@ -79,6 +84,21 @@ PTSD_PAST_YEAR = {"post911": 0.15, "gulf": 0.14, "vietnam": 0.05, "peacetime": 0
 
 #: Sites that can dispense methadone for an opioid treatment program (docs/SPEC.md §5.2).
 OTP_STATIONS = ("630", "630A4")
+
+#: Census asks Hispanic origin and race as two questions, so B03002 is a joint table and the
+#: two cohort columns are one draw from it. Each cell -> (ethnicity, race, the B03002 columns
+#: of data/reference/acs_race_by_zcta.parquet that make it up). "Hispanic" is an origin of any
+#: race; "Other" folds AIAN, NHPI, some other race and two-or-more, none big enough to audit alone.
+RACE_ETHNICITY_CELLS = {
+    "nh_white": ("Non-Hispanic", "White", ("nh_white",)),
+    "nh_black": ("Non-Hispanic", "Black", ("nh_black",)),
+    "nh_asian": ("Non-Hispanic", "Asian", ("nh_asian",)),
+    "nh_other": ("Non-Hispanic", "Other", ("nh_aian", "nh_nhpi", "nh_other", "nh_multi")),
+    "hisp_white": ("Hispanic", "White", ("hisp_white",)),
+    "hisp_black": ("Hispanic", "Black", ("hisp_black",)),
+    "hisp_asian": ("Hispanic", "Asian", ("hisp_asian",)),
+    "hisp_other": ("Hispanic", "Other", ("hisp_aian", "hisp_nhpi", "hisp_other", "hisp_multi")),
+}
 
 # --------------------------------------------------------------------------- #
 # ASSUMPTIONS. No public per-person or per-ZIP source exists for any of these. They are
@@ -218,9 +238,14 @@ def zip_frame() -> pl.DataFrame:
     evac = _ref("evac_zone_by_modzcta").select(
         "modzcta", pl.col("evac_zone_min").cast(pl.Int32).alias("evac_zone"))
     storm = _ref("stormwater_by_modzcta")
+    b03002 = sorted({c for _, _, cols in RACE_ETHNICITY_CELLS.values() for c in cols})
+    race = (_ref("acs_race_by_zcta").join(members, on="zcta")
+            .group_by("modzcta").agg(pl.col(b03002).sum())
+            .select("modzcta", *[pl.sum_horizontal(cols).alias(f"pop_{cell}")
+                                 for cell, (_, _, cols) in RACE_ETHNICITY_CELLS.items()]))
 
     frame = _ref("nyc_modzcta").select("modzcta", "lon", "lat")
-    for table in (acs, empower, borough, places, hvi, evac, storm):
+    for table in (acs, empower, borough, places, hvi, evac, storm, race):
         frame = frame.join(table, on="modzcta", how="inner")
     frame = frame.filter(pl.col("borough").is_in(schema.BOROUGHS))
     return (frame.with_columns(
@@ -266,6 +291,28 @@ def rehome(n: int, seed: int, zips: pl.DataFrame) -> pl.DataFrame:
                   .with_row_index("_row")
                   .join(zips, on="modzcta", how="left")
                   .sort("_row").drop("_row"))
+
+
+# --------------------------------------------------------------------------- #
+# Race and ethnicity
+# --------------------------------------------------------------------------- #
+
+def draw_race_ethnicity(people: pl.DataFrame, seed: int) -> tuple[np.ndarray, np.ndarray]:
+    """(race, ethnicity) per veteran: one draw from the B03002 cells of their own ZIP.
+
+    Its own named stream, so adding these columns reshuffled nobody's COPD or address.
+    """
+    cells = list(RACE_ETHNICITY_CELLS)
+    weight = np.column_stack([people[f"pop_{cell}"].to_numpy() for cell in cells])
+    cdf = np.cumsum(weight, axis=1)
+    total = cdf[:, -1]
+    if (total <= 0).any():
+        raise SystemExit("a ZIP in the cohort has no B03002 population; a reference join is broken")
+    u = _stream(seed, "race_ethnicity").random(people.height)
+    pick = np.minimum((u[:, None] * total[:, None] >= cdf).sum(axis=1), len(cells) - 1)
+    ethnicity = np.array([RACE_ETHNICITY_CELLS[c][0] for c in cells])[pick]
+    race = np.array([RACE_ETHNICITY_CELLS[c][1] for c in cells])[pick]
+    return race, ethnicity
 
 
 # --------------------------------------------------------------------------- #
@@ -388,6 +435,8 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         MISSED_APPTS_BASE + MISSED_APPTS_TRANSPORT * places["transport_barrier"]
         + MISSED_APPTS_DEPRESSION * places["depression"])
 
+    race, ethnicity = draw_race_ethnicity(people, seed)
+
     r = _stream(seed, "names")
     first_m, first_f = r.integers(len(FIRST_M), size=n), r.integers(len(FIRST_F), size=n)
     last = r.integers(len(LAST), size=n)
@@ -400,8 +449,8 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         "name_display": names,
         "age": i32(age),
         "sex": sex,
-        "race": pl.Series([None] * n, dtype=pl.Utf8),
-        "ethnicity": pl.Series([None] * n, dtype=pl.Utf8),
+        "race": race,
+        "ethnicity": ethnicity,
         "modzcta": col("modzcta"),
         "borough": col("borough"),
         "facility_id": assign_facility(people, dialysis, otp),

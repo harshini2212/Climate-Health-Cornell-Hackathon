@@ -143,6 +143,94 @@ def test_powered_equipment_follows_empower(cohort: pl.DataFrame) -> None:
         f"65+ powered equipment {realised:.2%}, ZIP-weighted emPOWER {source:.2%}")
 
 
+# --------------------------------------------------------------------------- #
+# Race and ethnicity: drawn from the ZIP's measured composition, never invented
+# --------------------------------------------------------------------------- #
+
+RACES = {"White", "Black", "Asian", "Other"}
+ETHNICITIES = {"Hispanic", "Non-Hispanic"}
+
+# B03002 cell -> the cohort value it must feed. Written out here, not imported from
+# build.py, so a wrong mapping in the build cannot also fix its own test.
+SOURCE_RACE = {"White": ["nh_white", "hisp_white"], "Black": ["nh_black", "hisp_black"],
+               "Asian": ["nh_asian", "hisp_asian"],
+               "Other": ["nh_aian", "nh_nhpi", "nh_other", "nh_multi",
+                         "hisp_aian", "hisp_nhpi", "hisp_other", "hisp_multi"]}
+SOURCE_HISPANIC = ["hisp_white", "hisp_black", "hisp_aian", "hisp_asian", "hisp_nhpi",
+                   "hisp_other", "hisp_multi"]
+
+
+def _race_shares() -> pl.DataFrame:
+    """Per-MODZCTA share of residents in each cohort race, and of Hispanic origin, straight
+    from the vendored B03002 table."""
+    acs = pl.read_parquet(REF / "acs_race_by_zcta.parquet")
+    num = [c for c in acs.columns if c != "zcta"]
+    by_zip = (acs.join(_members(), on="zcta", how="inner")
+                 .group_by("modzcta").agg(pl.col(num).sum()))
+    return by_zip.select(
+        "modzcta",
+        *[(pl.sum_horizontal(cells) / pl.col("pop_total")).alias(f"src_{race}")
+          for race, cells in SOURCE_RACE.items()],
+        (pl.sum_horizontal(SOURCE_HISPANIC) / pl.col("pop_total")).alias("src_Hispanic"),
+        (pl.col("nh_white") / pl.col("pop_total")).alias("src_nh_white"))
+
+
+def test_race_and_ethnicity_are_filled_and_say_they_are_synthetic(cohort: pl.DataFrame) -> None:
+    """They were null for all 10,000, which left the fairness audit nothing to stratify by."""
+    assert cohort["race"].null_count() == 0
+    assert cohort["ethnicity"].null_count() == 0
+    assert set(cohort["race"].unique().to_list()) == RACES
+    assert set(cohort["ethnicity"].unique().to_list()) == ETHNICITIES
+    assert cohort["race_synthetic"].all() and cohort["ethnicity_synthetic"].all(), (
+        "a real ZIP composition does not make an individual's race real")
+
+
+@pytest.mark.parametrize("group", ["White", "Black", "Asian", "Other", "Hispanic"])
+def test_race_share_matches_the_composition_of_the_zips_veterans_live_in(
+        cohort: pl.DataFrame, group: str) -> None:
+    """Each veteran carries their own ZIP's composition, so the cohort's share of a group is
+    the mean of its veterans' ZIP shares -- as the PLACES rates are tested above."""
+    j = cohort.join(_race_shares(), on="modzcta", how="left")
+    assert j[f"src_{group}"].null_count() == 0, "veterans in ZIPs with no B03002 row"
+    col = "ethnicity" if group == "Hispanic" else "race"
+    realised = (j[col] == group).mean()
+    source = j[f"src_{group}"].mean()
+    assert abs(realised / source - 1) < 0.10, (
+        f"{group}: realised {realised:.1%}, ZIP-weighted ACS B03002 {source:.1%}")
+
+
+def test_race_gradient_survives_into_the_cohort(cohort: pl.DataFrame) -> None:
+    """A citywide [55/27/8/10] split would pass the average test above. It cannot pass this:
+    where ACS says a ZIP is mostly Black, the cohort's veterans there must be mostly Black."""
+    j = cohort.join(_race_shares(), on="modzcta", how="left")
+    hi = j.filter(pl.col("src_Black") >= 0.5)
+    lo = j.filter(pl.col("src_Black") <= 0.1)
+    assert hi.height >= 200 and lo.height >= 200, "too few veterans to compare the two ends"
+    assert (hi["race"] == "Black").mean() > 0.4, "majority-Black ZIPs came out under 40% Black"
+    assert (lo["race"] == "Black").mean() < 0.15, "ZIPs under 10% Black came out over 15% Black"
+
+
+def test_minority_share_agrees_with_cdc_svi_by_borough(cohort: pl.DataFrame) -> None:
+    """An independent check on a different source. CDC SVI `EP_MINRTY` is the share of
+    residents who are anything but non-Hispanic white, per census tract. Population-weighted
+    to borough it must land near the cohort's share, or B03002 was read wrongly."""
+    svi = (pl.read_parquet(REF / "svi_nyc_tract.parquet")
+             .filter((pl.col("EP_MINRTY") >= 0) & (pl.col("E_TOTPOP") > 0))
+             .group_by("borough")
+             .agg(((pl.col("EP_MINRTY") / 100) * pl.col("E_TOTPOP")).sum().alias("m"),
+                  pl.col("E_TOTPOP").sum().alias("pop")))
+    svi = svi.with_columns((pl.col("m") / pl.col("pop")).alias("svi_minority"))
+    ours = cohort.group_by("borough").agg(
+        (~((pl.col("race") == "White") & (pl.col("ethnicity") == "Non-Hispanic")))
+        .mean().alias("minority"))
+    j = svi.join(ours, on="borough", how="inner")
+    assert j.height == 5
+    for row in j.iter_rows(named=True):
+        assert abs(row["minority"] - row["svi_minority"]) < 0.10, (
+            f"{row['borough']}: cohort {row['minority']:.1%} non-white-non-Hispanic, "
+            f"CDC SVI says {row['svi_minority']:.1%}")
+
+
 def test_hazard_exposure_is_the_real_zip_join(cohort: pl.DataFrame) -> None:
     evac = pl.read_parquet(REF / "evac_zone_by_modzcta.parquet").select("modzcta", "evac_zone_min")
     storm = pl.read_parquet(REF / "stormwater_by_modzcta.parquet").rename(
