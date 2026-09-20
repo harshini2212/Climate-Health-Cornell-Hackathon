@@ -202,6 +202,17 @@ def test_the_medication_block_is_every_term_that_reads_a_medication_column() -> 
         assert name not in block, f"{name} is not a medication term"
 
 
+def test_the_climate_ablation_drops_every_term_that_is_zero_on_a_calm_day() -> None:
+    """SPEC §11's first row: what the model is worth if it has never heard of weather."""
+    climate = next(a for a in ablate.ABLATIONS if a.key == "climate")
+    for name in ("delta_heat", "eps_pm25", "psi_sitedown", "zeta_flood", "kappa_outage",
+                 "theta_sitedown_x_sitedependent", "theta_mail_x_supply"):
+        assert set(design.TERM_BY_NAME[name].feature_names) <= set(climate.features), name
+    # ...and nothing a veteran carries every day of the year.
+    for name in ("alpha", "beta_copd", "beta_dialysis", "sigma_no_caregiver"):
+        assert not set(design.TERM_BY_NAME[name].feature_names) & set(climate.features), name
+
+
 def test_the_heat_lag_ablation_keeps_the_same_day_term() -> None:
     """Dropping delta_heat entirely would measure "does heat matter", a different question."""
     heat = next(a for a in ablate.ABLATIONS if a.key == "heat_lags")

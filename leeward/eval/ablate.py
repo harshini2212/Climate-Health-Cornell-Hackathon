@@ -131,7 +131,14 @@ class Ablation:
     claim: str
 
 
+#: Every term that is zero on a calm day: the hazards, their lag curves and the interactions
+#: built on them. Dropping the lot leaves a static risk score that has never heard of weather.
+CLIMATE_TERMS: tuple[str, ...] = tuple(t.name for t in design.TERMS if t.kind == "hazard")
+
 ABLATIONS: tuple[Ablation, ...] = (
+    Ablation("climate", "every climate term (hazards, lags, interactions)",
+             term_features(*CLIMATE_TERMS),
+             "the whole premise -- does the weather change who the team calls?"),
     Ablation("psi_sitedown", "psi_sitedown",
              term_features("psi_sitedown"),
              "every patient of a closed VA station is harder to treat"),
@@ -380,8 +387,8 @@ def bar_chart(result: Result) -> go.Figure:
                                      f"block the care team is better off without"),
                             "font": {"color": INK_2, "size": 13}},
                "font": {"color": INK, "size": 18}, "x": 0.02, "xanchor": "left"},
-        width=880, height=140 + 54 * max(dropped.height, 1),
-        margin={"l": 248, "r": 40, "t": 118, "b": 56},
+        width=940, height=140 + 54 * max(dropped.height, 1),
+        margin={"l": 300, "r": 40, "t": 118, "b": 56},
         paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
         font={"family": 'system-ui, -apple-system, "Segoe UI", sans-serif', "color": INK_2},
         xaxis={"title": {"text": "Severity-weighted events averted per day, forgone",
@@ -432,7 +439,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"rung {score_prior.RUNG} · {len(ABLATIONS) + 1} models × {cohort.height:,} "
           f"veterans × {len(dates)} days ({dates[0]} .. {dates[-1]}) · {args.k} calls a day · "
           f"{args.draws} draws, seed {args.seed} · {secs:.1f}s")
-    with pl.Config(tbl_rows=len(ABLATIONS) + 2, tbl_width_chars=150, fmt_str_lengths=40):
+    with pl.Config(tbl_rows=len(ABLATIONS) + 2, tbl_width_chars=170, fmt_str_lengths=60):
         print(result.table.select("dropped", "n_features", "ece", "d_ece",
                                   "harm_averted_at_k", "d_harm_averted"))
     if args.k != K_CALLS:
