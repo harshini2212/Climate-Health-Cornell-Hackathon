@@ -7,18 +7,26 @@ import {
   NEEDS,
   type CalibrationBin,
   type DecisionQualityRow,
+  type DiscriminationRow,
   type RecoveryRow,
   type ReportResponse,
 } from "../lib/types";
 
 /**
- * The model report: the four claims this project is allowed to make on stage, each one
+ * The model report: the five claims this project is allowed to make on stage, each one
  * drawn from `report/report.json` exactly as `make report` wrote it.
  *
- *   1. recovery      — does the fit find the world the simulator built?
- *   2. reliability   — when it says 3 %, does it happen 3 % of the time?
- *   3. harm averted  — does the ranking beat oldest-first, most-conditions-first, random?
- *   4. fairness      — do the misses fall evenly across groups?
+ *   1. recovery        — does the fit find the world the simulator built?
+ *   2. reliability     — when it says 3 %, does it happen 3 % of the time?
+ *   3. discrimination  — can it tell today's sick veteran from today's well one?
+ *   4. harm averted    — does the ranking beat oldest-first, most-conditions-first, random?
+ *   5. fairness        — do the misses fall evenly across groups?
+ *
+ * 2 and 3 belong together and neither ships alone. A constant number equal to the base rate
+ * scores a *perfect* ECE on section 2's own bins — it is drawn there, as a hollow diamond on
+ * the diagonal — so reliability by itself cannot separate Leeward from a predictor that has
+ * never met anyone. Section 3 is what can. Together with 4 they are the three legs TRIPOD+AI
+ * asks for: discrimination, calibration, clinical utility.
  *
  * Titles and subtitles are the ones `leeward/eval/*.py` puts on the offline Plotly charts,
  * so the screen and `report/*.html` cannot end up claiming different things.
@@ -196,8 +204,9 @@ interface LogScale { lo: number; hi: number }
  * and a breathing day at 0.6%; on a linear 0–1 axis all five needs would sit in the corner.
  * The scale is shared by all five panels, so they can be read against each other.
  */
-function Reliability({ need, bins, ece, scale }: {
-  need: string; bins: CalibrationBin[]; ece: number | undefined; scale: LogScale;
+function Reliability({ need, bins, ece, constant, scale }: {
+  need: string; bins: CalibrationBin[]; ece: number | undefined;
+  constant: number | undefined; scale: LogScale;
 }) {
   const W = 210, H = 210, padL = 34, padR = 10, padT = 10, padB = 28;
   const lg = (v: number) => Math.log10(Math.max(v, scale.lo));
@@ -208,6 +217,11 @@ function Reliability({ need, bins, ece, scale }: {
   const maxN = Math.max(1, ...pts.map((p) => p.n));
   const ticks = [0.002, 0.01, 0.05, 0.1].filter((t) => t >= scale.lo && t <= scale.hi);
   const path = pts.map((p, i) => `${i ? "L" : "M"}${x(p.predicted).toFixed(1)},${y(p.observed).toFixed(1)}`).join(" ");
+  // The need's base rate, read off the bins the same way `calibration.base_rates` does:
+  // Σ(n · observed) / Σ n. That is where the constant-predictor control sits, and it is on
+  // the diagonal — perfectly calibrated, and it has never met anyone.
+  const rows = pts.reduce((s, p) => s + p.n, 0);
+  const base = rows ? pts.reduce((s, p) => s + p.n * p.observed, 0) / rows : null;
 
   return (
     <div className="relpanel">
@@ -215,6 +229,13 @@ function Reliability({ need, bins, ece, scale }: {
         <span className="rl" title={NEED_LABEL[need] ?? need}>{NEED_SHORT[need] ?? need}</span>
         <span className={ece !== undefined && ece > 0.03 ? "re red" : "re"}>
           ECE {ece === undefined ? "—" : NUM(ece, 4)}
+        </span>
+        <span className="re" style={{ opacity: 0.75 }}
+              title={"A single number equal to this need's base rate, scored on the same "
+                     + "equal-mass bins. It is 0.0000 by construction: every row ties, so the "
+                     + "one bin's predicted IS its observed. ECE cannot tell the model apart "
+                     + "from it — discrimination can, in section 3."}>
+          constant {constant === undefined ? "—" : NUM(constant, 4)}
         </span>
       </div>
       <svg className="chart2" viewBox={`0 0 ${W} ${H}`}>
@@ -235,6 +256,15 @@ function Reliability({ need, bins, ece, scale }: {
             <title>predicted {PCT(p.predicted, 2)} · observed {PCT(p.observed, 2)} · {fmtInt(p.n)} veteran-days</title>
           </circle>
         ))}
+        {base !== null && base > 0 && (
+          <g transform={`translate(${x(base).toFixed(1)} ${y(base).toFixed(1)})`}>
+            <path d="M0,-5 L5,0 L0,5 L-5,0 Z" fill="none" stroke="var(--ink2)" strokeWidth="1.5" />
+            <title>
+              A constant at the base rate, {PCT(base, 2)}: ECE {constant === undefined ? "—" : NUM(constant, 4)}.
+              Exactly on the diagonal, and it knows nothing about anyone.
+            </title>
+          </g>
+        )}
         <text className="axl" x={W - padR} y={H - 3} textAnchor="end">predicted →</text>
       </svg>
     </div>
@@ -248,6 +278,8 @@ function Calibration({ report }: { report: ReportResponse }) {
     return { lo: Math.min(...vals) * 0.7, hi: Math.max(...vals) * 1.4 };
   }, [report.calibration]);
   const worst = Object.entries(report.ece_by_need).sort((a, b) => b[1] - a[1])[0];
+  const control = report.constant_ece && Object.keys(report.constant_ece).length
+    ? report.constant_ece : null;
 
   if (!report.calibration.length) {
     return (
@@ -270,19 +302,239 @@ function Calibration({ report }: { report: ReportResponse }) {
         are log and shared across the five panels; the dot area is how many veteran-days
         fell in that bin. On the dashed line the model said it and it happened.
       </p>
+      {control && (
+        <div className="auditbanner warn">
+          <span className="ic ic-medium"><IconAlert /></span>
+          <span>
+            <b>What this chart cannot tell you.</b>
+            <div className="muted" style={{ marginTop: 2 }}>
+              The hollow diamonds are a single number equal to each need&rsquo;s base rate,
+              scored on these same bins. It lands on the diagonal at{" "}
+              <b>ECE {NUM(Math.max(...Object.values(control)), 4)}</b> or better on every
+              need — that is, <b>better calibrated than Leeward</b>, while knowing nothing
+              about anyone. It is zero by construction: every row ties, so the one bin&rsquo;s
+              predicted <i>is</i> its observed &mdash; and it is zero under <i>any</i> binning
+              and any smoother, because calibration error is proper but not <i>strictly</i>{" "}
+              proper: it drops the sharpness term. No better calibration metric fixes this.
+              What fixes it is a strictly proper score, and the Brier skill score in section 3
+              is one: that same constant scores <b>0.000</b> there, and it is the honest place
+              to look for whether this model beats it. Calibration is necessary here and
+              nowhere near sufficient.
+            </div>
+          </span>
+        </div>
+      )}
       <div className="rel">
         {NEEDS.filter((n) => report.calibration.some((b) => b.need === n)).map((n) => (
           <Reliability key={n} need={n} scale={scale}
                        bins={report.calibration.filter((b) => b.need === n)}
-                       ece={report.ece_by_need[n]} />
+                       ece={report.ece_by_need[n]} constant={control?.[n]} />
         ))}
+      </div>
+      <div className="legend">
+        <span><i style={{ background: "var(--accent)", height: 9, width: 9, borderRadius: 9 }} /> Leeward, one dot per equal-mass bin</span>
+        <span>◇ a constant at the base rate — perfectly calibrated, and useless</span>
       </div>
     </div>
   );
 }
 
 // --------------------------------------------------------------------------- #
-// 3. Harm averted, against the three baselines
+// 3. Discrimination — the leg the calibration screen cannot carry
+// --------------------------------------------------------------------------- #
+
+/**
+ * A dumbbell per need: pooled AUC hollow, within-day AUC filled, the day effect between them.
+ *
+ * Within-day AUC is the headline because the care team picks a list from the people scored
+ * *today*; pooled AUC also gets credit for knowing today is a heat wave, which nobody can act
+ * on. Both ends are always drawn — showing the pooled number alone is exactly the omission
+ * this section was added to fix.
+ */
+function Dumbbell({ rows }: { rows: DiscriminationRow[] }) {
+  const scored = rows.filter((r) => r.within_day_auc != null && r.pooled_auc != null);
+  const vals = scored.flatMap((r) => [r.within_day_auc!, r.pooled_auc!]);
+  const lo = Math.min(0.5, ...vals) - 0.03;
+  const hi = Math.max(0.9, ...vals) + 0.03;
+  // padL holds the need label: `NEED_SHORT`, because `NEED_LABEL`'s "Treatment or medication
+  // gap" is 160 viewBox units wide at this size and `.chart2` is overflow:visible, so it
+  // silently runs off the left of the card rather than being clipped into view.
+  const rowH = 36, padL = 132, padR = 52, padT = 22;
+  const W = 560, H = padT + scored.length * rowH + 34;
+  const x = (v: number) => padL + ((v - lo) / (hi - lo)) * (W - padL - padR);
+  const yOf = (i: number) => padT + i * rowH + rowH / 2;
+  const ticks = [0.5, 0.6, 0.7, 0.8, 0.9].filter((t) => t >= lo && t <= hi);
+
+  return (
+    <svg className="chart2" viewBox={`0 0 ${W} ${H}`}>
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={x(t)} x2={x(t)} y1={padT - 6} y2={H - 28}
+                stroke={t === 0.5 ? "var(--faint)" : "var(--line2)"} strokeWidth="1"
+                strokeDasharray={t === 0.5 ? "4 3" : undefined} />
+          <text className="axl" x={x(t)} y={H - 14} textAnchor="middle">{NUM(t, 1)}</text>
+        </g>
+      ))}
+      <text className="axl" x={x(0.5)} y={padT - 10} textAnchor="middle">coin flip</text>
+      {scored.map((r, i) => {
+        const within = r.within_day_auc!, pooled = r.pooled_auc!;
+        return (
+          <g key={r.need}>
+            <text x={padL - 10} y={yOf(i) + 4} textAnchor="end"
+                  style={{ fontSize: 12.5, fontWeight: 600, fill: "var(--ink)" }}>
+              {NEED_SHORT[r.need] ?? r.need}
+              <title>{NEED_LABEL[r.need] ?? r.need}</title>
+            </text>
+            <line x1={x(Math.min(within, pooled))} x2={x(Math.max(within, pooled))}
+                  y1={yOf(i)} y2={yOf(i)} stroke="var(--line)" strokeWidth="3.5"
+                  strokeLinecap="round" />
+            {/* Drawn a shade wider than the filled marker so that a need with no day effect
+                (breathing: 0.581 either way) shows a ring around a dot rather than the
+                pooled marker silently disappearing underneath it. */}
+            <circle cx={x(pooled)} cy={yOf(i)} r="7.5" fill="none"
+                    stroke="var(--faint)" strokeWidth="2">
+              <title>
+                {NEED_LABEL[r.need] ?? r.need} pooled AUC {NUM(pooled, 3)} — includes credit
+                for knowing which day was hot, which the team cannot act on.
+              </title>
+            </circle>
+            <circle cx={x(within)} cy={yOf(i)} r="6.5" fill="var(--accent)"
+                    stroke="var(--panel)" strokeWidth="1.5">
+              <title>
+                {NEED_LABEL[r.need] ?? r.need} within-day AUC {NUM(within, 3)} — the mean over
+                {" "}{r.n_days} held-out days of that day&rsquo;s own AUC. PR-AUC{" "}
+                {r.pr_auc == null ? "—" : NUM(r.pr_auc, 3)} at a {PCT(r.base_rate, 2)} base rate.
+              </title>
+            </circle>
+            <text x={W - padR + 8} y={yOf(i) + 4}
+                  style={{ fontSize: 12.5, fontWeight: 600, fill: "var(--ink)", fontVariantNumeric: "tabular-nums" }}>
+              {NUM(within, 3)}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function Discrimination({ report }: { report: ReportResponse }) {
+  const rows = report.discrimination ?? [];
+  const ordered = useMemo(
+    () => [...rows].sort((a, b) => (b.within_day_auc ?? -1) - (a.within_day_auc ?? -1)),
+    [rows],
+  );
+  const best = ordered.find((r) => r.within_day_auc != null);
+
+  if (!rows.length) {
+    return (
+      <NotRun what="Discrimination has not been measured in this report"
+              cmd="python -m leeward.eval.discrimination"
+              why="Without it the calibration panel above is the only evidence, and a constant
+                   at the base rate beats the model on that." />
+    );
+  }
+  return (
+    <div className="card">
+      <div className="ch">
+        <h3>Discrimination: who does the model put at the top of today&rsquo;s list?</h3>
+        <span className="sp" />
+        <span className="pillbadge pill-healthy">
+          best need {best ? `${NEED_LABEL[best.need] ?? best.need} ${NUM(best.within_day_auc!, 3)}` : "—"} within-day
+        </span>
+      </div>
+      <p className="lede" style={{ marginBottom: 12 }}>
+        Held-out window. <b>Within-day AUC</b> is the mean over days of that day&rsquo;s own
+        AUC — the number that justifies a call list, because the list is chosen from the people
+        scored today. <b>Pooled AUC</b> is the hollow marker: higher, but partly credit for
+        knowing today is a heat wave, which the team cannot act on. The gap between the two is
+        the size of the day effect. <b>Skill vs constant</b> is the Brier skill score, where
+        the predictor that beats Leeward on ECE scores <b>0.000</b> &mdash; a strictly proper
+        score cannot ignore sharpness the way ECE does. Read that column honestly: it is
+        positive where the event is common enough to learn from and at or below zero on the
+        rarest needs, which rank above chance but are not yet scaled well enough to beat the
+        base rate. That is what a prior-only rung 0 looks like. Together with the reliability
+        curve above and the harm averted below, these are the three legs{" "}
+        <a href="https://pmc.ncbi.nlm.nih.gov/articles/PMC11019967/" target="_blank" rel="noreferrer">TRIPOD+AI</a>{" "}
+        asks a clinical prediction model to report.
+      </p>
+      <Dumbbell rows={ordered} />
+      <div className="legend" style={{ marginBottom: 10 }}>
+        <span><i style={{ background: "var(--accent)", height: 9, width: 9, borderRadius: 9 }} /> within-day AUC — the call-list number</span>
+        <span><i style={{ background: "var(--panel)", border: "2px solid var(--faint)", height: 9, width: 9, borderRadius: 9 }} /> pooled AUC — includes the day effect</span>
+      </div>
+      <div className="tablewrap auto">
+        <table>
+          <thead>
+            <tr>
+              <th>Need</th>
+              <th className="n">Within-day AUC</th>
+              <th className="n">Pooled AUC</th>
+              <th className="n" title="Brier skill score: 0 is a constant at the base rate, 1 is perfect.">
+                Skill vs constant
+              </th>
+              <th className="n">PR-AUC</th>
+              <th className="n">Base rate</th>
+              <th className="n">Top 1% of the day</th>
+              <th className="n">Top 10%</th>
+              <th className="n">Days scored</th>
+              <th className="n">Events</th>
+            </tr>
+          </thead>
+          <tbody>
+            {ordered.map((r) => (
+              <tr key={r.need}>
+                <td>{NEED_LABEL[r.need] ?? r.need}</td>
+                <td className="n"><b>{r.within_day_auc == null ? "—" : NUM(r.within_day_auc, 3)}</b></td>
+                <td className="n muted">{r.pooled_auc == null ? "—" : NUM(r.pooled_auc, 3)}</td>
+                <td className="n" title={r.brier == null ? undefined
+                  : `Brier ${NUM(r.brier, 4)} against a null-model Brier of `
+                    + `${NUM(r.base_rate * (1 - r.base_rate), 4)}.`}>
+                  {/* Signed on purpose: negative means worse than knowing nothing, and that
+                      has to be unmissable rather than a small number among other numbers. */}
+                  <b className={r.scaled_brier != null && r.scaled_brier < 0 ? "red" : undefined}>
+                    {r.scaled_brier == null ? "—"
+                      : `${r.scaled_brier >= 0 ? "+" : "−"}${NUM(Math.abs(r.scaled_brier), 3)}`}
+                  </b>
+                </td>
+                <td className="n">{r.pr_auc == null ? "—" : NUM(r.pr_auc, 3)}</td>
+                <td className="n muted">{PCT(r.base_rate, 2)}</td>
+                <td className="n" title={r.lift_ceiling_1pct == null ? undefined
+                  : `The most any predictor could score here is ${NUM(r.lift_ceiling_1pct, 1)}× — `
+                    + "at this base rate there are not enough events to fill the list."}>
+                  {r.lift_at_1pct == null ? "—" : `${NUM(r.lift_at_1pct, 1)}×`}
+                  {r.lift_ceiling_1pct == null ? null : (
+                    <span className="muted"> of {NUM(r.lift_ceiling_1pct, 1)}×</span>
+                  )}
+                </td>
+                <td className="n">{r.lift_at_10pct == null ? "—" : `${NUM(r.lift_at_10pct, 1)}×`}</td>
+                <td className="n muted">{r.n_days_total ? `${r.n_days}/${r.n_days_total}` : r.n_days}</td>
+                <td className="n muted">{fmtInt(r.n_events)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="muted" style={{ fontSize: 12.5, marginTop: 10, marginBottom: 0 }}>
+        Within-day AUC is the <b>unweighted mean of per-day c-statistics</b> — one vote per
+        day, because the team has a budget on the quiet day too. (TRIPOD-Cluster asks which
+        version you computed; a pairs-weighted mean answers &ldquo;the typical comparison&rdquo;
+        rather than &ldquo;the typical day&rdquo; and would differ slightly.) Lift is measured
+        on each day&rsquo;s own top slice, because the budget arrives every morning: calling
+        the window&rsquo;s top 1% in one pass would spend a month of calls on the heat wave and
+        nobody on the other twenty-nine days. Lift is shown against its ceiling, min(1/q,
+        1/base rate), since at these base rates there are not enough events to fill the list
+        however good the ranking. <b>PR-AUC is secondary, not the headline</b> — it depends on
+        prevalence and ignores true negatives, and current guidance (STRATOS TG6, 2025)
+        advises against preferring it to AUROC even under class imbalance. A day on which the
+        need never happened has no ranking to score and is dropped; that conditions on the
+        outcome, so the days column shows scored over total.
+      </p>
+    </div>
+  );
+}
+
+// --------------------------------------------------------------------------- #
+// 4. Harm averted, against the three baselines
 // --------------------------------------------------------------------------- #
 
 const STRATEGY_ORDER = ["leeward", "rank_by_chronic", "rank_by_age", "random"];
@@ -576,6 +828,8 @@ export function Report({ onSource }: { onSource: (s: Source) => void }) {
 
   const missed = report.recovery.filter((r) => !r.covered).length;
   const eces = Object.entries(report.ece_by_need).sort((a, b) => b[1] - a[1]);
+  const bestAuc = [...(report.discrimination ?? [])]
+    .sort((a, b) => (b.within_day_auc ?? -1) - (a.within_day_auc ?? -1))[0];
   const flagged = report.fairness.filter((f) => f.flagged).length;
   const audited = report.fairness.length;
   const ks = [...new Set(report.decision_quality.map((r) => r.k))].sort((a, b) => a - b);
@@ -626,7 +880,22 @@ export function Report({ onSource }: { onSource: (s: Source) => void }) {
             <div className="v">{eces.length ? NUM(eces[0][1], 4) : "—"}</div>
             <span className={eces.length && eces[0][1] > 0.03 ? "pillbadge pill-critical" : "pillbadge pill-healthy"}>bar 0.03</span>
           </div>
-          <div className="s">{eces.length ? `${NEED_LABEL[eces[0][0]] ?? eces[0][0]} · mean ${NUM(eces.reduce((s, e) => s + e[1], 0) / eces.length, 4)}` : "not run"}</div>
+          <div className="s" title={"A constant at the base rate scores 0.0000 on the same "
+                                    + "bins. Calibration is necessary and not sufficient here."}>
+            {eces.length ? `${NEED_LABEL[eces[0][0]] ?? eces[0][0]} · a constant scores 0.0000` : "not run"}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="k">Discrimination, best need</div>
+          <div className="vrow">
+            <div className="v">{bestAuc?.within_day_auc != null ? NUM(bestAuc.within_day_auc, 3) : "—"}</div>
+            <span className="muted" style={{ fontSize: 12 }}>within-day AUC</span>
+          </div>
+          <div className="s">
+            {bestAuc?.within_day_auc != null
+              ? `${NEED_LABEL[bestAuc.need] ?? bestAuc.need} · ${NUM(bestAuc.pooled_auc ?? 0, 3)} pooled, before the day effect comes out`
+              : "not measured — run make report"}
+          </div>
         </div>
         <div className="stat hero">
           <div className="k">Harm averted at {mid ?? 40} actions/day</div>
@@ -652,21 +921,26 @@ export function Report({ onSource }: { onSource: (s: Source) => void }) {
       <h2>2 · When it says 3%, does it happen 3% of the time?</h2>
       <Calibration report={report} />
 
-      <h2>3 · Does the ranking avert more harm than the alternatives?</h2>
+      <h2>3 · Can it tell today&rsquo;s sick veteran from today&rsquo;s well one?</h2>
+      <Discrimination report={report} />
+
+      <h2>4 · Does the ranking avert more harm than the alternatives?</h2>
       <div className="row g2">
         <DecisionQuality report={report} />
         <Ablations report={report} />
       </div>
 
-      <h2>4 · Do the misses fall evenly?</h2>
+      <h2>5 · Do the misses fall evenly?</h2>
       <Fairness report={report} />
 
       <p className="muted" style={{ fontSize: 12.5 }}>
         Every number on this screen is <code>report/report.json</code> as <code>make report</code>{" "}
-        wrote it, drawn without filtering. The same run also writes{" "}
+        wrote it, drawn without filtering — including the constant-predictor control, which
+        beats the model on calibration. The same run also writes{" "}
         <code>report/recovery.csv</code>, <code>calibration.csv</code>,{" "}
-        <code>decision_quality.csv</code> and <code>fairness.csv</code>, plus offline Plotly
-        copies of these four charts. Outcomes are simulated and the cohort is synthetic.
+        <code>discrimination.csv</code>, <code>decision_quality.csv</code> and{" "}
+        <code>fairness.csv</code>, plus offline Plotly copies of these five charts. Outcomes
+        are simulated and the cohort is synthetic.
       </p>
     </div>
   );

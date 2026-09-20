@@ -236,6 +236,52 @@ def test_fairness_audit_is_never_suppressed() -> None:
     assert "flagged" in src, "fairness.py must mark groups whose relative FNR gap exceeds 20 pct"
 
 
+def test_the_calibration_claim_never_ships_without_its_control() -> None:
+    """A constant at the base rate scores ECE 0.0000 on `calibration.py`'s own bins -- better
+    than the model. So the reliability curve alone is not evidence, and anything that reports
+    `ece_by_need` has to report `constant_ece` beside it and the discrimination table with it.
+
+    This is the same rule as the fairness audit's: the uncomfortable number is displayed,
+    never suppressed. It is a guardrail rather than a comment because the tempting edit --
+    quietly dropping the control from the payload the day before the demo -- is a one-line
+    edit that no diff review would catch.
+    """
+    cal = _mod("leeward.eval.calibration")
+    disc = _mod("leeward.eval.discrimination")
+    pairs = cal.paired(table("scores"), table("outcomes"))
+
+    control = cal.constant_ece(pairs)
+    assert set(control) == set(NEEDS), "the control must cover every need, not a chosen few"
+    model = cal.ece(cal.reliability(pairs))
+    assert all(control[k] <= model[k] + 1e-12 for k in NEEDS), (
+        "a constant at the base rate no longer beats the model on ECE. If that is real, the "
+        "caveats in calibration.py, report.py and Report.tsx are now wrong -- fix them.")
+
+    # Both legs reach the payload the API serves and the screen draws.
+    report_src = Path(inspect.getfile(_mod("leeward.eval.report"))).read_text(encoding="utf-8")
+    for key in ("constant_ece", "discrimination"):
+        assert re.search(rf'"{key}":', report_src), (
+            f"report.py no longer puts {key} in report.json; the Model report screen would "
+            "show the calibration curve as if it were the whole case for the model")
+    screen = (ROOT / "ui" / "src" / "screens" / "Report.tsx").read_text(encoding="utf-8")
+    assert "constant_ece" in screen and "within_day_auc" in screen, (
+        "Report.tsx no longer renders the control or within-day AUC")
+
+    # Within-day AUC is the number that justifies a call list; pooled is partly the weather.
+    got = disc.discriminate(pairs)
+    assert {"within_day_auc", "pooled_auc"} <= set(got.columns), (
+        "discrimination.py must report within-day AUC beside pooled, never pooled alone")
+
+    # And the strictly proper score, which is the only place the constant does not win.
+    # Without it the honest version of this story has no ending.
+    assert "scaled_brier" in got.columns, (
+        "the Brier skill score is gone. It is the answer to the ECE result above: a constant "
+        "at the base rate scores 0.0 on it by construction, so it is the one number that "
+        "makes the comparison fair.")
+    assert disc.scaled_brier([float(pairs["y"].mean())] * pairs.height, pairs["y"]) == \
+        pytest.approx(0.0, abs=1e-12), "the skill score's null model is no longer the base rate"
+
+
 def test_model_rung_is_recorded() -> None:
     """You have to be able to say on stage which rung actually fitted."""
     s = table("scores")

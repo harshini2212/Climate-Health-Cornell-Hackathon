@@ -107,6 +107,16 @@ Within-day is the honest column: the call list is chosen within a day, so pooled
 partly "was today a heat wave", which is not a decision. Heat drops 0.844 → 0.728 when you
 take the day effect out. That is still a real, defensible, prior-only number.
 
+> **Correction, once C5 was built** (`leeward/eval/discrimination.py`, 20 Sep). The AUC and
+> PR-AUC columns reproduce exactly. **The two lift columns above are pooled over the window**,
+> and the shipped module selects each day's own top slice instead — for the same reason the
+> AUC column is within-day. Heat's lift@1% is **10.7× per day** against 18.2× pooled; the
+> pooled figure spends a month of call budget on the heat wave and calls nobody on the other
+> twenty-nine days. The needs with no day effect are unchanged either way (breathing 3.3×,
+> mental 2.8×). `treatment_gap` also drifted with the cohort since this table was written
+> (within-day 0.715, PR-AUC 0.178, base rate 1.90%). The live numbers are
+> `report/discrimination.csv`.
+
 [TRIPOD+AI](https://pmc.ncbi.nlm.nih.gov/articles/PMC11019967/) — the 2024 reporting
 standard for clinical prediction models — names three things: **discrimination,
 calibration, clinical utility**. Leeward reports calibration and clinical utility. The

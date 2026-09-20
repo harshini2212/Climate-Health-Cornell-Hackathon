@@ -13,6 +13,12 @@ What it says, and what it refuses to say:
 - Recovery at rung 0 is prior coverage rather than parameter recovery. The contract has
   nowhere to put that word, so it is carried by `model_rung: 0` with a null `rhat_max`, and
   said plainly in `report/recovery.csv`, in the chart's subtitle and on the console.
+- **`constant_ece` ships beside `ece_by_need`, and it is the better number.** A single value
+  equal to each need's base rate scores ECE 0.0000; the model scores 0.001-0.008. Suppressing
+  that would make the calibration screen say more than it can support, so `discrimination`
+  goes out with it -- within-day AUC, pooled AUC, PR-AUC and lift, which is what actually
+  separates Leeward from a predictor that has never met anyone. TRIPOD+AI asks for all three
+  legs; this payload now carries them.
 - `ablations` is read from `report/ablations.json`, which `make ablate` writes. An empty
   list still means "not run" -- six models over the real cohort is half a minute, too slow
   to sit inside a target that is re-run every few edits, and a stale table would be worse
@@ -38,6 +44,7 @@ from leeward import schema
 from leeward.api.schemas import ReportResponse
 from leeward.eval import calibration as cal
 from leeward.eval import decision_quality as dq
+from leeward.eval import discrimination as disc
 from leeward.eval import fairness as fair
 from leeward.eval import recovery as rec
 
@@ -70,6 +77,7 @@ class Report:
     """The JSON the API serves, plus the frames the CSVs and charts are written from."""
     payload: dict
     calibration: pl.DataFrame
+    discrimination: pl.DataFrame
     recovery: pl.DataFrame
     fairness: pl.DataFrame
     decision_quality: pl.DataFrame
@@ -81,6 +89,7 @@ class Report:
         path.write_text(json.dumps(self.payload, indent=2) + "\n", encoding="utf-8")
         written = [path]
         written += list(cal.write_outputs(self.calibration, out_dir))
+        written += list(disc.write_outputs(self.discrimination, out_dir))
         written += list(rec.write_outputs(self.recovery, out_dir))
         written += list(fair.write_outputs(self.fairness, out_dir))
         written += list(dq.write_outputs(self.decision_quality, out_dir))
@@ -95,7 +104,11 @@ def assemble(*, scores: pl.DataFrame, outcomes: pl.DataFrame, cohort: pl.DataFra
     """Run the whole harness over one held-out window."""
     dates = cal.holdout_dates(scores, outcomes) if dates is None else list(dates)
 
-    reliability = cal.run(scores, outcomes, dates=dates)
+    # Paired once and shared: calibration, its control and discrimination all want the same
+    # 1.5M-row frame, and the join to outcomes is the expensive part of the harness.
+    pairs = cal.paired(scores, outcomes, dates=dates)
+    reliability = cal.reliability(pairs)
+    discrimination = disc.discriminate(pairs)
     recovered = rec.run(n_draws=n_draws, seed=seed, posterior=posterior)
     audit = fair.audit(scores, outcomes, cohort, dates=dates)
     w, tau = dq.decision_weights()
@@ -111,6 +124,11 @@ def assemble(*, scores: pl.DataFrame, outcomes: pl.DataFrame, cohort: pl.DataFra
         "recovery_coverage": rec.coverage(recovered),
         "calibration": reliability.select("need", "predicted", "observed", "n").to_dicts(),
         "ece_by_need": cal.ece(reliability),
+        # The control goes out with the claim. It is better than the model's ECE, which is
+        # the finding, and the screen shows it: see `DiscriminationRow` for what does separate
+        # the model from a single number at the base rate.
+        "constant_ece": cal.constant_ece(pairs),
+        "discrimination": discrimination.to_dicts(),
         "ablations": list(load_ablations() if ablations is None else ablations),
         "decision_quality": dq.summarise(tidy).select("k", "strategy",
                                                       "harm_averted").to_dicts(),
@@ -119,8 +137,8 @@ def assemble(*, scores: pl.DataFrame, outcomes: pl.DataFrame, cohort: pl.DataFra
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
     }
     ReportResponse.model_validate(payload)   # fail here, not in the route, if a shape drifts
-    return Report(payload=payload, calibration=reliability, recovery=recovered,
-                  fairness=audit, decision_quality=tidy)
+    return Report(payload=payload, calibration=reliability, discrimination=discrimination,
+                  recovery=recovered, fairness=audit, decision_quality=tidy)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -146,8 +164,20 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"  r-hat max {p['rhat_max']:.3f} · {p['divergences']} divergences")
     for need, value in p["ece_by_need"].items():
+        control = p["constant_ece"].get(need, 0.0)
         print(f"  ECE {need:14s} {value:.4f}"
-              f"{'' if value < cal.ECE_BAR else '   over the SPEC §11 bar'}")
+              f"{'' if value < cal.ECE_BAR else '   over the SPEC §11 bar'}"
+              f"   · a constant at the base rate scores {control:.4f}")
+    print("  ECE cannot separate the model from that constant at these base rates. "
+          "Discrimination can:")
+    for row in p["discrimination"]:
+        within, pooled = row["within_day_auc"], row["pooled_auc"]
+        if within is None or pooled is None:
+            print(f"  AUC {row['need']:14s} not measurable: "
+                  f"{row['n_events']} events in {row['n']:,} rows")
+            continue
+        print(f"  AUC {row['need']:14s} within-day {within:.3f}  (pooled {pooled:.3f}, "
+              f"PR-AUC {row['pr_auc']:.3f}, top 1% of the day {row['lift_at_1pct']:.1f}x)")
     n_ablations = len(p["ablations"])
     print(f"  ablations {n_ablations} block(s) from report/ablations.json" if n_ablations
           else "  ablations not run -- `make ablate` fills the card on the Model report screen")

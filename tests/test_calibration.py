@@ -185,6 +185,85 @@ def test_outputs_are_a_tidy_csv_and_an_offline_plotly_chart(tmp_path) -> None:
         "the calibration plot loads plotly.js from the network; it must open with the wifi off")
 
 
+# --------------------------------------------------------------------------- #
+# The control: what a predictor that has never met anyone scores here
+# --------------------------------------------------------------------------- #
+
+def test_a_constant_at_the_base_rate_scores_zero_ece_exactly() -> None:
+    """The finding, asserted rather than hoped for. P(Y | f(X) = π) = π by definition, so the
+    calibration error of a constant is zero for any data -- not a quirk of these bins."""
+    pairs = _flat([0.02, 0.9, 0.5, 0.11] * 25, ([1] + [0] * 3) * 25)
+    assert cal.constant_ece(pairs)["heat"] == pytest.approx(0.0, abs=1e-12)
+
+
+@pytest.mark.parametrize("n_bins", [2, 3, 5, 10, 50])
+def test_the_control_scores_zero_at_every_bin_count(n_bins: int) -> None:
+    """The load-bearing version of the claim. If this were a binning artifact, some bin count
+    would break it and the honest fix would be "use more bins" or "use a smoother". No bin
+    count breaks it, because calibration error is proper but not *strictly* proper: it drops
+    the sharpness term, so a constant at the base rate minimises it as surely as the truth
+    does. This is why the answer is discrimination and not a better calibration metric."""
+    pairs = _flat(list(np.linspace(0.001, 0.6, 400)), [1] * 37 + [0] * 363)
+    assert cal.constant_ece(pairs, n_bins=n_bins)["heat"] == pytest.approx(0.0, abs=1e-12)
+
+
+def test_the_control_is_one_bin_holding_the_base_rate() -> None:
+    rel = cal.reliability(cal.constant_pairs(_flat([0.02, 0.9] * 50, [1] * 20 + [0] * 80)))
+    assert rel.height == 1, "a constant predictor cannot be split into several bins"
+    row = rel.row(0, named=True)
+    assert row["predicted"] == pytest.approx(0.2)
+    assert row["observed"] == pytest.approx(0.2)
+    assert row["n"] == 100
+
+
+def test_the_control_uses_each_needs_own_base_rate() -> None:
+    """One number per need, not one across the cohort: heat happens seven times as often as
+    access_loss, and a shared constant would be miscalibrated on both."""
+    rows = [(f"v{i}", D0, "heat", 0.3, int(i < 40)) for i in range(100)]
+    rows += [(f"v{i}", D0, "mental", 0.3, int(i < 5)) for i in range(100)]
+    got = cal.constant_pairs(_pair(rows))
+    assert got.filter(pl.col("need") == "heat")["p_mean"].unique().to_list() == [0.4]
+    assert got.filter(pl.col("need") == "mental")["p_mean"].unique().to_list() == [0.05]
+    assert cal.constant_ece(_pair(rows)) == {"heat": pytest.approx(0.0),
+                                            "mental": pytest.approx(0.0)}
+
+
+def test_the_control_is_at_or_below_the_models_ece_on_every_need() -> None:
+    """This is the uncomfortable half of the calibration claim and the reason the control
+    ships. If a change ever makes the model beat a constant on ECE, this test goes red and
+    somebody gets to delete the caveat -- deliberately."""
+    pairs = cal.paired(table("scores"), table("outcomes"))
+    model, control = cal.ece(cal.reliability(pairs)), cal.constant_ece(pairs)
+    assert set(control) == set(NEEDS)
+    for need in NEEDS:
+        assert control[need] <= model[need] + 1e-12, (
+            f"{need}: a constant at the base rate scores {control[need]:.4f} against the "
+            f"model's {model[need]:.4f}; the caveat in the docstring may be stale")
+
+
+def test_base_rates_are_recoverable_from_the_bins_alone() -> None:
+    """The chart places the control without being handed the pairs again, so the bins have
+    to carry the base rate: Σ(n · observed) / Σ n."""
+    pairs = cal.paired(table("scores"), table("outcomes"))
+    recovered = cal.base_rates(cal.reliability(pairs))
+    for need, rate in recovered.items():
+        direct = pairs.filter(pl.col("need") == need)["y"].mean()
+        assert rate == pytest.approx(direct)
+
+
+def test_the_reliability_chart_labels_the_control_on_the_diagonal() -> None:
+    """A reviewer's first question is "what would a constant score?". The answer is on the
+    chart, named, rather than in a pause."""
+    rel = cal.reliability(cal.paired(table("scores"), table("outcomes")))
+    fig = cal.reliability_curve(rel)
+    control = [tr for tr in fig.data if tr.name and "constant" in tr.name.lower()]
+    assert len(control) == 1, "the constant-predictor control must appear exactly once"
+    assert "0.000" in control[0].name
+    # On the diagonal by construction: predicted == observed == the base rate.
+    assert list(control[0].x) == pytest.approx(list(control[0].y))
+    assert sorted(control[0].x) == pytest.approx(sorted(cal.base_rates(rel).values()))
+
+
 def test_the_fixture_cohort_is_close_to_calibrated() -> None:
     """The fixture scores are drawn to sit near their own event rate. This is a smoke test on
     the pipeline, not a claim about the model: a real ECE comes from `make report`."""
