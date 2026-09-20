@@ -54,6 +54,62 @@ interface HBarsProps {
   format?: (v: number) => string;
 }
 
+interface DotRowsProps {
+  rows: { label: string; value: number; lead?: boolean }[];
+  format?: (v: number) => string;
+  /** Unit for the delta column, e.g. "need-days". */
+  unit?: string;
+}
+
+/**
+ * Four strategies whose totals differ by under one percent.
+ *
+ * Bars from zero cannot show that: at 220.0 against 218.3 every bar is the same bar, and
+ * a reader concludes either "identical" or "the chart is broken". Bars with the zero cut
+ * off are worse -- they turn a 0.8% gap into a landslide. For values this close the form
+ * is a dot plot on an axis that states its own range, with the lead series in the accent
+ * and the rest in grey, and the gap written out in the unit it is measured in.
+ *
+ * The honest reading, which this makes visible rather than hides: at rung 0 the ranking
+ * is barely ahead of calling the oldest first. That is what a prior-only model does, and
+ * the Model report's realized harm-averted is the number that separates them.
+ */
+export function DotRows({ rows, format = (v) => v.toFixed(1), unit = "" }: DotRowsProps) {
+  const vals = rows.map((r) => r.value);
+  const lo = Math.min(...vals);
+  const hi = Math.max(...vals);
+  const span = hi - lo || 1;
+  // A tenth of the spread of padding at each end, so no dot sits on the axis edge.
+  const from = lo - span * 0.18;
+  const to = hi + span * 0.18;
+  const at = (v: number) => (100 * (v - from)) / (to - from);
+  const lead = rows.find((r) => r.lead) ?? rows[0];
+
+  return (
+    <div className="dotplot">
+      {rows.map((r) => {
+        const delta = r.value - lead.value;
+        return (
+          <div key={r.label} className={`dotrow${r.lead ? " lead" : ""}`}>
+            <span className="dl">{r.label}</span>
+            <div className="dt">
+              <div className="dax" />
+              <span className="dd" style={{ left: `${at(r.value)}%` }} title={`${r.label}: ${format(r.value)}`} />
+            </div>
+            <span className="dv">{format(r.value)}</span>
+            <span className="dg">{r.lead ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(2)}`}</span>
+          </div>
+        );
+      })}
+      <div className="dfoot">
+        <span />
+        <span className="dscale"><span>{format(from)}</span><span>{format(to)}</span></span>
+        <span className="dnote">gap to {lead.label.toLowerCase()}{unit ? `, ${unit}` : ""}</span>
+      </div>
+    </div>
+  );
+}
+
 /** Nominal categories share one hue; the lead row is set apart by weight, not color. */
 export function HBars({ rows, max, format = (v) => v.toFixed(1) }: HBarsProps) {
   const top = Math.max(max ?? 0, ...rows.map((r) => r.value), 1e-9);

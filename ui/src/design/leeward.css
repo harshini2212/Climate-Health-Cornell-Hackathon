@@ -163,3 +163,55 @@ tr.morerow td:nth-child(2) { font-weight: 600; color: var(--green); }
 .auditbanner.ok { border-left-color: var(--green); background: var(--greenbg); }
 .auditbanner.warn { border-left-color: var(--amber); background: var(--amberbg); }
 .auditbanner.crit { border-left-color: var(--crit); background: var(--redbg); }
+
+/* ---------------------------------------------------------------------------
+   The interval a queue row is claiming. Same grammar as .needtrack on the
+   veteran card -- band, hatch, tick -- but on one fixed 0-100% axis, because a
+   list is read by comparing rows and a per-row scale makes that a lie. */
+.ivcell { display: flex; flex-direction: column; gap: 4px; min-width: 132px; }
+.ivhead { display: flex; align-items: baseline; gap: 6px; font-size: 13px; }
+.ivhead b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ivhead small { font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.ivtrack { position: relative; height: 9px; border-radius: 5px; background: var(--panel2); border: 1px solid var(--hair); }
+.ivtrack .ivb { position: absolute; top: 0; height: 100%; border-radius: 4px; background: var(--accentbd); }
+.ivtrack .ive { position: absolute; top: 0; height: 100%; border-radius: 4px; background: repeating-linear-gradient(45deg, var(--faint) 0 3px, transparent 3px 6px); opacity: .9; }
+.ivtrack .ivm { position: absolute; top: -3px; width: 2.5px; height: 15px; border-radius: 2px; background: var(--accent2); transform: translateX(-1.25px); }
+.ivfoot { font-size: 11px; color: var(--muted); }
+/* Said once above the column: a bar without an axis is a decoration. */
+.ivaxis { display: flex; justify-content: space-between; width: 132px; font-size: 10px; font-variant-numeric: tabular-nums; }
+
+/* Rows the model is too unsure about to act on. The tier already says "Find out";
+   the track says why, so the badge is not the only carrier of the reason. */
+.ivtrack.wide .ivb { background: repeating-linear-gradient(45deg, var(--accentbd) 0 5px, var(--accentbg) 5px 10px); }
+
+/* The axis has to out-specify `th .sub`, which is display:block, or the three labels
+   stack into "0%50%100%". */
+th .sub.ivaxis { display: flex; }
+/* Nine columns only fit if the driver chip stops being one long unbreakable line; the
+   row's title attribute still carries the full rationale. */
+td.driver { white-space: normal; max-width: 210px; }
+td.driver .tag { white-space: normal; display: inline-block; line-height: 1.45; }
+/* Two short words beat one long nowrap header when the table is this wide. */
+th.stack { white-space: normal; max-width: 92px; }
+
+/* ---------------------------------------------------------------------------
+   Strategies whose totals differ by under a percent. Dots on a shared axis that
+   prints its own range: zero-based bars render these as four identical bars, and
+   a truncated bar axis would render a 0.8% gap as a landslide. Emphasis carries
+   identity -- lead in accent, the rest grey -- so colour is never the only cue;
+   the value and the gap are written on every row. */
+.dotplot { display: flex; flex-direction: column; gap: 9px; }
+.dotrow { display: grid; grid-template-columns: 132px 1fr 52px 52px; align-items: center; gap: 10px; font-size: 12.5px; }
+.dotrow .dl { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dotrow.lead .dl { color: var(--ink); font-weight: 600; }
+.dotrow .dt { position: relative; height: 14px; }
+.dotrow .dax { position: absolute; top: 6px; left: 0; right: 0; height: 2px; border-radius: 1px; background: var(--line); }
+.dotrow .dd { position: absolute; top: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--muted); border: 2px solid var(--panel); transform: translateX(-5px); }
+.dotrow.lead .dd { background: var(--accent); width: 12px; height: 12px; top: 1px; transform: translateX(-6px); }
+.dotrow .dv { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink2); }
+.dotrow.lead .dv { font-weight: 700; color: var(--ink); }
+.dotrow .dg { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 11.5px; }
+.dfoot { display: grid; grid-template-columns: 132px 1fr 104px; gap: 10px; margin-top: 2px; font-size: 10.5px; color: var(--muted); }
+.dfoot .dscale { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.dfoot .dnote { text-align: right; }
+
