@@ -118,9 +118,9 @@ chips, the medication panel, one "why this tier" line.
 
 ### Open his message
 
-> "Sent through a channel he already uses. Four words he can read back — *raven glacier piano
-> balloon*. The VA will never ask you to pay. VSAFE. 988 press 1. A scammer cannot reproduce
-> that."
+> "Sent through a channel he already uses. Four words he can read back — *diamond tempo
+> violet wax*. The VA will never ask you to pay. VSAFE. 988 press 1. A scammer cannot
+> reproduce that."
 
 ### Model report — if a judge asks how you know
 
