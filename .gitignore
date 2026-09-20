@@ -4,7 +4,10 @@
 data/raw/
 data/*.parquet
 data/*.nc
-report/
+# Generated eval output is rebuildable; recorded baselines are the one thing that is not.
+# Exclude the contents rather than the directory, or the negation cannot re-include them.
+report/*
+!report/baselines/
 
 .venv/
 *.egg-info/

@@ -68,6 +68,12 @@ score:              ## posterior x hazards -> scores.parquet, actions.parquet
 	$(PY) -m leeward.model.score
 	$(PY) -m leeward.decision.allocate
 
+baseline:           ## run the pipeline and record one row in docs/BASELINES.md
+	$(PY) scripts/baseline.py $(if $(LABEL),--label "$(LABEL)",)
+
+baseline-diff:      ## diff the two most recent baselines, record nothing
+	$(PY) scripts/baseline.py --compare
+
 report:             ## full eval harness incl. the fairness audit -> report/report.json
 	$(PY) -m leeward.eval.report
 
