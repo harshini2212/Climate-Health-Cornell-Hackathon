@@ -212,13 +212,29 @@ export interface CalibrationBin {
   n: number;
 }
 
+/** `reach_ratio_to_cohort` against the same 20 % bar the flag uses. */
+export type FairnessDirection = "reached_more" | "reached_less" | "on_par";
+
 export interface FairnessRow {
   stratum: string;
   group: string;
+  /** Veteran-days, then those with a need, then those that got a call: the denominators
+   *  under every rate below. `n_called` is null when coverage was not measured. */
   n: number;
+  n_events: number;
+  n_called: number | null;
   ece: number;
+  /** The raw rate. Kept on screen beside the ratio: it is the honest denominator. */
   fnr: number;
   fnr_ratio_to_cohort: number;
+  /** 1 - fnr. The same measurement with the ceiling taken off, and the one that moves. */
+  reach: number;
+  reach_ratio_to_cohort: number;
+  /** Share of the group's events that got one of the scarce daily calls.
+   *  `null` means not measured — never "nobody". */
+  coverage: number | null;
+  coverage_ratio_to_cohort: number | null;
+  direction: FairnessDirection;
   flagged: boolean;
 }
 

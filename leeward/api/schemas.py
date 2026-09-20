@@ -261,10 +261,30 @@ class CalibrationBin(Base):
 class FairnessRow(Base):
     stratum: str
     group: str
+    #: Veteran-days in the group, then how many of them had a need, then how many of those
+    #: got a call. Every rate below divides two of these, and a ratio shown without its
+    #: denominator invites a reader to trust a number built on four events.
     n: int
+    n_events: int = 0
+    n_called: int | None = None
     ece: float
+    #: The raw rate stays in the contract. It is the honest denominator, and showing only
+    #: the friendlier number below would be the suppression the audit exists to prevent.
     fnr: float
     fnr_ratio_to_cohort: float
+    #: 1 - fnr, and its ratio: the same measurement with the ceiling taken off. On a cohort
+    #: whose pooled FNR is near 1 this is the only one of the two that can move.
+    reach: float = 0.0
+    reach_ratio_to_cohort: float = 1.0
+    #: Share of the group's events that got one of the scarce daily calls, and its ratio.
+    #: **None means not measured, not nobody** -- an audit run without a call list.
+    coverage: float | None = None
+    coverage_ratio_to_cohort: float | None = None
+    direction: str = Field(
+        default="on_par",
+        description="reached_more | reached_less | on_par -- which side of the same 20 "
+                    "percent bar the group's reach falls on. reached_more is a result, "
+                    "not a pass")
     flagged: bool = Field(description="True when relative FNR gap exceeds 20 percent")
 
 

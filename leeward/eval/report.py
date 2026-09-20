@@ -81,7 +81,12 @@ def assemble(*, scores: pl.DataFrame, outcomes: pl.DataFrame, cohort: pl.DataFra
 
     reliability = cal.run(scores, outcomes, dates=dates)
     recovered = rec.run(n_draws=n_draws, seed=seed, posterior=posterior)
-    audit = fair.audit(scores, outcomes, cohort, dates=dates)
+    # The audit's coverage column is measured against the calls the care team would actually
+    # have made, so it needs the allocator run over the same window the rest of the report
+    # scores. `decision_quality` runs it again below at three budgets; the duplication costs
+    # a few seconds and keeps each module runnable on its own.
+    audit = fair.audit(scores, outcomes, cohort, dates=dates,
+                       calls=fair.budget_calls(scores, cohort, dates=dates))
     w, tau = dq.decision_weights()
     tidy = dq.evaluate(scores, cohort, outcomes, w=w, tau=tau, ks=ks, dates=dates)
     rhat_max, divergences = rec.diagnostics(posterior)
@@ -145,6 +150,17 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"  fairness: no group over the {fair.FNR_GAP:.0%} relative FNR gap "
               f"({report.fairness.height} groups audited)")
+    # The flag count is half the audit. Whether the bar could have been cleared at all, and
+    # which groups were reached *more* than the cohort, are the other half and print either
+    # way -- a report that says only "0 flagged" has not said what it found.
+    for line in fair.ceiling_note(report.fairness).split(". "):
+        print(f"  {line.strip().rstrip('.')}.")
+    more = report.fairness.filter(pl.col("direction") == fair.REACHED_MORE)
+    if more.height:
+        top = more.sort("reach_ratio_to_cohort", descending=True).head(4)
+        print(f"  {more.height} group(s) reached MORE than the cohort: " + ", ".join(
+            f"{r['stratum']}:{r['group']} {r['reach_ratio_to_cohort']:.2f}x"
+            for r in top.iter_rows(named=True)))
     print("wrote " + ", ".join(str(w.relative_to(schema.ROOT)) for w in written))
     return 0
 

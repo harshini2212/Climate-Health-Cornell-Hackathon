@@ -33,3 +33,20 @@ Found and logged as **docs/PROMPTS.md 16** (not fixed — out of lane): `allocat
 the Impact chart shows Leeward below random on the fixtures (49.6 vs 54.4) even though its
 own picks scored as calls reach 76.6. The ranking is right; the metric and the budget
 disagree about what a check-in is worth.
+
+## 02:1x — fairness: the audit reports the ratio that can move, and the good news
+The 20% FNR bar cannot be crossed on this cohort and we were reading that as a pass: at a
+pooled FNR of 0.958, flagging a group needs an FNR of 1.149. Added `reach` (= 1 − FNR) and
+`direction` on the *same* bar applied to reach, plus `coverage` — the share of a group's
+events that got one of the 40 daily calls, from `allocate` run over the window by
+`fairness.budget_calls()`. Raw FNR stays in the CSV and in `report.json`; `flag_is_reachable()`
+and `ceiling_note()` print the arithmetic next to the flag count, and the Report screen's tile
+now says **"bar unreachable"** rather than "passed". 10 of 33 groups are reached more than the
+cohort. 33 rows, +6 columns, `make check` green.
+
+Reach and coverage disagree, and that is the finding, not a bug: the tier rule surfaces
+low-income 2.72x, no-caregiver 1.72x, HVI-5 1.69x and 5–9-meds 1.99x, but under 40 calls the
+allocator follows through only on the first two (2.69x, 2.17x) and lands at parity on the
+other two (0.97x, 1.05x). Manhattan inverts outright — 0.60x reach, 2.03x coverage. Several
+coverage ratios rest on single-figure call counts (informal_remote 4, va_pcafc 3, Staten
+Island 3), so `n_events` and `n_called` now travel to the screen beside every rate.

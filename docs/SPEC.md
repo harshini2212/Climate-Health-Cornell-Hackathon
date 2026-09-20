@@ -637,8 +637,30 @@ Screens, in demo order: Forecast → Map → Care team list → Veteran card →
 | sbc.py | 50 refits on 500-veteran draws from prior | rank histograms; runs overnight |
 | ablate.py | drops climate / lags / interactions / latent dose / ICAR / SiteDown; calibration + harm averted per row | table |
 | decision_quality.py | harm averted at K ∈ {20,40,80} for Leeward vs age / chronic-count / random | the Impact bar chart |
-| fairness.py | ECE and FNR by borough, HVI band, evac zone, income band, caregiver status, race/ethnicity | show gaps; flag > 20 pct relative |
+| fairness.py | ECE, FNR, reach and coverage-at-40-calls by borough, HVI band, evac zone, income band, caregiver status, medication burden, race/ethnicity | show gaps; flag > 20 pct relative FNR; report `direction` on the same bar applied to reach |
 | report.py | assembles `report/report.json` for `GET /report` | |
+
+**Why the fairness audit reports more than the flag.** The 20 pct relative FNR bar stays exactly
+where it is, but on the real cohort it cannot be crossed: at a pooled FNR of 0.958, flagging a
+group would take an FNR of 1.149. The held-out window holds ~16.7k veteran-days with a need and
+40 calls a day to spend on them, so every group's FNR sits between 0.93 and 0.99 and two numbers
+at the ceiling cannot diverge by 20 pct. A report that says only "0 of 33 flagged" has therefore
+shown a metric with no failing state and called it a pass. So `fairness.py` also reports:
+
+- **`reach`** = 1 − FNR, and `reach_ratio_to_cohort`. The identical measurement with the ceiling
+  subtracted off, where groups separate by a factor of six rather than a tenth.
+- **`direction`** ∈ `reached_more` / `reached_less` / `on_par` — which side of the *same* 20 pct
+  bar the group's reach falls on. A group reached more than the cohort is a result, not the
+  absence of one, and is marked as deliberately as a flagged row.
+- **`coverage`** — the share of a group's events that got one of the `DEFAULT_CAPACITY["call"]`
+  daily calls, from `leeward.decision.allocate` run over the same window. Null when the audit was
+  given no call list: not measured and measured-as-nobody are different claims.
+
+Reach and coverage disagree, and the disagreement is the finding. The tier rule surfaces
+low-income (2.72×), no-caregiver (1.72×), HVI-5 (1.69×) and 5–9-medication (1.99×) veterans more
+than the cohort; under a 40-call budget the allocator follows through on the first two (2.69× and
+2.17×) but lands at parity on the other two (0.97× and 1.05×). `flag_is_reachable()` says which
+regime a report is in, and every rendering of the table repeats it.
 
 **Claude Code prompt (Track B, eval):**
 > Implement `leeward/eval/decision_quality.py`: for each day in 91–120 and K in {20,40,80}, select actions with `allocate.py` and with three baselines (rank by age, rank by n_chronic, random with seed), then compute harm averted = Σ w_k · τ[a,k] · y_true[i,k,t] over selected veterans. Output a tidy CSV and a Plotly bar chart. Add a test on a tiny fixture where Leeward must beat random.

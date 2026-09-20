@@ -236,6 +236,35 @@ def test_fairness_audit_is_never_suppressed() -> None:
     assert "flagged" in src, "fairness.py must mark groups whose relative FNR gap exceeds 20 pct"
 
 
+def test_the_fairness_audit_reports_what_a_flag_count_cannot() -> None:
+    """The other way to suppress an audit is to report a number that cannot move.
+
+    At a pooled FNR near 1 no group can exceed the 20 percent bar -- clearing it would take
+    an FNR above 1 -- so a report that says only "0 of 33 flagged" has shown a metric with
+    no failing state and called it a pass. The audit therefore has to keep the raw rate, and
+    also carry the direction and the coverage that *can* separate groups.
+    """
+    fairness = _mod("leeward.eval.fairness")
+    if fairness is None:
+        pytest.skip("leeward.eval.fairness not built yet; will enforce reach/coverage/"
+                    "direction beside the flag, and that raw fnr stays in the report")
+
+    assert "fnr" in fairness.AUDIT_SCHEMA, "the raw rate is the honest denominator"
+    assert "fnr" in fairness.REPORT_COLUMNS, "dropping fnr for the nicer number is suppression"
+    for column in ("reach_ratio_to_cohort", "coverage", "direction"):
+        assert column in fairness.REPORT_COLUMNS, (
+            f"{column} must reach report.json; the flag alone cannot report this cohort")
+
+    tbl = fairness.audit(table("scores"), table("outcomes"), table("cohort"))
+    pooled = fairness.cohort_fnr(tbl)
+    note = fairness.ceiling_note(tbl)
+    assert f"{pooled:.3f}" in note, "the pooled rate the ratios divide by is never hidden"
+    if not fairness.flag_is_reachable(pooled):
+        assert not tbl["flagged"].any(), "a bar above an FNR of 1 cannot be cleared"
+        assert "impossible" in note, (
+            "a report where nothing can flag has to say so next to the flag count")
+
+
 def test_model_rung_is_recorded() -> None:
     """You have to be able to say on stage which rung actually fitted."""
     s = table("scores")

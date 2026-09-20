@@ -148,6 +148,13 @@ tr.flagrow td { background: var(--redbg); }
 tr.flagrow td:first-child { box-shadow: inset 3px 0 0 var(--crit); }
 tr.flagrow td:nth-child(2) { font-weight: 700; color: var(--crit); }
 
+/* A group reached MORE than the cohort. Marked as deliberately as a flagged one: on this
+   data it is the only finding the audit can produce, and an unmarked row would render it
+   as blank space. Quieter than .flagrow — a result, not an alarm. */
+tr.morerow td { background: var(--greenbg); }
+tr.morerow td:first-child { box-shadow: inset 3px 0 0 var(--green); }
+tr.morerow td:nth-child(2) { font-weight: 600; color: var(--green); }
+
 /* The audit verdict. It is the first thing on the card in all three states, and the only
    one that changes colour: a failing audit should not need to be looked for. */
 .auditbanner { display: flex; gap: 11px; align-items: flex-start; padding: 11px 14px; margin-bottom: 12px; border: 1px solid var(--line); border-left: 3px solid var(--line); border-radius: var(--r2); font-size: 13.5px; background: var(--panel2); }
