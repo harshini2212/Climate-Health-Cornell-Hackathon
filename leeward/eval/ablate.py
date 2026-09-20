@@ -229,6 +229,16 @@ def score_ablated(cohort: pl.DataFrame, hazards: pl.DataFrame, site_status: pl.D
     The coefficients are drawn once from `seed`, so two ablations differ only where their
     blocks differ -- re-drawing per ablation would move every row of every day.
     """
+    # An empty ablation IS the shipped scorer, so delegate rather than reproduce it. The
+    # copy below exists to mask a block of B, which score() cannot do; it has no business
+    # also being a second implementation of the full model. score_prior gained p_gap_lo and
+    # p_gap_hi when honest missingness landed, and the drift showed up here as two missing
+    # columns -- which is exactly what the guardrail is for, and exactly the drift that
+    # delegating removes for good.
+    if not drop:
+        return score_prior.score(cohort, hazards, site_status,
+                                 dates=dates, n_draws=n_draws, seed=seed)
+
     dates = sorted(hazards["date"].unique().to_list()) if dates is None else sorted(dates)
     ref = hazards["date"].min()
 
@@ -254,6 +264,11 @@ def score_ablated(cohort: pl.DataFrame, hazards: pl.DataFrame, site_status: pl.D
         "date",
         _decode("_k", NEEDS).alias("need"),
         "p_mean", "p_lo80", "p_hi80", "p_epistemic_share",
+        # The missingness gap is a property of the shipped model, not of an ablation: with a
+        # block held at zero there is no "what the VA would learn by asking" to report. Null
+        # rather than absent, so the frame still satisfies the scores contract.
+        pl.lit(None, dtype=pl.Float64).alias("p_gap_lo"),
+        pl.lit(None, dtype=pl.Float64).alias("p_gap_hi"),
         *[_decode(f"_d{i}", _PHRASES).alias(f"driver_{i}") for i in (1, 2, 3)],
         *[f"driver_{i}_contrib" for i in (1, 2, 3)],
         model_rung=pl.lit(score_prior.RUNG, dtype=pl.Int32),
