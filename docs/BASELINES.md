@@ -95,3 +95,84 @@ The rung-0 baseline — your "before"
 **Pipeline** — not re-run · total Nones
 
 ---
+
+## before missingness — rung 0 — `fbe3a42`
+
+*2026-09-20T05:25:56Z · Python 3.11.14 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **16.31** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **2.4× the best baseline** |
+| **Per call actually made** | **0.524** — **3.09×**, spending 934 of 1200 available calls |
+| **Calibration (ECE, bar 0.03)** | max **0.0075** · mean 0.005 |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.035 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0075 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 326,679 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 7.31% · find-out 0.226%
+
+**Pipeline** — hazards 2.08s · cohort 0.49s · simulate 3.39s · score 17.26s · allocate 9.88s · report 21.55s · total 54.7s
+
+---
+
+## missingness + gap-aware find-out — rung 0 — `dcd1e3c`
+
+*2026-09-20T06:08:03Z · Python 3.11.14 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **16.31** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **2.4× the best baseline** |
+| **Per call actually made** | **0.5239** — **3.09×**, spending 934 of 1200 available calls |
+| **Calibration (ECE, bar 0.03)** | max **0.0076** · mean 0.0051 |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.048 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0076 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 326,966 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 7.05% · find-out 9.197%
+
+**Pipeline** — hazards 0.36s · cohort 0.79s · simulate 6.46s · score 49.63s · allocate 16.73s · report 37.09s · total 111.1s
+
+---
+
+## conditional imputation of the gap — rung 0 — `07725ef` *(uncommitted changes)*
+
+*2026-09-20T06:29:47Z · Python 3.11.14 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **16.14** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **2.38× the best baseline** |
+| **Per call actually made** | **0.5185** — **3.05×**, spending 934 of 1200 available calls |
+| **Calibration (ECE, bar 0.03)** | max **0.0076** · mean 0.005 |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.048 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0076 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 327,397 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 7.08% · find-out 9.147%
+
+**Pipeline** — hazards 0.26s · cohort 0.53s · simulate 3.82s · score 36.1s · allocate 10.37s · report 23.07s · total 74.2s
+
+---

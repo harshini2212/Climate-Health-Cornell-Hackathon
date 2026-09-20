@@ -231,6 +231,9 @@ def _tiny_world(n: int = 40, at_risk=(4, 11, 23, 31, 38)):
          "p_lo80": 0.5 if v in risky else 0.002,
          "p_hi80": 0.7 if v in risky else 0.010,
          "p_epistemic_share": 0.05,
+         # No gap in this fixture's records: the tiny case is about the allocator, and a
+         # Find-out veteran it did not ask for would change what is being measured.
+         "p_gap_lo": None, "p_gap_hi": None,
          "driver_1": "tiny fixture", "driver_2": None, "driver_3": None,
          "driver_1_contrib": 1.0, "driver_2_contrib": None, "driver_3_contrib": None,
          "model_rung": 0}

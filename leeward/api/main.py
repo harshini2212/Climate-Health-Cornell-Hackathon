@@ -262,23 +262,50 @@ def scores(date: Date, need: str) -> Response:
 # GET /veteran/{id}?date=
 # --------------------------------------------------------------------------- #
 
-def _why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float]) -> str:
-    """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers."""
+def why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float]) -> str:
+    """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers.
+
+    Every branch falls through to the plain "highest need" sentence rather than assuming its
+    own rule is the one that fired. A caller may hold a tier decided on a different frame --
+    `make_ui_fixtures.py` labels from the allocator's candidate list, and `tiers.py` has
+    hazard-triggered act-now rules the SPEC lists and the scores alone cannot show -- so a
+    branch that trusts the label crashes on `max()` of an empty sequence. It did.
+    """
     top = max(needs, key=lambda n: n.p_mean)
     if tier == "act_now":
-        n = max((n for n in needs if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
-                 and n.p_mean >= tiers.ACT_NOW_P and n.p_epistemic_share < tiers.EPISTEMIC_CUT),
-                key=lambda n: n.p_mean)
-        return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance (80% interval "
-                f"{n.p_lo80:.0%}-{n.p_hi80:.0%}), above the {tiers.ACT_NOW_P:.0%} Act-now line "
-                f"for a need this severe, and only {n.p_epistemic_share:.0%} of the uncertainty "
-                f"is what we do not know about this veteran.")
+        acting = [n for n in needs if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
+                  and n.p_mean >= tiers.ACT_NOW_P and n.p_epistemic_share < tiers.EPISTEMIC_CUT]
+        if acting:
+            n = max(acting, key=lambda n: n.p_mean)
+            return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance (80% interval "
+                    f"{n.p_lo80:.0%}-{n.p_hi80:.0%}), above the {tiers.ACT_NOW_P:.0%} Act-now "
+                    f"line for a need this severe, and only {n.p_epistemic_share:.0%} of the "
+                    f"uncertainty is what we do not know about this veteran.")
+        return (f"Act-now on a hazard rule rather than a probability: highest single-need risk "
+                f"is {top.p_mean:.0%} ({NEED_PHRASE[top.need]}).")
     if tier == "find_out":
-        n = max((n for n in needs if n.p_epistemic_share >= tiers.EPISTEMIC_CUT
-                 and n.p_mean >= tiers.FIND_OUT_P), key=lambda n: n.p_mean)
-        return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance, but "
-                f"{n.p_epistemic_share:.0%} of the uncertainty is what we do not know about "
-                f"this veteran, so a check-in call is worth more than a guess.")
+        # The gap rule first: it is the more useful sentence and the more common one. Both
+        # rules can put a veteran here, so neither may assume it was the one that fired.
+        straddling = [(n, line) for n in needs for line in tiers.ASKABLE_LINES
+                      if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
+                      and n.p_gap_lo is not None and n.p_gap_hi is not None
+                      and n.p_gap_lo < line <= n.p_gap_hi]
+        if straddling:
+            n, line = max(straddling, key=lambda t: t[0].p_gap_hi - t[0].p_gap_lo)
+            return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance on what the "
+                    f"VA has on file, but part of this veteran's record is missing. Depending "
+                    f"on the answer the real number is {n.p_gap_lo:.0%} to {n.p_gap_hi:.0%} "
+                    f"-- either side of the {line:.0%} line. A three-minute check-in call "
+                    f"settles which, and nothing else on this list will.")
+        wide = [n for n in needs if n.p_epistemic_share >= tiers.EPISTEMIC_CUT
+                and n.p_mean >= tiers.FIND_OUT_P]
+        if wide:
+            n = max(wide, key=lambda n: n.p_mean)
+            return (f"{NEED_PHRASE[n.need].capitalize()}: {n.p_mean:.0%} chance, but "
+                    f"{n.p_epistemic_share:.0%} of the uncertainty is what we do not know "
+                    f"about this veteran, so a check-in call is worth more than a guess.")
+        return (f"Something in this veteran's record is missing and worth a check-in call; "
+                f"highest single-need risk is {top.p_mean:.0%} ({NEED_PHRASE[top.need]}).")
     if tier == "self_serve":
         return (f"Highest single-need risk is {top.p_mean:.0%} ({NEED_PHRASE[top.need]}): above "
                 f"the {tiers.SELF_SERVE_P:.0%} line, short of Act-now and Find-out.")
@@ -339,6 +366,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
         needs.append(api.NeedScore(
             need=k, p_mean=r["p_mean"], p_lo80=r["p_lo80"], p_hi80=r["p_hi80"],
             p_epistemic_share=r["p_epistemic_share"],
+            p_gap_lo=r.get("p_gap_lo"), p_gap_hi=r.get("p_gap_hi"),
             drivers=[d for d, _ in drivers], driver_contribs=[c for _, c in drivers]))
     weights = store.weights()
     tier = tiers.assign(mine, weights)["tier"][0]
@@ -362,7 +390,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
         veteran_id=veteran_id, name_display=v["name_display"], age=v["age"],
         modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
         facility_name=fac["name"][0] if fac.height else v["facility_id"], date=date,
-        tier=tier, why_this_tier=_why_tier(tier, needs, weights), needs=needs,
+        tier=tier, why_this_tier=why_tier(tier, needs, weights), needs=needs,
         medications=api.MedicationFlags(
             n_active_meds=v["n_active_meds"], thermoreg_score=v["med_thermoreg_score"],
             acb_score=v["acb_score"], combo_raas_diuretic=v["med_combo_raas_diuretic"],

@@ -40,6 +40,8 @@ import polars as pl
 
 from leeward import demo, schema
 from leeward.api import schemas as api
+from leeward.api.main import why_tier
+from leeward.decision import severity
 from leeward.schema import DEFAULT_CAPACITY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -219,18 +221,6 @@ def _phrase(action_id: str) -> str:
     return " ".join(picked)
 
 
-def _why_this_tier(tier: str, peak: float, epi: float, driver: str) -> str:
-    if tier == "act_now":
-        return (f"Peak need {peak:.0%} this week and the interval is tight "
-                f"({epi:.0%} of the spread is model uncertainty): {driver}.")
-    if tier == "find_out":
-        return (f"Peak need {peak:.0%}, but {epi:.0%} of the spread is what we do not know "
-                "about this veteran. A three-minute call collapses it.")
-    if tier == "self_serve":
-        return f"Peak need {peak:.0%}: real, but a text with the right list is proportionate."
-    return f"Peak need {peak:.0%} across every need this week. Nothing is due from the team."
-
-
 def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[dict],
                    day) -> dict:
     """One VeteranCard per veteran in the candidate list, for the click-through."""
@@ -259,11 +249,11 @@ def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[
         needs = [api.NeedScore(
             need=r["need"], p_mean=round(r["p_mean"], 4), p_lo80=round(r["p_lo80"], 4),
             p_hi80=round(r["p_hi80"], 4), p_epistemic_share=round(r["p_epistemic_share"], 4),
+            p_gap_lo=r.get("p_gap_lo"), p_gap_hi=r.get("p_gap_hi"),
             drivers=[r[f"driver_{i}"] for i in (1, 2, 3) if r.get(f"driver_{i}")],
             driver_contribs=[round(r[f"driver_{i}_contrib"], 4) for i in (1, 2, 3)
                              if r.get(f"driver_{i}")],
         ) for r in rows]
-        top = rows[0]
         tier = tier_of.get(vid, "everyday")
         notes = []
         if v["med_combo_raas_diuretic"]:
@@ -285,8 +275,7 @@ def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[
             modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
             facility_name=v["facility_name"] or f"Station {v['facility_id']}", date=day,
             tier=tier,
-            why_this_tier=_why_this_tier(tier, top["p_mean"], top["p_epistemic_share"],
-                                         top["driver_1"]),
+            why_this_tier=why_tier(tier, needs, severity.load()),
             needs=needs,
             medications=api.MedicationFlags(
                 n_active_meds=int(v["n_active_meds"]),

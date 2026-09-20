@@ -203,6 +203,16 @@ _COHORT = Table(
         _c("consent_partner_check", pl.Boolean, synthetic=True),
         _c("consent_ride", pl.Boolean, synthetic=True),
         _c("consent_housing", pl.Boolean, synthetic=True),
+
+        # nullable copies after missingness (cohort/missingness.py). Null means the VA does
+        # not have the value; the column beside it is the truth, which only the simulator may
+        # read. Scoring reads these. Not `synthetic`: the value is a copy of a column that
+        # already carries its own flag, and it is the gap, not the value, that is invented.
+        _c("home_ac_observed", pl.Boolean, "null where missingness hid it", nullable=True),
+        _c("floor_observed", pl.Utf8, "null where missingness hid it",
+           nullable=True, values=tuple(FLOORS)),
+        _c("deployment_era_observed", pl.Utf8, "null where missingness hid it",
+           nullable=True, values=tuple(DEPLOYMENT_ERAS)),
     ),
 )
 
@@ -278,8 +288,17 @@ _SCORES = Table(
         _c("p_lo80", pl.Float64, "10th percentile over posterior draws", bounds=(0, 1)),
         _c("p_hi80", pl.Float64, "90th percentile over posterior draws", bounds=(0, 1)),
         _c("p_epistemic_share", pl.Float64,
-           "Var over draws / (Var over draws + mean p(1-p)). Drives the Find-out tier.",
+           "Var over draws / (Var over draws + mean p(1-p)).",
            bounds=(0, 1)),
+        # What the gap in this veteran's own record is worth. Null where there is no gap --
+        # which is not the same as a gap that would not move the number, and the Find-out
+        # tier needs to tell those apart.
+        _c("p_gap_lo", pl.Float64, "p if every missing field took its least-risky value",
+           nullable=True, bounds=(0, 1)),
+        _c("p_gap_hi", pl.Float64,
+           "p if every missing field took its most-risky value. Drives the Find-out tier: a "
+           "call is worth making when p_gap_hi crosses a line p_mean does not.",
+           nullable=True, bounds=(0, 1)),
         _c("driver_1", pl.Utf8, "Plain-language phrase from posterior contributions",
            nullable=True),
         _c("driver_2", pl.Utf8, nullable=True),
