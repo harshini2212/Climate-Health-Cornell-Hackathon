@@ -133,12 +133,22 @@ def test_capacity_is_never_exceeded() -> None:
 
 
 def test_one_action_per_veteran_unless_act_now() -> None:
-    actions = table("actions")
-    counts = (actions.group_by("date", "veteran_id")
-                     .agg(pl.len().alias("n"), pl.col("tier").min().alias("tier")))
-    over = counts.filter((pl.col("n") > 1) & (pl.col("tier") != "act_now"))
+    """SPEC §7.4, held against the day the *risk* lands.
+
+    `date` is the do-by day, and since actions carry lead times a veteran's Monday can hold
+    one action for Monday's risk and another for Wednesday's. Those are two different days'
+    harm, so the one-unless-Act-now rule is about `date + lead_days`, not about `date`. The
+    do-by day still has a ceiling -- three, the care team's time with one person in one day.
+    """
+    actions = table("actions").with_columns(
+        risk_date=pl.col("date") + pl.duration(days=pl.col("lead_days")))
+    per_risk = (actions.group_by("risk_date", "veteran_id")
+                       .agg(pl.len().alias("n"), pl.col("tier").min().alias("tier")))
+    over = per_risk.filter((pl.col("n") > 1) & (pl.col("tier") != "act_now"))
     assert over.height == 0, f"{over.height} non-act-now veterans got more than one action"
-    assert counts["n"].max() <= 3, "no veteran may receive more than three actions in a day"
+    assert per_risk["n"].max() <= 3, "no veteran gets more than three actions for one day's risk"
+    per_day = actions.group_by("date", "veteran_id").agg(pl.len().alias("n"))
+    assert per_day["n"].max() <= 3, "no veteran may receive more than three actions in a day"
 
 
 def test_ranks_are_dense_and_ordered_by_eha() -> None:

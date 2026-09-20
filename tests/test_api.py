@@ -15,7 +15,7 @@ import sys
 import time
 import types
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import polars as pl
@@ -27,7 +27,7 @@ from leeward.api import main as api_main
 from leeward.api import schemas as api
 from leeward.api import store
 from leeward.decision import severity, tiers
-from leeward.decision.allocate import allocate, total_eha
+from leeward.decision.allocate import allocate, compare, total_eha
 from leeward.outreach.export import CONSENT_FOR
 from leeward.schema import ACTION_COST_UNIT, DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 
@@ -175,7 +175,9 @@ def _card(client: TestClient, vid: str, day: date = DAY) -> api.VeteranCard:
 
 
 def test_the_card_is_the_scores_and_the_cohort_row(client: TestClient) -> None:
-    plan = _table("actions").filter(pl.col("date") == DAY)
+    # A row's tier belongs to the day its risk lands, which since lead times is not always
+    # the day it sits on the list. The card is for DAY, so pick someone whose risk is DAY.
+    plan = _table("actions").filter((pl.col("date") == DAY) & (pl.col("risk_date") == DAY))
     vid = plan.filter(pl.col("tier") == "act_now")["veteran_id"][0]
     card = _card(client, vid)
     vet = _table("cohort").filter(pl.col("veteran_id") == vid).row(0, named=True)
@@ -305,6 +307,30 @@ def test_actions_are_the_allocators_answer(client: TestClient) -> None:
                                    for t in schema.TIERS}
 
 
+def test_actions_carry_the_risk_day_as_well_as_the_do_by_day(client: TestClient) -> None:
+    """The week board draws two marks per action, so both dates have to be on the wire."""
+    resp = api.ActionsResponse.model_validate(_post(client))
+    lead = store.lead()
+    assert resp.date == DAY
+    for a in resp.actions:
+        assert a.lead_days == lead[a.action]
+        assert a.risk_date == DAY + timedelta(days=a.lead_days)
+    ahead = [a for a in resp.actions if a.lead_days > 0]
+    assert ahead, "a list with no forward work is not a schedule"
+    assert all(a.action != "alt_site_booking" or a.lead_days == 2 for a in resp.actions)
+
+
+def test_the_slider_reports_the_work_it_was_already_too_late_for(client: TestClient) -> None:
+    """`n_too_late` is the number on the slide, and it is the allocator's, not the route's."""
+    resp = api.ActionsResponse.model_validate(_post(client))
+    _, _, truth = compare(_table("scores"), _table("cohort"), DEFAULT_CAPACITY, date=DAY)
+    assert resp.n_too_late == truth
+    assert resp.n_too_late > 0, (
+        "on the day of landfall, some of what the forecast asks for could only have been "
+        "booked days ago; the board says so rather than offering it")
+    assert all(a.risk_date >= DAY for a in resp.actions), "nothing offered is already spent"
+
+
 def test_actions_carry_who_and_where(client: TestClient) -> None:
     cohort = _table("cohort")
     for a in api.ActionsResponse.model_validate(_post(client)).actions[:25]:
@@ -396,9 +422,16 @@ def _tile(cohort: pl.DataFrame, scores: pl.DataFrame, copies: int):
 def test_the_slider_answers_inside_300ms_at_ten_thousand_veterans(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The panel is 10,000 veterans and the slider has to feel instant. The fixtures are, if
-    anything, harder than the real scores (more Act-now veterans), so this is not a soft test."""
+    anything, harder than the real scores (more Act-now veterans), so this is not a soft test.
+
+    The window is the whole lead-time horizon, not one day: reaching DAY's do-by list means
+    valuing the risk of the days after it too, and that is the work the budget has to cover.
+    """
     _build_data(tmp_path / "data", monkeypatch)
-    cohort, scores = _tile(_table("cohort"), _table("scores").filter(pl.col("date") == DAY), 20)
+    horizon = max(store.lead().values())
+    window = [DAY + timedelta(days=d) for d in range(horizon + 1)]
+    cohort, scores = _tile(_table("cohort"),
+                           _table("scores").filter(pl.col("date").is_in(window)), 20)
     assert cohort.height == 10_000
     schema.write(cohort, "cohort")
     schema.write(scores, "scores")

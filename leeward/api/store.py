@@ -88,8 +88,19 @@ def weights() -> dict[str, float]:
     return _cached(severity.PATH, severity.load, f"{severity.PATH.name} is missing")
 
 
+def _tau_file() -> tuple[dict[str, dict[str, float]], dict[str, int]]:
+    """Both halves of tau.yaml, parsed once. `_CACHE` is keyed by path, so they share a slot."""
+    return _cached(tau_table.PATH, lambda: (tau_table.load(), tau_table.lead_days()),
+                   f"{tau_table.PATH.name} is missing")
+
+
 def tau() -> dict[str, dict[str, float]]:
-    return _cached(tau_table.PATH, tau_table.load, f"{tau_table.PATH.name} is missing")
+    return _tau_file()[0]
+
+
+def lead() -> dict[str, int]:
+    """How far ahead of the risk each action has to happen. See `decision/allocate.py`."""
+    return _tau_file()[1]
 
 
 def report() -> dict | None:

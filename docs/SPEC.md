@@ -206,7 +206,12 @@ The 82 °F hot-day threshold is from NYC Health's 2026 mortality report, not a t
 
 ### 3.5 actions.parquet
 
-`date, veteran_id, action, tier, eha, rank, capacity_bucket, rationale, message_id`
+`action_id, date, veteran_id, action, lead_days, tier, eha, rank, capacity_bucket, rationale, owner, message_id`
+
+`date` is the **do-by** day: the day the action has to be done, which is the day it appears on
+the care team's list and the day whose capacity it spends. The day the risk lands is
+`date + lead_days`. `lead_days` comes from `tau.yaml` and is the same for every row with the
+same `action`.
 
 ### 3.6 outcome_log.parquet
 
@@ -545,6 +550,8 @@ Driver contributions = each term's posterior-mean contribution to the linear pre
 Greedy by EHA per unit cost under
 `capacity = {call: 40, refill: 200, ride: 15, booking: 20, evac: 8, pharmacist_slot: 12, va_fill: 30}`;
 the pharmacist slot is deliberately scarce, because it is a real person's afternoon; one action per veteran per day unless the veteran is Act-now, then up to 3. Optional `group_floor = {borough: 0.1}` for the fairness floor. Deterministic; returns `actions.parquet` with rank and rationale.
+
+**Lead times.** Every action carries `lead_days` from `tau.yaml`: the last day it still works, counted back from the day the risk lands. `alt_site_booking`, `early_refill` and the other pre-arranged actions are 2; rides and evacuation transport are 1; a call, a text and a check-in are 0. An action for Wednesday's surge with a two-day lead spends **Monday's** booking slot, not Wednesday's, so a day's list is drawn from every risk day that maps onto it. Two slot budgets, and a candidate needs room in both: per veteran per *risk* day (the SPEC rule above, and the budget the marginal EHA in §7.3 is priced against), and per veteran per *do-by* day (the care team's time with that person, also 3). An action whose do-by day falls before the first day being planned is not offered at all; `compare()` returns how many of those the team would have taken, and `POST /actions` reports it as `n_too_late`.
 
 ### 7.4b Caregiver routing
 If `caregiver != none` and `caregiver_contact_consent`, `care_team_call` and `verified_text` target the caregiver first (τ for those actions +0.10 on treatment_gap and access_loss, because a co-resident can act same-day). If `caregiver == none`, `verified_text` τ is halved and `care_team_call` / `evacuation_assist` are preferred; `assign_buddy` becomes available (τ access_loss 0.35, cost unit `partner_slot`). If `low_assets`, `cooling_center_ride` and `evacuation_assist` are booked, not suggested, and `heap_application` is added as a 5-day-out action (τ heat 0.30 over the season).

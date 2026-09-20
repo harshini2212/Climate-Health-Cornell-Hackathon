@@ -1,23 +1,60 @@
+# Two clinician-editable judgements about every action: how much it prevents, and how far
+# ahead of the risk it has to happen. SPEC §7.2 and §7.4.
+#
+# tau.load() reads `tau`, tau.lead_days() reads `lead_days`, and both refuse anything else.
+
 # tau[a, k]: the fraction of need k that action a prevents, if it is done. SPEC §7.2.
 #
-# Literature priors, editable. Every row names all five needs, each between 0 and 1.
-# tau.load() refuses anything else.
+# Literature priors. Every row names all five needs, each between 0 and 1.
 #
 # check_in_call is deliberately absent: it prevents nothing by itself, it finds out.
 # Its value is the information it buys -- see leeward/decision/eha.py.
 #
 # assign_buddy and heap_application (SPEC §7.4b) join this table with caregiver routing.
+tau:
+  #                           breathing   heat  mental  treatment_gap  access_loss   bucket
+  care_team_call:              {breathing: 0.25, heat: 0.30, mental: 0.35, treatment_gap: 0.40, access_loss: 0.20}  # call
+  early_refill:                {breathing: 0.15, heat: 0.10, mental: 0.05, treatment_gap: 0.60, access_loss: 0.00}  # refill
+  cooling_center_ride:         {breathing: 0.05, heat: 0.60, mental: 0.05, treatment_gap: 0.00, access_loss: 0.10}  # ride
+  clean_air_room:              {breathing: 0.50, heat: 0.05, mental: 0.00, treatment_gap: 0.00, access_loss: 0.00}  # ride
+  backup_power_plan:           {breathing: 0.20, heat: 0.00, mental: 0.05, treatment_gap: 0.50, access_loss: 0.10}  # call
+  alt_site_booking:            {breathing: 0.00, heat: 0.00, mental: 0.05, treatment_gap: 0.70, access_loss: 0.30}  # booking
+  evacuation_assist:           {breathing: 0.05, heat: 0.10, mental: 0.10, treatment_gap: 0.30, access_loss: 0.75}  # evac
+  verified_text:               {breathing: 0.05, heat: 0.15, mental: 0.10, treatment_gap: 0.10, access_loss: 0.05}  # free
+  switch_to_local_pickup:      {breathing: 0.10, heat: 0.05, mental: 0.05, treatment_gap: 0.65, access_loss: 0.10}  # refill
+  pharmacist_med_review:       {breathing: 0.15, heat: 0.45, mental: 0.10, treatment_gap: 0.20, access_loss: 0.00}  # pharmacist_slot
+  cold_chain_plan:             {breathing: 0.05, heat: 0.10, mental: 0.00, treatment_gap: 0.55, access_loss: 0.05}  # call
+  controlled_substance_bridge: {breathing: 0.00, heat: 0.00, mental: 0.20, treatment_gap: 0.70, access_loss: 0.20}  # va_fill
 
-#                             breathing   heat  mental  treatment_gap  access_loss   bucket
-care_team_call:              {breathing: 0.25, heat: 0.30, mental: 0.35, treatment_gap: 0.40, access_loss: 0.20}  # call
-early_refill:                {breathing: 0.15, heat: 0.10, mental: 0.05, treatment_gap: 0.60, access_loss: 0.00}  # refill
-cooling_center_ride:         {breathing: 0.05, heat: 0.60, mental: 0.05, treatment_gap: 0.00, access_loss: 0.10}  # ride
-clean_air_room:              {breathing: 0.50, heat: 0.05, mental: 0.00, treatment_gap: 0.00, access_loss: 0.00}  # ride
-backup_power_plan:           {breathing: 0.20, heat: 0.00, mental: 0.05, treatment_gap: 0.50, access_loss: 0.10}  # call
-alt_site_booking:            {breathing: 0.00, heat: 0.00, mental: 0.05, treatment_gap: 0.70, access_loss: 0.30}  # booking
-evacuation_assist:           {breathing: 0.05, heat: 0.10, mental: 0.10, treatment_gap: 0.30, access_loss: 0.75}  # evac
-verified_text:               {breathing: 0.05, heat: 0.15, mental: 0.10, treatment_gap: 0.10, access_loss: 0.05}  # free
-switch_to_local_pickup:      {breathing: 0.10, heat: 0.05, mental: 0.05, treatment_gap: 0.65, access_loss: 0.10}  # refill
-pharmacist_med_review:       {breathing: 0.15, heat: 0.45, mental: 0.10, treatment_gap: 0.20, access_loss: 0.00}  # pharmacist_slot
-cold_chain_plan:             {breathing: 0.05, heat: 0.10, mental: 0.00, treatment_gap: 0.55, access_loss: 0.05}  # call
-controlled_substance_bridge: {breathing: 0.00, heat: 0.00, mental: 0.20, treatment_gap: 0.70, access_loss: 0.20}  # va_fill
+# lead_days[a]: the *last* day an action still works, counted back from the day the risk
+# lands. A surge on Wednesday means the alternate dialysis site is booked by Monday; offer it
+# on Wednesday and it averts nothing, because there is nothing left to book. So the allocator
+# spends Monday's booking slot, not Wednesday's, and an action whose do-by day is already
+# behind the forecast is not offered at all.
+#
+# The catalog in docs/proposal.md §6 is laid out in "5 days out / 2 days out / during-after"
+# columns. Those name the day each action is *best* done; this names the last day it is
+# still worth doing, which is the one allocation needs. Earlier is better for every row here
+# -- an early refill five days out beats one two days out -- but two days is the point past
+# which the refill cannot arrive, and that is what makes it unofferable rather than merely
+# late. So no action Leeward can offer today is longer than two days, which also keeps every
+# one of them reachable inside the seven-day forecast window.
+#
+# Every action in schema.ACTIONS needs a row, check_in_call included. The two that have no
+# tau row yet are never proposed, so their numbers are SPEC §7.4b's word, not a measurement.
+lead_days:
+  care_team_call: 0               # a call is a call; it works on the day
+  check_in_call: 0                # find out today, re-score today
+  verified_text: 0                # sent through VA channels in seconds
+  cooling_center_ride: 1          # step-free transit is booked, not summoned
+  clean_air_room: 1               # same: a ride to somewhere with filtered air
+  evacuation_assist: 1            # transport and a packed bag, the day before
+  alt_site_booking: 2             # the Sandy dialysis lesson: pre-arrange the alternate site
+  early_refill: 2                 # My HealtheVet has to dispense and ship it
+  switch_to_local_pickup: 2       # the fill has to be moved off the mail route first
+  backup_power_plan: 2            # equipment, batteries and a plan the veteran has heard
+  cold_chain_plan: 2              # a cooler and a named open pharmacy fridge
+  pharmacist_med_review: 2        # a real person's afternoon has to be booked into
+  controlled_substance_bridge: 2  # VA must fill it itself; retail emergency refill cannot
+  assign_buddy: 5                 # SPEC §7.4b: a volunteer partner is found five days out
+  heap_application: 5             # SPEC §7.4b: a cooling-assistance application, not a call

@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
+from leeward.decision import tau as tau_table
 from leeward.schema import (
     ACTION_COST_UNIT,
     CAREGIVER,
@@ -57,6 +58,9 @@ DRIVER_PHRASES = [
     "insulin at home with an 80 percent outage forecast",
     "controlled substance: retail emergency refill does not cover it",
 ]
+
+#: The real lead times, so a fixture row's lead_days always agrees with its action.
+LEAD_DAYS = tau_table.lead_days()
 
 RATIONALES = [
     "Call today: treatment gap likely before Thursday and the interval is narrow.",
@@ -349,6 +353,7 @@ def make_actions(cohort: pl.DataFrame, scores: pl.DataFrame, day: date, seed: in
         "date": pl.Series("date", [day] * n, dtype=pl.Date),
         "veteran_id": vets,
         "action": acts,
+        "lead_days": np.array([LEAD_DAYS[a] for a in acts], dtype=np.int32),
         "tier": [k["tier"] for k in kept],
         "eha": [k["eha"] for k in kept],
         "rank": np.arange(1, n + 1, dtype=np.int32),

@@ -3,10 +3,29 @@
     allocate(scores, cohort, capacity, group_floor=None) -> the `actions` table
     total_eha(actions) -> float
 
-Each candidate is one (veteran, action) pair on one day. It uses one unit of its capacity
-bucket (`schema.ACTION_COST_UNIT`) and one of the veteran's slots for the day: one, or three
-if the veteran is Act-now. Every day in `scores` is allocated separately, each with the full
-`capacity`.
+Each candidate is one (veteran, action) pair for the risk of one day. It uses one unit of its
+capacity bucket (`schema.ACTION_COST_UNIT`) and one of the veteran's slots for the day.
+
+**An action has a day it must be done by, which is not the day the risk lands.** If the surge
+hits Wednesday, the alternate dialysis site is booked by Monday; offering it on Wednesday
+averts nothing, because there is nothing left to book. So every action carries a lead time
+from `tau.yaml`, its do-by day is `risk day - lead_days`, and it competes for the capacity of
+*that* day. `actions.date` is the do-by day -- the day it goes on the care team's list -- and
+`date + lead_days` is the day the risk lands. Both are marks the week board can draw.
+
+An action whose do-by day falls before the first day this call is planning for is already
+behind the team and is not offered at all: on Wednesday, an alternate site for Wednesday's
+surge is not a hard action, it is an impossible one. `compare()` returns how many of those
+the team would have taken, which is a real number worth showing -- part of what the forecast
+asks for on any given day could only have been done days ago.
+
+Each do-by day gets the full `capacity`, drawn from every risk day that maps onto it. The
+veteran's slot limit, though, is counted twice over -- once per risk day and once per do-by
+day, both one or three. Only the first is the SPEC §7.4 rule, and it is the one `_values`
+prices against; the second is the care team's time with one person in one day. Dropping
+either lets a veteran's reported EHA climb past the harm they carry, or puts nine things
+beside one name on a Monday. Because those budgets cross days, the days are worked as one
+queue rather than one at a time (`_fill`).
 
 Greedy by EHA per unit cost. Every action costs exactly one unit of its own bucket, and the
 buckets have no exchange rate -- a call is not a ride -- so EHA per unit cost is EHA, and
@@ -25,7 +44,11 @@ turned away for room. From there they differ by one swap at a time -- the new ru
 candidate, which may cost its veteran a later one, which frees a slot for a later one still
 -- and each swap is worth no more than the one before, so the gains cover the losses.
 (Re-valuing an Act-now veteran's actions *as they are chosen* breaks this: a seeded search
-found capacity increases that lowered the total by up to 7%.)
+found capacity increases that lowered the total by up to 7%.) Lead times do not disturb the
+argument. They add capacities -- a bucket per do-by day instead of one, and the second slot
+budget -- but every one of them is fixed before anything is chosen, which is all the argument
+rests on. `test_scheduled_days_still_never_avert_less_with_more_capacity` checks it with the
+days genuinely interleaved.
 
 `compare()` is `allocate()` plus baselines: what the same team, with the same capacity and the
 same candidate actions valued the same way, averts when it works the veterans in some other
@@ -49,10 +72,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import math
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date as Date
+from datetime import timedelta
 
 import numpy as np
 import polars as pl
@@ -79,7 +105,7 @@ OWNER = {
     "heap_application": "partner",
 }
 
-LEAD = {
+INSTRUCTION = {
     "care_team_call": "Call today",
     "backup_power_plan": "Call to confirm a backup-power plan for their equipment",
     "cold_chain_plan": "Call about keeping refrigerated medication cold",
@@ -127,6 +153,7 @@ TIER_URGENCY = {
 }
 
 OUT_SCHEMA = {c.name: c.dtype for c in schema.TABLES["actions"].columns} | {
+    "risk_date": pl.Date,     # date + lead_days: the day the risk lands, for the week ribbon
     "headline": pl.Utf8,      # the card-safe line the wall board shows (see `_headline`)
     "top_need": pl.Utf8,      # the need this action does the most for
     "top_driver": pl.Utf8,    # that need's first driver, for ActionRow.top_driver
@@ -142,13 +169,14 @@ def allocate(
     date: Date | None = None,
     weights: dict[str, float] | None = None,
     tau: dict[str, dict[str, float]] | None = None,
+    lead: dict[str, int] | None = None,
 ) -> pl.DataFrame:
-    """The `actions` table for every day in `scores` (or only `date`), cut at `capacity`.
+    """The `actions` table for every do-by day `scores` can cover (or only `date`).
 
-    `weights` and `tau` default to severity.yaml and tau.yaml.
+    `weights`, `tau` and `lead` default to severity.yaml and tau.yaml.
     """
     return compare(scores, cohort, capacity, group_floor, date=date, weights=weights,
-                   tau=tau)[0]
+                   tau=tau, lead=lead)[0]
 
 
 def compare(
@@ -161,25 +189,36 @@ def compare(
     date: Date | None = None,
     weights: dict[str, float] | None = None,
     tau: dict[str, dict[str, float]] | None = None,
-) -> tuple[pl.DataFrame, dict[str, float]]:
-    """`allocate()`'s table, and the total EHA of each baseline in `rank_by`.
+    lead: dict[str, int] | None = None,
+) -> tuple[pl.DataFrame, dict[str, float], int]:
+    """`allocate()`'s table, each baseline's total EHA, and the too-late count.
 
     `rank_by` maps a baseline's name to a numeric cohort column; that baseline works the
     veterans from the highest value of the column down (ties in veteran order, so the answer
     does not depend on risk). The total is summed over every day allocated, like `total_eha`.
+
+    `date` names one **do-by day** -- the day the care team is working. Reaching it needs the
+    risk of the days after it too, so `scores` is read from `date` forward as far as the
+    longest lead time, and only the actions that land on `date` come back.
+
+    The third return is how many actions the team would have taken on a do-by day earlier
+    than the first day being planned -- `date`, or the first day in `scores`. They are not in
+    the table, because offering an action that can no longer be done is worse than none.
     """
     weights = weights if weights is not None else severity.load()
     table = tau if tau is not None else tau_table.load()
+    lead = _check_lead(lead if lead is not None else tau_table.lead_days(), table)
     cap = _check_capacity(capacity)
     floor = _check_floor(group_floor or {}, cohort)
     rank_by = dict(rank_by or {})
     missing = {n: c for n, c in rank_by.items() if c not in cohort.columns}
     if missing:
         raise ValueError(f"rank_by names cohort columns that do not exist: {missing}")
+    horizon = max(lead.values(), default=0)
     if date is not None:
-        scores = scores.filter(pl.col("date") == date)
+        scores = scores.filter(pl.col("date").is_between(date, date + timedelta(days=horizon)))
     if scores.height == 0:
-        return _empty(), dict.fromkeys(rank_by, 0.0)
+        return _empty(), dict.fromkeys(rank_by, 0.0), 0
 
     wide = eha.needs_wide(scores)
     unknown = wide.join(cohort, on="veteran_id", how="anti")["veteran_id"].unique()
@@ -190,10 +229,30 @@ def compare(
     frame = (wide.join(tiers.assign(scores, weights), on=["veteran_id", "date"])
                  .join(cohort.select(cols), on="veteran_id")
                  .sort("date", "veteran_id"))
-    days = [_allocate_day(day, cap, floor, weights, table, rank_by)
-            for _, day in frame.group_by("date", maintain_order=True)]
-    totals = {n: sum(t[n] for _, t in days) for n in rank_by}
-    return pl.concat([a for a, _ in days]), totals
+
+    # The first and last day being planned. A do-by day before `arrived` is already behind the
+    # team. When `date` is given it is both, even if it is itself unscored -- asking for a day
+    # must not push that day's own work into the too-late pile.
+    arrived = date if date is not None else frame["date"].min()
+    last = date if date is not None else frame["date"].max()
+    panel = _panel(frame, table, lead, floor, rank_by)
+    n = len(panel.index)
+    priced = [_price(d, day, panel, weights)
+              for d, (_, day) in enumerate(frame.group_by("date", maintain_order=True))]
+    # Blocks past `last` belong to a day this call is not planning. Blocks before the forecast
+    # arrived are allocated separately, in their own counterfactual day with its own full
+    # capacity: that is what "the list the team would have been given" means, and it must not
+    # spend any of the capacity the offered days are entitled to.
+    offered = [b for day in priced for b in day.blocks if arrived <= b.do_by <= last]
+    gone = [b for day in priced for b in day.blocks if b.do_by < arrived]
+
+    n_too_late = len(_fill(gone, n, cap, floor, panel.groups, {})[0]) if gone else 0
+    if not offered:
+        return _empty(), dict.fromkeys(rank_by, 0.0), n_too_late
+    chosen, totals = _fill(offered, n, cap, floor, panel.groups, panel.order)
+    tables = [_rows(do_by, list(rows), priced, panel, lead)
+              for do_by, rows in itertools.groupby(chosen, key=lambda c: c[0])]
+    return (pl.concat(tables) if tables else _empty()), totals, n_too_late
 
 
 def total_eha(actions: pl.DataFrame) -> float:
@@ -201,58 +260,198 @@ def total_eha(actions: pl.DataFrame) -> float:
     return float(actions["eha"].sum()) if actions.height else 0.0
 
 
-def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float],
-                  weights: dict[str, float], table: dict[str, dict[str, float]],
-                  rank_by: Mapping[str, str]) -> tuple[pl.DataFrame, dict[str, float]]:
-    n = day.height
+@dataclass(frozen=True)
+class _Block:
+    """One risk day's candidates that share a do-by day: the unit a pool is built from.
+
+    Every action with the same lead time moves the same distance, so a risk day splits into
+    one block per distinct lead. Keeping them as arrays rather than rows is what lets a pool
+    be assembled by concatenation instead of a Python loop over 50,000 candidates.
+    """
+    day: int                  #: index into the `priced` list -- which risk day this came from
+    do_by: Date
+    row: np.ndarray           #: veteran's row within that day
+    act: np.ndarray           #: index into `_Priced.actions`
+    value: np.ndarray
+    veteran: np.ndarray       #: veteran's index across the whole window
+    bucket: np.ndarray        #: index into BUCKETS
+    slots: np.ndarray         #: the veteran's slot limit on that risk day
+
+
+@dataclass(frozen=True)
+class _Panel:
+    """Everything that is true of the veterans rather than of a day, worked out once.
+
+    Eligibility and which service a veteran depends on come from the cohort, and the cohort
+    does not change between Monday and Wednesday. Re-deriving them per risk day was free
+    when there was only ever one; with a lead-time window it is the same 15 polars
+    expressions over the whole panel, three times over.
+    """
+    index: dict[str, int]                    #: veteran_id -> row in this panel
+    actions: list[str]
+    T: np.ndarray                            #: tau, one row per prevention action
+    eligible: np.ndarray                     #: panel x action, from eha.ELIGIBLE
+    service: list[str]
+    lead_of: np.ndarray
+    bucket_of: np.ndarray
+    groups: dict[str, list]                  #: group_floor column -> label per veteran
+    order: dict[str, np.ndarray]             #: baseline name -> sort key per veteran
+
+
+def _panel(frame: pl.DataFrame, table: dict[str, dict[str, float]], lead: dict[str, int],
+           floor: dict[str, float], rank_by: Mapping[str, str]) -> _Panel:
+    rows = frame.unique(subset="veteran_id", keep="first").sort("veteran_id")
+    prevent, T = tau_table.matrix(table)
+    actions = [*prevent, CHECK_IN]
+    return _Panel(
+        index={v: i for i, v in enumerate(rows["veteran_id"].to_list())},
+        actions=actions, T=T,
+        eligible=rows.select([eha.ELIGIBLE[a].alias(a) for a in actions]).to_numpy().astype(bool),
+        service=rows.select(
+            pl.when("ckd_dialysis").then(pl.lit("dialysis"))
+              .when("active_cancer_tx").then(pl.lit("infusion"))
+              .otherwise(pl.lit("opioid treatment program"))).to_series().to_list(),
+        lead_of=np.array([lead[a] for a in actions]),
+        bucket_of=np.array([BUCKETS.index(ACTION_COST_UNIT[a]) for a in actions]),
+        groups={col: rows[col].to_list() for col in floor},
+        order={name: rows[col].to_numpy().astype(float) for name, col in rank_by.items()})
+
+
+@dataclass(frozen=True)
+class _Priced:
+    """One risk day, valued. Everything the chosen rows need to be written out."""
+    date: Date
+    veteran: np.ndarray       #: each row's index into the panel
+    vids: list[str]
+    tier: np.ndarray
+    value: np.ndarray
+    top: np.ndarray
+    p: np.ndarray
+    lo: np.ndarray
+    hi: np.ndarray
+    share: np.ndarray
+    drivers: list[tuple]
+    blocks: list[_Block]
+
+
+def _price(which: int, day: pl.DataFrame, panel: _Panel,
+           weights: dict[str, float]) -> _Priced:
+    """Value every (veteran, action) pair for one risk day, and post each to its do-by day."""
     vids = day["veteran_id"].to_list()
+    veteran = np.array([panel.index[v] for v in vids])
     tier = day["tier"].to_numpy()
     p = day.select([f"p_mean_{k}" for k in NEEDS]).to_numpy()
     share = day.select([f"p_epistemic_share_{k}" for k in NEEDS]).to_numpy()
     w = severity.vector(weights)
 
-    prevent, T = tau_table.matrix(table)
-    actions = [*prevent, CHECK_IN]
-    ci = len(prevent)                                   # column of the check-in
-    bucket = [ACTION_COST_UNIT[a] for a in actions]
-    open_ = day.select([eha.ELIGIBLE[a].alias(a) for a in actions]).to_numpy().astype(bool)
-    open_ &= (tier != "everyday")[:, None]
+    ci = len(panel.actions) - 1                         # column of the check-in
+    open_ = panel.eligible[veteran]
+    open_ = open_ & (tier != "everyday")[:, None]
     open_[:, ci] &= tier == "find_out"
 
     slots = np.where(tier == "act_now", ACT_NOW_SLOTS, 1)
-    value, top = _values(p * w, w * eha.epistemic_var(p, share), T, open_, slots)
+    value, top = _values(p * w, w * eha.epistemic_var(p, share), panel.T, open_, slots)
 
+    on = day["date"][0]
     i_idx, a_idx = np.nonzero(open_ & (value > EPS))
-    groups = {col: day[col].to_list() for col in floor}
+    ahead = panel.lead_of[a_idx]
+    blocks = []
+    for days_ahead in sorted(set(ahead.tolist())):
+        m = ahead == days_ahead
+        blocks.append(_Block(day=which, do_by=on - timedelta(days=int(days_ahead)),
+                             row=i_idx[m], act=a_idx[m], value=value[i_idx[m], a_idx[m]],
+                             veteran=veteran[i_idx[m]], bucket=panel.bucket_of[a_idx[m]],
+                             slots=slots[i_idx[m]]))
+    return _Priced(date=on, veteran=veteran, vids=vids, tier=tier, value=value, top=top, p=p,
+                   lo=day.select([f"p_lo80_{k}" for k in NEEDS]).to_numpy(),
+                   hi=day.select([f"p_hi80_{k}" for k in NEEDS]).to_numpy(),
+                   share=share,
+                   drivers=day.select([f"driver_1_{k}" for k in NEEDS]).rows(),
+                   blocks=blocks)
 
-    def pick(order_by: np.ndarray | None) -> set[tuple[int, int]]:
+
+def _fill(blocks: list[_Block], n_panel: int, cap: dict[str, int], floor: dict[str, float],
+          groups: dict[str, list], order: Mapping[str, np.ndarray],
+          ) -> tuple[list[tuple[Date, int, int, int]], dict[str, float]]:
+    """One greedy pass over every candidate in the window, highest EHA first.
+
+    Three budgets, and a candidate needs room in all of them:
+
+    * one unit of its capacity bucket **on its do-by day** -- the care team's Monday has
+      40 calls in it whether the risk is Monday's or Wednesday's;
+    * one of the veteran's slots **on its risk day** -- one, or three if they are Act-now.
+      This is the budget `_values` prices against, so relaxing it would let a veteran's
+      reported EHA climb past the harm they actually carry;
+    * one of the veteran's slots **on its do-by day** -- the care team's time with that
+      person on the day they pick up the phone, which does not stretch because two
+      different days are at stake.
+
+    The two slot budgets cross days, so the days are worked as one queue rather than one
+    pool at a time. Every value is still fixed before anything is chosen, which is what the
+    capacity-monotonicity argument in the module docstring needs.
+    """
+    days = sorted({b.do_by for b in blocks})
+    at = {d: i for i, d in enumerate(days)}
+    day_of = np.concatenate([np.full(b.row.shape, b.day) for b in blocks])
+    do_by = np.concatenate([np.full(b.row.shape, at[b.do_by]) for b in blocks])
+    row = np.concatenate([b.row for b in blocks])
+    act = np.concatenate([b.act for b in blocks])
+    value = np.concatenate([b.value for b in blocks])
+    veteran = np.concatenate([b.veteran for b in blocks])
+    bucket = np.concatenate([b.bucket for b in blocks])
+    slot_of = np.concatenate([b.slots for b in blocks])
+
+    nd, nr = len(days), int(day_of.max()) + 1
+    slots_do = np.zeros(n_panel * nd, dtype=int)
+    slots_risk = np.zeros(n_panel * nr, dtype=int)
+    np.maximum.at(slots_do, veteran * nd + do_by, slot_of)
+    np.maximum.at(slots_risk, veteran * nr + day_of, slot_of)
+
+    # (veteran, day) and (bucket, day) pairs flattened, so the hot loop below indexes plain
+    # Python lists: one greedy pass touches every candidate several times.
+    key_do = (veteran * nd + do_by).tolist()
+    key_risk = (veteran * nr + day_of).tolist()
+    key_cap = (bucket * nd + do_by).tolist()
+    slots_do, slots_risk = slots_do.tolist(), slots_risk.tolist()
+    start = [cap[b] for b in BUCKETS for _ in range(nd)]
+    mine = [[(col, groups[col][v], b, d) for col in floor]
+            for v, b, d in zip(veteran.tolist(), [BUCKETS[i] for i in bucket.tolist()],
+                               do_by.tolist(), strict=True)] if floor else None
+
+    def pick(order_by: np.ndarray | None) -> list[int]:
         """One greedy pass over the candidates: highest value first, or -- for a baseline --
         veterans from the highest `order_by` down, each one's own actions best first.
         (value, veteran, action) breaks ties the same way every run."""
         if order_by is None:
-            order = np.lexsort((a_idx, i_idx, -value[i_idx, a_idx]))
+            queue = np.lexsort((act, day_of, veteran, -value))
         else:
-            order = np.lexsort((a_idx, -value[i_idx, a_idx], i_idx, -order_by[i_idx]))
-        queue = list(zip(i_idx[order].tolist(), a_idx[order].tolist(), strict=True))
+            queue = np.lexsort((act, day_of, -value, veteran, -order_by[veteran]))
+        queue = queue.tolist()
 
-        used = np.zeros(n, dtype=int)
-        remaining = dict(cap)
-        quota = {(col, g, b): math.floor(f * cap[b] + 1e-9)
-                 for col, f in floor.items() for g in set(groups[col]) for b in cap}
-        taken: set[tuple[int, int]] = set()
+        used_do = [0] * (n_panel * nd)
+        used_risk = [0] * (n_panel * nr)
+        remaining = list(start)
+        quota = {(col, g, b, d): math.floor(f * cap[b] + 1e-9)
+                 for col, f in floor.items() for g in set(groups[col])
+                 for b in cap for d in range(nd)}
+        taken: list[int] = []
+        seen = bytearray(len(queue))
 
         def run(reserved_only: bool) -> None:
-            for i, a in queue:
-                b = bucket[a]
-                if used[i] >= slots[i] or remaining[b] <= 0 or (i, a) in taken:
+            for c in queue:
+                kd, kr, kc = key_do[c], key_risk[c], key_cap[c]
+                if (seen[c] or used_do[kd] >= slots_do[kd]
+                        or used_risk[kr] >= slots_risk[kr] or remaining[kc] <= 0):
                     continue
-                mine = [(col, groups[col][i], b) for col in floor]
-                if reserved_only and not any(quota[q] > 0 for q in mine):
+                reserved = mine[c] if mine else ()
+                if reserved_only and not any(quota[q] > 0 for q in reserved):
                     continue
-                taken.add((i, a))
-                used[i] += 1
-                remaining[b] -= 1
-                for q in mine:
+                seen[c] = 1
+                taken.append(c)
+                used_do[kd] += 1
+                used_risk[kr] += 1
+                remaining[kc] -= 1
+                for q in reserved:
                     quota[q] = max(0, quota[q] - 1)
 
         if floor:
@@ -261,39 +460,35 @@ def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float
         return taken
 
     taken = pick(None)
-    totals = {name: float(sum(value[i, a] for i, a in pick(day[col].to_numpy().astype(float))))
-              for name, col in rank_by.items()}
-    if not taken:
-        return _empty(), totals
-    chosen = [(i, a, float(value[i, a]), int(top[i, a])) for i, a in sorted(taken)]
+    totals = {name: float(value[pick(by)].sum()) for name, by in order.items()}
+    chosen = sorted((days[do_by[c]], int(day_of[c]), int(row[c]), int(act[c])) for c in taken)
+    return chosen, totals
 
-    lo = day.select([f"p_lo80_{k}" for k in NEEDS]).to_numpy()
-    hi = day.select([f"p_hi80_{k}" for k in NEEDS]).to_numpy()
-    drivers = day.select([f"driver_1_{k}" for k in NEEDS]).rows()
-    service = day.select(
-        pl.when("ckd_dialysis").then(pl.lit("dialysis"))
-          .when("active_cancer_tx").then(pl.lit("infusion"))
-          .otherwise(pl.lit("opioid treatment program"))
-    ).to_series().to_list()
-    on = day["date"][0]
 
+def _rows(do_by: Date, chosen: list[tuple[Date, int, int, int]], priced: list[_Priced],
+          panel: _Panel, lead: dict[str, int]) -> pl.DataFrame:
+    """One do-by day's chosen candidates, written out as `actions` rows and ranked."""
     rows = []
-    for i, a, value_, k in chosen:
-        act, need = actions[a], NEEDS[k]
-        aid = hashlib.sha1(f"{on}|{vids[i]}|{act}".encode()).hexdigest()[:12]
+    for _, d, i, a in chosen:
+        day = priced[d]
+        act = panel.actions[a]
+        k = int(day.top[i, a])
+        need = NEEDS[k]
+        aid = hashlib.sha1(f"{do_by}|{day.vids[i]}|{act}".encode()).hexdigest()[:12]
         rows.append({
-            "action_id": aid, "date": on, "veteran_id": vids[i], "action": act,
-            "tier": tier[i], "eha": value_, "rank": 0, "capacity_bucket": bucket[a],
-            "rationale": _rationale(act, need, p[i, k], lo[i, k], hi[i, k], share[i, k],
-                                    drivers[i][k], service[i]),
-            "headline": _headline(need, p[i, k], tier[i]),
+            "action_id": aid, "date": do_by, "veteran_id": day.vids[i], "action": act,
+            "lead_days": lead[act], "tier": day.tier[i], "eha": float(day.value[i, a]),
+            "rank": 0, "capacity_bucket": ACTION_COST_UNIT[act],
+            "rationale": _rationale(act, need, day.p[i, k], day.lo[i, k], day.hi[i, k],
+                                    day.share[i, k], day.drivers[i][k],
+                                    panel.service[day.veteran[i]]),
+            "headline": _headline(need, day.p[i, k], day.tier[i]),
             "owner": OWNER.get(act, "care_team"), "message_id": f"msg-{aid}",
-            "top_need": need, "top_driver": drivers[i][k],
+            "risk_date": day.date, "top_need": need, "top_driver": day.drivers[i][k],
         })
-    actions_df = (pl.DataFrame(rows, schema=OUT_SCHEMA)
-                    .sort(["eha", "veteran_id", "action"], descending=[True, False, False])
-                    .with_columns(rank=pl.int_range(1, pl.len() + 1, dtype=pl.Int32)))
-    return actions_df, totals
+    return (pl.DataFrame(rows, schema=OUT_SCHEMA)
+              .sort(["eha", "veteran_id", "action"], descending=[True, False, False])
+              .with_columns(rank=pl.int_range(1, pl.len() + 1, dtype=pl.Int32)))
 
 
 def _values(risk: np.ndarray, info: np.ndarray, T: np.ndarray, open_: np.ndarray,
@@ -343,12 +538,25 @@ def _rationale(action: str, need: str, p: float, lo: float, hi: float, share: fl
         return (f"Three-minute check-in to find out: {p:.0%} chance of {NEED_PHRASE[need]}, "
                 f"and {share:.0%} of the uncertainty is what we do not know about them.")
     why = f", driven by {driver}" if driver else ""
-    return (f"{LEAD[action].format(service=service)}: {p:.0%} chance of {NEED_PHRASE[need]} "
+    return (f"{INSTRUCTION[action].format(service=service)}: {p:.0%} chance of {NEED_PHRASE[need]} "
             f"(80% interval {lo:.0%}-{hi:.0%}){why}.")
 
 
 def _empty() -> pl.DataFrame:
     return pl.DataFrame(schema=OUT_SCHEMA)
+
+
+def _check_lead(lead: dict[str, int], table: dict[str, dict[str, float]]) -> dict[str, int]:
+    """Every action that can be offered needs a lead time. Missing is not zero."""
+    need = {*table, CHECK_IN}
+    missing = sorted(need - set(lead))
+    if missing:
+        raise ValueError(f"no lead time for {missing}; every offerable action needs one, "
+                         "because a missing lead would silently schedule it for today")
+    bad = {a: lead[a] for a in need if not isinstance(lead[a], int) or lead[a] < 0}
+    if bad:
+        raise ValueError(f"lead times must be a whole number of days, not {bad}")
+    return {a: lead[a] for a in need}
 
 
 def _check_capacity(capacity: dict[str, int]) -> dict[str, int]:
@@ -379,14 +587,17 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="scores + cohort -> data/actions.parquet, "
                                              "cut at DEFAULT_CAPACITY")
     ap.add_argument("--date", type=Date.fromisoformat, default=None,
-                    help="allocate one day (default: every day in scores)")
+                    help="allocate one do-by day (default: every day scores can cover)")
     args = ap.parse_args(argv)
     t0 = time.perf_counter()
-    actions = allocate(schema.read("scores"), schema.read("cohort"), DEFAULT_CAPACITY,
-                       date=args.date)
+    actions, _, too_late = compare(schema.read("scores"), schema.read("cohort"),
+                                   DEFAULT_CAPACITY, date=args.date)
     path = schema.write(actions, "actions")
-    print(f"  actions  {actions.height:,} rows over {actions['date'].n_unique()} days, "
+    print(f"  actions  {actions.height:,} rows over {actions['date'].n_unique()} do-by days, "
           f"total EHA {total_eha(actions):,.1f}, {time.perf_counter() - t0:.1f}s -> {path}")
+    if too_late:
+        print(f"           {too_late:,} more were already too late to book when the "
+              f"forecast arrived")
     return 0
 
 

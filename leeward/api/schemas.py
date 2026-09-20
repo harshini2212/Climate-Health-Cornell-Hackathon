@@ -157,6 +157,12 @@ class ActionRow(Base):
     eha: float
     capacity_bucket: str
     owner: str
+    lead_days: int = Field(
+        ge=0, description="Days of warning this action needs. Two means it is useless on the "
+                          "day the risk lands, so it is scheduled two days before.")
+    risk_date: Date = Field(
+        description="date + lead_days: the day the risk lands. `date` is the day this has to "
+                    "be DONE by, which is the day it appears on the care team's list.")
     headline: str = Field(
         description="Card-safe reason line: urgency and timing, no condition, medicine or "
                     "service. The only one of these three a wall-mounted board may render.")
@@ -173,13 +179,18 @@ class BaselineResult(Base):
 
 
 class ActionsResponse(Base):
-    date: Date
+    date: Date = Field(description="The do-by day: the day this list is worked.")
     capacity: dict[str, int]
     actions: list[ActionRow]
     total_eha: float
     baselines: list[BaselineResult] = Field(default_factory=list)
     n_panel: int
     n_selected: int
+    n_too_late: int = Field(
+        default=0, ge=0,
+        description="Actions the team would have taken on a do-by day earlier than "
+                    "`date`. Not offered, because an action that can no longer be done is "
+                    "worse than none.")
     counts_by_tier: dict[str, int] = Field(default_factory=dict)
     model_rung: int = Field(ge=0, le=3)
 

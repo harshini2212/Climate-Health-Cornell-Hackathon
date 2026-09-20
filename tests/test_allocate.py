@@ -11,7 +11,7 @@ from __future__ import annotations
 import itertools
 import math
 from collections import Counter
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import polars as pl
@@ -24,6 +24,12 @@ from leeward.schema import ACTION_COST_UNIT, ACTIONS, DEFAULT_CAPACITY, NEEDS
 from tables import table
 
 DAY = date(2026, 7, 16)
+
+#: Lead times switched off. Most of the cases below are about the greedy under capacity, and
+#: they score a single day: with real lead times every action that needs warning would land
+#: on a do-by day before that day and correctly drop out, leaving nothing to check. Scheduling
+#: has its own section at the end of this file, and the panel tests run with the real table.
+ZERO_LEAD = dict.fromkeys(ACTIONS, 0)
 
 # SPEC §7.1 and §7.2, retyped on purpose: the YAML must match the SPEC, not itself.
 SPEC_W = {"breathing": 3, "heat": 4, "mental": 4, "treatment_gap": 5, "access_loss": 3}
@@ -100,17 +106,52 @@ def test_severity_typos_fail_loudly(tmp_path, bad: str) -> None:
         severity.load(f)
 
 
+_GOOD_ROW = "{breathing: 0.1, heat: 0, mental: 0, treatment_gap: 0, access_loss: 0}"
+_LEAD_BLOCK = "lead_days:\n" + "".join(f"  {a}: 0\n" for a in ACTIONS)
+
+
+def _tau_file(tmp_path, tau_rows: str, lead_block: str = _LEAD_BLOCK):
+    f = tmp_path / "tau.yaml"
+    f.write_text(f"tau:\n{tau_rows}\n{lead_block}")
+    return f
+
+
 @pytest.mark.parametrize("bad", [
-    "care_team_call: {breathing: 1.5, heat: 0, mental: 0, treatment_gap: 0, access_loss: 0}",
-    "phone_tree: {breathing: 0.1, heat: 0, mental: 0, treatment_gap: 0, access_loss: 0}",
-    "check_in_call: {breathing: 0.1, heat: 0, mental: 0, treatment_gap: 0, access_loss: 0}",
-    "care_team_call: {breathing: 0.1, heat: 0, mental: 0, treatment_gap: 0}",
+    "  care_team_call: {breathing: 1.5, heat: 0, mental: 0, treatment_gap: 0, access_loss: 0}",
+    f"  phone_tree: {_GOOD_ROW}",
+    f"  check_in_call: {_GOOD_ROW}",
+    "  care_team_call: {breathing: 0.1, heat: 0, mental: 0, treatment_gap: 0}",
 ])
 def test_tau_typos_fail_loudly(tmp_path, bad: str) -> None:
+    with pytest.raises(ValueError):
+        tau.load(_tau_file(tmp_path, bad))
+
+
+@pytest.mark.parametrize("bad", [
+    "lead_days:\n  care_team_call: 0\n",                       # not every action
+    _LEAD_BLOCK.replace("care_team_call: 0", "care_team_call: 1.5"),
+    _LEAD_BLOCK.replace("care_team_call: 0", "care_team_call: -1"),
+    _LEAD_BLOCK.replace("care_team_call: 0", "care_team_call: 99"),
+    _LEAD_BLOCK + "  phone_tree: 0\n",
+])
+def test_lead_day_typos_fail_loudly(tmp_path, bad: str) -> None:
+    with pytest.raises(ValueError):
+        tau.lead_days(_tau_file(tmp_path, f"  care_team_call: {_GOOD_ROW}", bad))
+
+
+@pytest.mark.parametrize("bad", [
+    f"care_team_call: {_GOOD_ROW}\n",                          # the old flat file
+    f"tau:\n  care_team_call: {_GOOD_ROW}\n",                  # lead_days missing entirely
+    f"tau:\n  care_team_call: {_GOOD_ROW}\n{_LEAD_BLOCK}notes: hello\n",
+])
+def test_a_tau_file_without_both_sections_is_refused(tmp_path, bad: str) -> None:
+    """Dropping the lead_days section must not quietly mean "everything is same-day"."""
     f = tmp_path / "tau.yaml"
     f.write_text(bad)
     with pytest.raises(ValueError):
         tau.load(f)
+    with pytest.raises(ValueError):
+        tau.lead_days(f)
 
 
 def test_epistemic_variance_is_recovered_exactly() -> None:
@@ -183,7 +224,8 @@ FIVE_MENU = {  # eligible actions and slots, by hand; V5 is Everyday and gets no
 
 
 def _five(**cap: int) -> pl.DataFrame:
-    return allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**{**FIVE_CAP, **cap}))
+    return allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**{**FIVE_CAP, **cap}),
+                    lead=ZERO_LEAD)
 
 
 def test_five_veterans_hand_checked() -> None:
@@ -267,23 +309,25 @@ FIVE_AGES = {"V1": 66, "V2": 77, "V3": 88, "V4": 99, "V5": 55}
 def _five_compare(rank_by: dict[str, str], ages: dict[str, int] = FIVE_AGES, **cap: int):
     cohort = _cohort([{**c, "age": ages[c["veteran_id"]], "rank_key": 0}
                       for c in FIVE_COHORT])
-    return compare(_scores(FIVE_RISK), cohort, _cap(**{**FIVE_CAP, **cap}), rank_by=rank_by)
+    return compare(_scores(FIVE_RISK), cohort, _cap(**{**FIVE_CAP, **cap}), rank_by=rank_by,
+                   lead=ZERO_LEAD)
 
 
 def test_baselines_hand_checked() -> None:
-    got, totals = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
+    got, totals, _ = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
     assert total_eha(got) == pytest.approx(2.7814), "the allocator's own list must not change"
     assert totals["rank_by_age"] == pytest.approx(2.1004)
     assert totals["in_order"] == pytest.approx(2.6854), "all keys tied means veteran order"
 
 
 def test_compare_returns_exactly_what_allocate_returns() -> None:
-    got, _ = _five_compare({"rank_by_age": "age"})
+    got, _, _ = _five_compare({"rank_by_age": "age"})
     assert got.equals(_five())
 
 
 def test_a_baseline_with_no_names_is_just_allocate() -> None:
-    got, totals = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP))
+    got, totals, _ = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
+                             lead=ZERO_LEAD)
     assert totals == {} and got.equals(_five())
 
 
@@ -295,8 +339,8 @@ def test_a_baseline_on_a_missing_column_fails_loudly() -> None:
 
 def test_a_baseline_with_nothing_to_score_totals_zero() -> None:
     cohort = _cohort([{**c, "age": 70} for c in FIVE_COHORT])
-    _, totals = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
-                        rank_by={"x": "age"}, date=date(2000, 1, 1))
+    _, totals, _ = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
+                           rank_by={"x": "age"}, date=date(2000, 1, 1))
     assert totals == {"x": 0.0}
 
 
@@ -335,9 +379,10 @@ def _random_instance(seed: int):
 @pytest.mark.parametrize("seed", BROKE_LAZY_GREEDY + list(range(40)))
 def test_random_instances_more_of_any_bucket_never_averts_less(seed: int) -> None:
     scores, cohort, cap, floor = _random_instance(seed)
-    base = total_eha(allocate(scores, cohort, cap, floor))
+    base = total_eha(allocate(scores, cohort, cap, floor, lead=ZERO_LEAD))
     for bucket in sorted(set(ACTION_COST_UNIT.values())):
-        more = total_eha(allocate(scores, cohort, dict(cap, **{bucket: cap[bucket] + 1}), floor))
+        more = total_eha(allocate(scores, cohort, dict(cap, **{bucket: cap[bucket] + 1}), floor,
+                                  lead=ZERO_LEAD))
         assert more >= base - 1e-9, f"seed {seed}: +1 {bucket} lowered EHA {base} -> {more}"
 
 
@@ -360,7 +405,7 @@ def test_panel_actions_match_the_contract(default_actions) -> None:
     schema.validate(default_actions, "actions")
 
 
-def test_a_day_gets_a_list_exactly_when_someone_is_above_the_everyday_floor(
+def test_a_risk_day_gets_a_list_exactly_when_someone_is_above_the_everyday_floor(
         fixtures, default_actions) -> None:
     """Not "every scored day gets a list" -- a day can correctly produce nothing.
 
@@ -368,11 +413,14 @@ def test_a_day_gets_a_list_exactly_when_someone_is_above_the_everyday_floor(
     smoke, no outage, no flood, peak risk 0.0476 under the 0.05 self-serve floor. The whole
     panel is Everyday tier, and a care team doing nothing on a calm June day is the right
     answer. What must hold is the biconditional, not the count.
+
+    It is a biconditional about the day the *risk* lands. The do-by day is a different set:
+    an actionable Wednesday puts work on a calm Monday, which is the whole point.
     """
     scores, _ = fixtures
     graded = tiers.assign(scores)
     actionable = set(graded.filter(pl.col("tier") != "everyday")["date"].to_list())
-    assert set(default_actions["date"].to_list()) == actionable
+    assert set(default_actions["risk_date"].to_list()) == actionable
 
 
 def test_a_day_where_the_whole_panel_is_everyday_produces_no_actions() -> None:
@@ -393,8 +441,30 @@ def test_a_calm_day_drops_out_of_a_multi_day_list_and_a_busy_one_does_not() -> N
         _scores({v: {k: (0.001, 0.1) for k in NEEDS} for v in ("V1", "V2")}, day=calm),
         _scores({"V1": {"heat": (0.30, 0.1)}, "V2": {"breathing": (0.10, 0.1)}}, day=busy)])
     cohort = _cohort([{"veteran_id": "V1"}, {"veteran_id": "V2"}])
-    got = allocate(scores, cohort, DEFAULT_CAPACITY)
+    got = allocate(scores, cohort, DEFAULT_CAPACITY, lead=ZERO_LEAD)
     assert got["date"].unique().to_list() == [busy], "the calm day should simply not appear"
+    assert got["risk_date"].unique().to_list() == [busy]
+
+
+def test_a_calm_day_is_when_the_work_for_the_busy_one_gets_done() -> None:
+    """The same two days with real lead times: the calm day is no longer empty.
+
+    Nothing happens *to* anyone on the calm day, and the risk is still all on the busy one --
+    but a ride to a cooling centre has to be booked the day before, so the calm day is where
+    that booking goes. This is the difference between a stack of daily lists and a schedule.
+    """
+    calm, busy = date(2026, 6, 12), date(2026, 6, 13)
+    scores = pl.concat([
+        _scores({v: {k: (0.001, 0.1) for k in NEEDS} for v in ("V1", "V2")}, day=calm),
+        _scores({"V1": {"heat": (0.30, 0.1)}, "V2": {"breathing": (0.10, 0.1)}}, day=busy)])
+    cohort = _cohort([{"veteran_id": "V1"}, {"veteran_id": "V2"}])
+    got = allocate(scores, cohort, DEFAULT_CAPACITY)
+
+    assert (got["risk_date"] == busy).all(), "the calm day carries no risk of its own"
+    on_calm = got.filter(pl.col("date") == calm)
+    assert "cooling_center_ride" in on_calm["action"].to_list()
+    assert got.filter((pl.col("date") == busy)
+                      & (pl.col("action") == "cooling_center_ride")).height == 0
 
 
 def test_fixture_capacity_is_per_day_and_never_exceeded(default_actions) -> None:
@@ -406,11 +476,17 @@ def test_fixture_capacity_is_per_day_and_never_exceeded(default_actions) -> None
 
 
 def test_fixture_slot_limits_and_dense_ranks(default_actions) -> None:
-    per = default_actions.group_by("date", "veteran_id").agg(
+    # Per risk day: the SPEC §7.4 rule, and the budget `_values` prices against.
+    per_risk = default_actions.group_by("risk_date", "veteran_id").agg(
         pl.len().alias("n"), pl.col("tier").first(), pl.col("tier").n_unique().alias("tiers"))
-    assert per["tiers"].max() == 1, "a veteran has one tier per day"
-    assert per.filter((pl.col("tier") != "act_now") & (pl.col("n") > 1)).height == 0
-    assert per["n"].max() <= 3
+    assert per_risk["tiers"].max() == 1, "a veteran has one tier per risk day"
+    assert per_risk.filter((pl.col("tier") != "act_now") & (pl.col("n") > 1)).height == 0
+    assert per_risk["n"].max() <= 3
+    # Per do-by day: the care team's time with that person on the day they pick up the phone.
+    # A veteran can be Act-now for Wednesday and Self-serve for Thursday and have both land
+    # on Monday, so this one is not a per-tier rule -- only a ceiling.
+    per_day = default_actions.group_by("date", "veteran_id").agg(pl.len().alias("n"))
+    assert per_day["n"].max() <= 3, "no veteran gets more than three things in one day"
     for _, g in default_actions.group_by("date"):
         g = g.sort("rank")
         assert g["rank"].to_list() == list(range(1, g.height + 1))
@@ -425,19 +501,27 @@ def test_fixture_actions_only_go_to_veterans_they_apply_to(fixtures, default_act
         wrong = joined.filter((pl.col("action") == action) & ~rule)
         assert wrong.height == 0, f"{wrong.height} {action} rows for veterans it does not apply to"
     assert (joined.filter(pl.col("action") == "check_in_call")["tier"] == "find_out").all()
-    everyday = tiers.assign(scores).filter(pl.col("tier") == "everyday")
-    assert default_actions.join(everyday, on=["veteran_id", "date"]).height == 0
+    everyday = (tiers.assign(scores).filter(pl.col("tier") == "everyday")
+                .select("veteran_id", risk_date="date"))
+    assert default_actions.join(everyday, on=["veteran_id", "risk_date"]).height == 0
 
 
 def test_fixture_harm_averted_never_exceeds_the_harm_there_is(fixtures, default_actions) -> None:
-    """Three actions on one heat illness cannot prevent 135% of it."""
+    """Three actions on one heat illness cannot prevent 135% of it.
+
+    Held against the *risk* day, because that is the day whose harm is at stake. Spreading a
+    Wednesday's actions over Monday, Tuesday and Wednesday must not let them add up to more
+    than Wednesday carries -- which is exactly what a per-do-by-day slot budget alone would
+    have allowed, and it claimed 10% more harm averted than there was.
+    """
     scores, _ = fixtures
     w = severity.load()
     harm = scores.group_by("veteran_id", "date").agg(
         (pl.col("p_mean") * pl.col("need").replace_strict(w)).sum().alias("harm"))
     averted = (default_actions.filter(pl.col("action") != "check_in_call")
-               .group_by("veteran_id", "date").agg(pl.col("eha").sum().alias("averted")))
-    over = averted.join(harm, on=["veteran_id", "date"]).filter(
+               .group_by("veteran_id", "risk_date").agg(pl.col("eha").sum().alias("averted")))
+    over = averted.join(harm, left_on=["veteran_id", "risk_date"],
+                        right_on=["veteran_id", "date"]).filter(
         pl.col("averted") > pl.col("harm") + 1e-9)
     assert over.height == 0, f"{over.height} veteran-days avert more harm than they carry"
 
@@ -516,3 +600,131 @@ def test_capacity_is_checked() -> None:
 def test_scores_for_unknown_veterans_are_refused() -> None:
     with pytest.raises(ValueError):
         allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT[:4]), _cap(**FIVE_CAP))
+
+
+# --------------------------------------------------------------------------- #
+# Lead times: an action has a day it must be DONE by, which is not the risk day
+# --------------------------------------------------------------------------- #
+
+SURGE = DAY                                  # the day the water arrives
+DIALYSIS = [{"veteran_id": "V1", "ckd_dialysis": True}]
+
+
+def _week(risk: dict, upto: date = SURGE, days: int = 3) -> pl.DataFrame:
+    """`days` of scores ending on `upto`; only `upto` carries the risk, the rest are calm."""
+    calm = {v: {k: (0.001, 0.1) for k in NEEDS} for v in risk}
+    return pl.concat([_scores(calm if d else risk, day=upto - timedelta(days=d))
+                      for d in reversed(range(days))])
+
+
+def test_lead_days_are_in_tau_yaml_and_say_what_is_same_day() -> None:
+    """The prompt's own distinction: some actions are useless same-day and some are not."""
+    lead = tau.lead_days()
+    assert set(lead) == set(ACTIONS), "every action needs a judgement about when it happens"
+    assert lead["care_team_call"] == 0 and lead["verified_text"] == 0
+    assert lead["check_in_call"] == 0, "a check-in that has to be booked finds nothing out"
+    assert lead["alt_site_booking"] == 2 and lead["early_refill"] == 2
+    assert max(lead.values()) <= 7, "a lead longer than the forecast can never be offered"
+
+
+def test_an_alternate_site_is_booked_two_days_before_the_surge() -> None:
+    """A dialysis patient's alternate site must appear on T-2 and must not appear on T."""
+    got = allocate(_week({"V1": {"treatment_gap": (0.40, 0.1)}}), _cohort(DIALYSIS),
+                   DEFAULT_CAPACITY)
+    booking = got.filter(pl.col("action") == "alt_site_booking")
+    assert booking.height == 1, "the one dialysis patient gets exactly one alternate site"
+    assert booking["date"][0] == SURGE - timedelta(days=2), "booked two days ahead"
+    assert booking["risk_date"][0] == SURGE, "for the day the surge lands"
+    assert booking["lead_days"][0] == 2
+    assert got.filter((pl.col("date") == SURGE)
+                      & (pl.col("action") == "alt_site_booking")).height == 0, (
+        "by the day of the surge there is nothing left to book")
+
+
+def test_the_call_for_the_surge_is_still_made_on_the_day_of_the_surge() -> None:
+    """The other half of the same list: a lead time of zero must not move anything."""
+    got = allocate(_week({"V1": {"treatment_gap": (0.40, 0.1)}}), _cohort(DIALYSIS),
+                   DEFAULT_CAPACITY)
+    for action in ("care_team_call", "verified_text"):
+        rows = got.filter(pl.col("action") == action)
+        assert rows.height == 1 and rows["date"][0] == SURGE == rows["risk_date"][0]
+
+
+def test_date_names_the_do_by_day_and_reads_the_risk_that_follows_it() -> None:
+    """`date=` is the day the team is working, so it has to see the risk days after it."""
+    scores = _week({"V1": {"treatment_gap": (0.40, 0.1)}})
+    monday = SURGE - timedelta(days=2)
+    got = allocate(scores, _cohort(DIALYSIS), DEFAULT_CAPACITY, date=monday)
+    assert (got["date"] == monday).all(), "only the day that was asked for"
+    assert "alt_site_booking" in got["action"].to_list(), (
+        "asking for Monday must still look forward to Wednesday's surge")
+    assert got.equals(allocate(scores, _cohort(DIALYSIS), DEFAULT_CAPACITY)
+                      .filter(pl.col("date") == monday))
+
+
+def test_an_action_already_too_late_is_not_offered_and_is_counted() -> None:
+    """The forecast arrives on the day of the surge: the booking window is already shut."""
+    late = _scores({"V1": {"treatment_gap": (0.40, 0.1)}}, day=SURGE)
+    got, _, n_too_late = compare(late, _cohort(DIALYSIS), DEFAULT_CAPACITY)
+    assert "alt_site_booking" not in got["action"].to_list(), (
+        "offering a booking that can no longer be made is worse than saying nothing")
+    assert "care_team_call" in got["action"].to_list(), "the call is still worth making"
+    assert n_too_late >= 1, "and the ones that were missed are counted, not hidden"
+
+    in_time = _week({"V1": {"treatment_gap": (0.40, 0.1)}})
+    assert compare(in_time, _cohort(DIALYSIS), DEFAULT_CAPACITY)[2] == 0, (
+        "with the whole window in hand nothing should be too late"
+    )
+
+
+def test_a_late_forecast_does_not_spend_capacity_it_never_had(fixtures) -> None:
+    """The too-late count is a counterfactual; it must not cut into the real list."""
+    scores, cohort = fixtures
+    day = scores["date"].min()
+    one_day = scores.filter(pl.col("date") == day)
+    got, _, n_too_late = compare(one_day, cohort, DEFAULT_CAPACITY)
+    assert n_too_late > 0, "a same-day forecast misses every action that needs warning"
+    assert got.equals(allocate(one_day, cohort, DEFAULT_CAPACITY))
+    calls = got.filter(pl.col("capacity_bucket") == "call").height
+    assert calls == DEFAULT_CAPACITY["call"], (
+        f"{calls} of {DEFAULT_CAPACITY['call']} calls used; the too-late pass ate the budget")
+
+
+def test_scheduling_costs_less_than_a_sixth_of_the_harm_averted(fixtures) -> None:
+    """Honesty about lead time has a price, and it has to be one the demo can pay.
+
+    Some actions now fall off the front of the window, and each day's buckets are shared
+    between the risk days that map onto them. Both cost harm averted. If that cost ever got
+    past about a sixth, scheduling would be buying a truer board at too high a price.
+    """
+    scores, cohort = fixtures
+    scheduled = total_eha(allocate(scores, cohort, DEFAULT_CAPACITY))
+    same_day = total_eha(allocate(scores, cohort, DEFAULT_CAPACITY, lead=ZERO_LEAD))
+    assert scheduled >= 0.85 * same_day, (
+        f"scheduling cost {1 - scheduled / same_day:.1%} of total EHA ({scheduled:,.0f} "
+        f"against {same_day:,.0f}); the budget is 15%")
+
+
+@pytest.mark.parametrize("bucket", ["call", "booking", "ride", "pharmacist_slot"])
+def test_scheduled_days_still_never_avert_less_with_more_capacity(fixtures, bucket) -> None:
+    """The monotonicity property again, with the pools genuinely interleaved this time."""
+    scores, cohort = fixtures
+    totals = [total_eha(allocate(scores, cohort, dict(DEFAULT_CAPACITY, **{bucket: n})))
+              for n in (0, 5, 10, 20, 40)]
+    assert totals == sorted(totals), f"{bucket}: {totals}"
+
+
+def test_a_missing_lead_time_is_refused_rather_than_assumed_to_be_today() -> None:
+    with pytest.raises(ValueError, match="lead time"):
+        allocate(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
+                 lead={k: v for k, v in ZERO_LEAD.items() if k != "alt_site_booking"})
+
+
+def test_lead_days_on_a_row_always_matches_the_table(default_actions) -> None:
+    lead = tau.lead_days()
+    wrong = default_actions.filter(
+        pl.col("lead_days") != pl.col("action").replace_strict(lead, return_dtype=pl.Int32))
+    assert wrong.height == 0, f"{wrong.height} rows disagree with tau.yaml"
+    drifted = default_actions.filter(
+        pl.col("risk_date") != pl.col("date") + pl.duration(days=pl.col("lead_days")))
+    assert drifted.height == 0, "risk_date must be date + lead_days on every row"

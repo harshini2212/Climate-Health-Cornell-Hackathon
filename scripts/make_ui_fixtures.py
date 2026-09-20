@@ -111,12 +111,17 @@ def build_scores(cohort: pl.DataFrame, scores: pl.DataFrame, dates: list) -> dic
 def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int) -> dict:
     """The real allocator's list at the slider's maximum (100 calls), so the client can cut
     it at any smaller capacity with the same rules and still match what /actions would say.
-    Baselines need age, n_chronic and a seeded random key per row, so those ride along."""
-    from leeward.decision.allocate import allocate
+    Baselines need age, n_chronic and a seeded random key per row, so those ride along.
+
+    `n_too_late` rides along too, so the offline board can show the same number the live route
+    does. It is the count at the slider's maximum, like the candidate list itself; the client
+    cuts the list when the slider moves but cannot recompute this, so offline it stays put.
+    """
+    from leeward.decision.allocate import compare
 
     r = np.random.default_rng(seed)
     cap = dict(DEFAULT_CAPACITY, call=100)
-    acts = allocate(scores, cohort, cap, date=day)
+    acts, _, too_late = compare(scores, cohort, cap, date=day)
     today = scores.filter(pl.col("date") == day)
     top = (today.sort("p_mean", descending=True)
                 .group_by("veteran_id", maintain_order=True)
@@ -139,6 +144,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
             "name_display": v["name_display"], "modzcta": v["modzcta"], "borough": v["borough"],
             "action": v["action"], "tier": v["tier"], "eha": round(float(v["eha"]), 4),
             "capacity_bucket": v["capacity_bucket"], "owner": v["owner"],
+            "lead_days": int(v["lead_days"]), "risk_date": str(v["risk_date"]),
             "headline": v["headline"], "rationale": v["rationale"],
             "top_driver": v["top_driver"],
             "message_id": v["message_id"],
@@ -147,7 +153,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
     for row in rows:  # every candidate must be a legal ActionRow
         api.ActionRow(**{k: row[k] for k in api.ActionRow.model_fields})
     return {"date": str(day), "model_rung": int(scores["model_rung"][0]),
-            "n_panel": cohort.height, "candidates": rows}
+            "n_panel": cohort.height, "n_too_late": int(too_late), "candidates": rows}
 
 
 

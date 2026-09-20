@@ -289,12 +289,15 @@ _SCORES = Table(
 _ACTIONS = Table(
     name="actions",
     key=("date", "veteran_id", "action"),
-    doc="Today's ranked action list, already cut at capacity.",
+    doc="Today's ranked action list, already cut at capacity. `date` is the day the care "
+        "team does it; the day the risk lands is `date + lead_days`.",
     columns=(
         _c("action_id", pl.Utf8),
-        _c("date", pl.Date),
+        _c("date", pl.Date, "The do-by day: when this must be done, not when the risk lands"),
         _c("veteran_id", pl.Utf8),
         _c("action", pl.Utf8, values=tuple(ACTIONS)),
+        _c("lead_days", pl.Int32, "Days of warning this action needs; the risk lands on "
+                                  "date + lead_days. From tau.yaml.", bounds=(0, 7)),
         _c("tier", pl.Utf8, values=tuple(TIERS)),
         _c("eha", pl.Float64, "Expected harm averted", bounds=(0, 1000)),
         _c("rank", pl.Int32, bounds=(1, 1_000_000)),
