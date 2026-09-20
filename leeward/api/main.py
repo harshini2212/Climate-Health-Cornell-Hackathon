@@ -73,6 +73,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         except store.DataUnavailable as e:
             log.warning("not loaded at startup: %s", e)
     store.weights(), store.tau(), store.leads(), store.facilities(), store.med_classes()
+    store.act_now_rules()
     yield
 
 
@@ -225,8 +226,17 @@ def scores(date: Date, need: str) -> Response:
 # GET /veteran/{id}?date=
 # --------------------------------------------------------------------------- #
 
-def _why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float]) -> str:
-    """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers."""
+def _why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float],
+              tier_rule: str | None = None) -> str:
+    """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers.
+
+    A veteran made Act-now by one of the four hazard rules gets that row's sentence instead.
+    Explaining a closed dialysis station with a 5% probability would be worse than saying
+    nothing: the probability is not why anyone is being called, and a care team that reads
+    one and acts on the other stops trusting the card.
+    """
+    if tier_rule is not None:
+        return store.act_now_rules()[tier_rule].because
     top = max(needs, key=lambda n: n.p_mean)
     if tier == "act_now":
         n = max((n for n in needs if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
@@ -304,7 +314,9 @@ def veteran(veteran_id: str, date: Date) -> Response:
             p_epistemic_share=r["p_epistemic_share"],
             drivers=[d for d, _ in drivers], driver_contribs=[c for _, c in drivers]))
     weights = store.weights()
-    tier = tiers.assign(mine, weights)["tier"][0]
+    graded = tiers.assign(mine, weights, cohort=vets, hazards=store.table("hazards"),
+                          site_status=store.table("site_status")).row(0, named=True)
+    tier, tier_rule = graded["tier"], graded["tier_rule"]
 
     hazard = (store.table("hazards")
                    .filter((pl.col("date") == date) & (pl.col("modzcta") == v["modzcta"]))
@@ -325,7 +337,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
         veteran_id=veteran_id, name_display=v["name_display"], age=v["age"],
         modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
         facility_name=fac["name"][0] if fac.height else v["facility_id"], date=date,
-        tier=tier, why_this_tier=_why_tier(tier, needs, weights), needs=needs,
+        tier=tier, why_this_tier=_why_tier(tier, needs, weights, tier_rule), needs=needs,
         medications=api.MedicationFlags(
             n_active_meds=v["n_active_meds"], thermoreg_score=v["med_thermoreg_score"],
             acb_score=v["acb_score"], combo_raas_diuretic=v["med_combo_raas_diuretic"],
@@ -369,7 +381,8 @@ def actions(req: api.ActionsRequest) -> Response:
         chosen, baseline, n_too_late = compare(
             all_scores, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
             req.group_floor, rank_by=BASELINES, date=req.date, weights=store.weights(),
-            tau=store.tau(), lead=store.leads())
+            tau=store.tau(), lead=store.leads(), hazards=store.table("hazards"),
+            site_status=store.table("site_status"), rules=store.act_now_rules())
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     store.remember(chosen)

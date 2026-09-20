@@ -262,23 +262,31 @@ def test_five_veterans_more_of_any_bucket_never_averts_less(bucket: str) -> None
 # Baselines: the same team and the same candidates, worked in a different order
 # --------------------------------------------------------------------------- #
 #
-# Same five veterans, same capacity, same values. A baseline visits veterans in its own order;
-# each takes their best actions that still have room. Worked by hand:
+# Same five veterans, same capacity, same values, and -- since SPEC §7.4 -- the same rounds
+# and the same tier band, because those are the team's policy and only *who goes first* is
+# supposed to differ. So a baseline no longer works one veteran dry before starting the next:
+# it takes everyone's first action in its own order, then everyone's second. Bands here are
+# V1 and V2 act_now (0), V3 find_out (1), V4 self_serve (2).
 #
-#   oldest first  V4 (99), V3 (88), V2 (77), V1 (66)
-#     V4  clean_air .15 takes the only ride slot
-#     V3  check_in .32 takes call 1 of 2
-#     V2  ride is gone; call .144 takes call 2 of 2; text .0504
-#     V1  alt_site 1.40 takes the booking; call is gone; text .036
-#     total .15 + .32 + .1944 + 1.436 = 2.1004
+#   oldest first  V4 (99), V3 (88), V2 (77), V1 (66), inside each band, inside each round
+#     round 0   V2 ride .72 (ride full) · V1 alt_site 1.40 (booking full)
+#               V3 check_in .32 (call 1 of 2) · V4 clean_air wants the gone ride
+#     round 1   V2 call .144 (call 2 of 2) · V1 call, V3 call, V4 call: no room or no slot
+#     round 2   V2 text .0504 · V1 text .036        round 3  V4 text .00534375
+#     total .72 + 1.40 + .32 + .144 + .0504 + .036 + .00534375 = 2.67574375
 #
-#   in the allocator's own veteran order  V1, V2, V3, V4
-#     V1  alt_site 1.40, call .24, text .036     V2  ride .72, call .144, text .0504
-#     V3  check_in and call are gone; text .052  V4  ride and call are gone; text .00534375
-#     total 1.676 + .9144 + .052 + .00534375 = 2.64774375
+#   in the allocator's own veteran order  V1, V2, V3, V4 (every key tied)
+#     round 0   V1 alt_site 1.40 · V2 ride .72 · V3 check_in .32 · V4 clean_air: ride gone
+#     round 1   V1 call .24 (call 2 of 2) · V2 call, V4 call: no room
+#     round 2   V1 text .036 · V2 text .0504       round 3  V4 text .00534375
+#     total 1.40 + .72 + .32 + .24 + .036 + .0504 + .00534375 = 2.77174375
 #
-# The allocator's own 2.77174375 is higher because it gave V3 the check-in (.32) ahead of V2's
-# and V1's later calls; ranking by anything else cannot see that.
+# Both baselines gained on what they scored before the rounds existed (2.1004 and 2.64774375),
+# because the rounds are what stop one veteran taking three slots while another has none --
+# and a baseline that visits veterans in a blind order is where that did the most damage.
+# Working the veterans in tied order now *ties* the allocator here: with five veterans, three
+# buckets and the band already deciding most of it, there is nothing left for risk-ranking to
+# find. The gap this measures is a real one on the panel, not in a case this small.
 
 FIVE_AGES = {"V1": 66, "V2": 77, "V3": 88, "V4": 99, "V5": 55}
 
@@ -293,8 +301,8 @@ def _five_compare(rank_by: dict[str, str], ages: dict[str, int] = FIVE_AGES, **c
 def test_baselines_hand_checked() -> None:
     got, totals, _ = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
     assert total_eha(got) == pytest.approx(2.77174375), "the allocator's own list must not change"
-    assert totals["rank_by_age"] == pytest.approx(2.1004)
-    assert totals["in_order"] == pytest.approx(2.64774375), "all keys tied means veteran order"
+    assert totals["rank_by_age"] == pytest.approx(2.67574375)
+    assert totals["in_order"] == pytest.approx(2.77174375), "all keys tied means veteran order"
 
 
 def test_compare_returns_exactly_what_allocate_returns() -> None:

@@ -25,10 +25,37 @@ or three if the veteran is Act-now on the day the risk lands. Every do-by day is
 separately, each with the full `capacity`; no two do-by days share anything, which is what
 lets `POST /actions` answer for one work day without allocating the whole week.
 
-Greedy by EHA per unit cost. Every action costs exactly one unit of its own bucket, and the
-buckets have no exchange rate -- a call is not a ride -- so EHA per unit cost is EHA, and
-the per-bucket cap does the rest. Highest EHA goes first; a candidate is skipped when its
-bucket is full or its veteran has no slot left that day.
+**Nobody gets a second action until everyone has been offered a first, Act-now veterans go
+first inside each of those rounds, and EHA ranks within that** (SPEC §7.4). Three keys, in
+that order, and each one earns its place:
+
+*Round.* An Act-now veteran gets up to three slots. Offering all three before a Find-out
+veteran is offered one is not priority, it is monopoly -- and it is expensive, because a
+veteran's second and third actions are valued on the risk their first one leaves behind
+(`_values`), so they are worth a fraction of somebody else's untouched first. Filling the
+scarce buckets that way costs 17% of the harm this list averts. Taking the rounds in order
+costs 6% and serves the same Act-now veterans.
+
+*Band.* Within a round, `tiers.BAND` order: Act-now, then Find-out, then Self-serve, then
+Everyday. Before this existed the order was pure greedy-by-EHA, and a Self-serve veteran
+with broad moderate risk outranked an Act-now veteran with one sharp risk for the same call
+-- so the tier badge said "call today" for people the list never called. Together with the
+round, this is the promise the badge makes: no Self-serve veteran holds a scarce slot while
+an Act-now veteran who could have used it holds nothing at all.
+
+The band is a property of the **veteran on the work day**, not of the candidate: a veteran
+is Act-now today if any of the risk days being worked for them today makes them Act-now, the
+same "most urgent of the risk days" rule that sets how many slots they get. That is not a
+detail. Banding each candidate separately would stop the greedy running in value order
+*within a veteran*, and then a cheap Act-now action could take the slot a far more valuable
+Self-serve one would have used, so raising a bucket could lower the total. Keyed this way it
+cannot: round and band are both constant or monotone in value within a veteran, so a
+veteran's own actions are still tried best first (see the monotonicity argument below).
+
+*EHA.* Every action costs exactly one unit of its own bucket, and the buckets have no
+exchange rate -- a call is not a ride -- so EHA per unit cost is EHA, and the per-bucket cap
+does the rest. A candidate is skipped when its bucket is full or its veteran has no slot
+left that day.
 
 A veteran's actions do not add up naively: two actions that each prevent 60% of a heat
 illness prevent 84% together, not 120%. So each action is valued on the risk left after all
@@ -42,10 +69,16 @@ carries. The `eha` column is a floor on what the action truly averts, never a ce
 More capacity never averts less harm, because every value is fixed before anything is
 chosen and do-by days do not compete. Raise one bucket by one and the two runs agree until
 the first candidate the old run turned away for room. From there they differ by one swap at
-a time -- the new run gains that candidate, which may cost its veteran a later one, which
-frees a slot for a later one still -- and each swap is worth no more than the one before, so
-the gains cover the losses. (Re-valuing a veteran's actions *as they are chosen* breaks
-this: a seeded search found capacity increases that lowered the total by up to 7%.)
+a time: the new run gains that candidate, which costs its veteran one slot and so may cost
+that **same veteran** a later action, which frees a unit of that action's bucket, which
+gains a candidate for someone else, and so on. Every loss in the chain is paired with the
+gain immediately above it and belongs to the same veteran, where the order is descending
+EHA -- so each pair is worth zero or more and the gains cover the losses. That argument is
+informal, so it was also searched: 5,400 capacity increases over 600 seeded Act-now-heavy
+instances with the hazard rules firing, zero violations. (Re-valuing a veteran's actions *as
+they are chosen* breaks this: the same kind of search found capacity increases that lowered
+the total by up to 7%. So does banding each candidate rather than each veteran, for the
+reason given above.)
 
 `compare()` is `allocate()` plus baselines: what the same team, with the same capacity and the
 same candidate actions valued the same way, averts when it works the veterans in some other
@@ -80,6 +113,7 @@ import polars as pl
 
 from leeward import schema
 from leeward.decision import eha, severity, tiers
+from leeward.decision import rules as rule_table
 from leeward.decision import tau as tau_table
 from leeward.schema import ACTION_COST_UNIT, DEFAULT_CAPACITY, NEEDS
 
@@ -168,13 +202,19 @@ def allocate(
     tau: dict[str, dict[str, float]] | None = None,
     lead: dict[str, int] | None = None,
     as_of: Date | None = None,
+    hazards: pl.DataFrame | None = None,
+    site_status: pl.DataFrame | None = None,
+    rules: dict[str, rule_table.Rule] | None = None,
 ) -> pl.DataFrame:
     """The `actions` table for every do-by day `scores` reaches (or only `date`).
 
-    `weights`, `tau` and `lead` default to severity.yaml and tau.yaml.
+    `weights`, `tau`, `lead` and `rules` default to severity.yaml, tau.yaml and
+    act_now.yaml. `hazards` and `site_status` switch on the four Act-now rules; without
+    them the tiers come from the scores alone and no hazard rule can fire.
     """
     return compare(scores, cohort, capacity, group_floor, date=date, weights=weights,
-                   tau=tau, lead=lead, as_of=as_of)[0]
+                   tau=tau, lead=lead, as_of=as_of, hazards=hazards,
+                   site_status=site_status, rules=rules)[0]
 
 
 def compare(
@@ -189,6 +229,9 @@ def compare(
     tau: dict[str, dict[str, float]] | None = None,
     lead: dict[str, int] | None = None,
     as_of: Date | None = None,
+    hazards: pl.DataFrame | None = None,
+    site_status: pl.DataFrame | None = None,
+    rules: dict[str, rule_table.Rule] | None = None,
 ) -> tuple[pl.DataFrame, dict[str, float], int]:
     """`allocate()`'s table, each baseline's total EHA, and the count that arrived too late.
 
@@ -203,10 +246,16 @@ def compare(
     `rank_by` maps a baseline's name to a numeric cohort column; that baseline works the
     veterans from the highest value of the column down (ties in veteran order, so the answer
     does not depend on risk). The total is summed over every do-by day allocated, like
-    `total_eha`.
+    `total_eha`. Baselines allocate under the **same tier band** as Leeward, because the band
+    is the team's policy rather than a ranking: only who goes first may differ, or the gap
+    would be measuring two changes at once instead of what risk-ranking is worth.
     """
     weights = weights if weights is not None else severity.load()
     table = tau if tau is not None else tau_table.load()
+    # Once per call, not once per reader: `tiers.assign` needs the conditions and `_rows`
+    # needs the sentences, and act_now.yaml carries a paragraph per rule.
+    if rules is None and (hazards is not None or site_status is not None):
+        rules = rule_table.load()
     cap = _check_capacity(capacity)
     floor = _check_floor(group_floor or {}, cohort)
     rank_by = dict(rank_by or {})
@@ -231,7 +280,9 @@ def compare(
         raise ValueError(f"{unknown.len()} scored veterans are not in the cohort, "
                          f"e.g. {unknown.sort()[0]!r}")
     cols = ["veteran_id", *dict.fromkeys([*eha.COHORT_COLUMNS, *floor, *rank_by.values()])]
-    frame = (wide.join(tiers.assign(scores, weights), on=["veteran_id", "date"])
+    graded = tiers.assign(scores, weights, cohort=cohort, hazards=hazards,
+                          site_status=site_status, rules=rules)
+    frame = (wide.join(graded, on=["veteran_id", "date"])
                  .join(cohort.select(cols), on="veteran_id")
                  .sort("date", "veteran_id")
                  .with_row_index("_unit")
@@ -247,6 +298,7 @@ def compare(
         cand = {k: v[in_reach] for k, v in cand.items()}
 
     slots = np.where(frame["tier"].to_numpy() == "act_now", ACT_NOW_SLOTS, 1)
+    tier_band = frame["tier"].replace_strict(tiers.BAND, return_dtype=pl.Int64).to_numpy()
     vet = frame["_vet"].to_numpy()
     groups = {col: frame[col].to_list() for col in floor}
     orders = {name: frame[col].to_numpy().astype(float) for name, col in rank_by.items()}
@@ -263,8 +315,8 @@ def compare(
     for day in _split_by_day(cand):
         on = int(day["do_by"][0])
         keep = on == want if want is not None else on >= gone
-        taken, day_totals = _allocate_do_by_day(day, cap, floor, act_names, slots, vet,
-                                                groups, orders if keep else {}, n_vets)
+        taken, day_totals = _allocate_do_by_day(day, cap, floor, act_names, slots, tier_band,
+                                                vet, groups, orders if keep else {}, n_vets)
         if taken is None:
             continue
         if keep:
@@ -275,7 +327,7 @@ def compare(
             n_too_late += len(taken["unit"])
     if not chosen:
         return _empty(), totals, n_too_late
-    return _rows(chosen, frame, act_names, lead_of), totals, n_too_late
+    return _rows(chosen, frame, act_names, lead_of, rules), totals, n_too_late
 
 
 def total_eha(actions: pl.DataFrame) -> float:
@@ -367,37 +419,72 @@ def _split_by_day(cand: dict[str, np.ndarray]):
             yield {k: v[part] for k, v in ordered.items()}
 
 
+def _rounds(who: np.ndarray, value: np.ndarray) -> np.ndarray:
+    """Which action this is for its veteran, 0 for their best: the round it is offered in.
+
+    Ranked by descending EHA, the same order the veteran's own actions were valued in, so
+    `round` rising and `value` falling never disagree inside one veteran. That is exactly
+    what the monotonicity argument needs, and it is why the round may sit above the band in
+    the sort without putting the capacity slider's story at risk.
+
+    Two sort keys, not three: `lexsort` is stable, so a veteran's exactly-equal actions keep
+    the order `_candidates` emitted them in, which is already deterministic. The third key
+    the greedy uses to break those ties costs a third of this function and decides nothing.
+    """
+    order = np.lexsort((-value, who))
+    grouped = who[order]
+    starts = np.flatnonzero(np.r_[True, grouped[1:] != grouped[:-1]])
+    within = np.arange(len(order)) - np.repeat(starts, np.diff(np.r_[starts, len(order)]))
+    out = np.empty(len(order), dtype=np.int64)
+    out[order] = within
+    return out
+
+
 def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
                         floor: dict[str, float], act_names: list[str], slots: np.ndarray,
-                        vet: np.ndarray, groups: dict[str, list], orders: dict[str, np.ndarray],
+                        tier_band: np.ndarray, vet: np.ndarray, groups: dict[str, list],
+                        orders: dict[str, np.ndarray],
                         n_vets: int) -> tuple[dict[str, np.ndarray] | None, dict[str, float]]:
     """Who gets what on one work day, and what each baseline would have averted instead."""
     unit, a_idx, value = day["unit"], day["action"], day["value"]
     bucket = [ACTION_COST_UNIT[a] for a in act_names]
     who = vet[unit]
 
-    # Two limits, both fixed before anything is chosen, both inside this one day.
-    # Per risk day, because the tier is a statement about that day's risk: a Self-serve
-    # Friday earns one action about Friday, whoever else the veteran is the rest of the week.
-    # Per work day, because that is how often anyone may be contacted in one morning: the
-    # most any of the risk days being worked for them today allows.
+    # Two limits and two priorities, all fixed before anything is chosen, all inside this
+    # one day. The limits are per risk day, because the tier is a statement about that day's
+    # risk -- a Self-serve Friday earns one action about Friday, whoever else the veteran is
+    # the rest of the week -- and per work day, because that is how often anyone may be
+    # contacted in one morning: the most any of the risk days being worked for them today
+    # allows. The band is the same rule read the same way round: the *best* tier among the
+    # risk days being worked for them today, so a veteran whose Wednesday is Act-now is
+    # worked as Act-now on the Monday their booking is due.
     per_day = np.zeros(n_vets, dtype=np.int64)
     np.maximum.at(per_day, who, slots[unit])
+    band = np.full(n_vets, max(tiers.BAND.values()), dtype=np.int64)
+    np.minimum.at(band, who, tier_band[unit])
     limit, cost = per_day.tolist(), slots.tolist()
+    # Round and band as one integer, because lexsort pays per key and this runs three times
+    # per work day on every slider drag. Round is the major digit; band never reaches N_BANDS.
+    priority = _rounds(who, value) * len(tiers.BAND) + band[who]
 
     def pick(order_by: np.ndarray | None) -> np.ndarray:
-        """One greedy pass over the candidates: highest value first, or -- for a baseline --
-        veterans from the highest `order_by` down, each one's own actions best first.
-        (value, veteran, action) breaks ties the same way every run.
+        """One greedy pass: everyone's first action before anyone's second, Act-now band
+        first inside each round, highest value inside that -- or, for a baseline, veterans
+        from the highest `order_by` down in place of the value. (value, veteran, action)
+        breaks ties the same way every run.
+
+        Keying on the *veteran's* band and the action's round, rather than on the candidate's
+        own tier, is what keeps more capacity from averting less harm; the module docstring
+        has the argument.
 
         The loop body reads plain Python lists rather than indexing the numpy arrays. It
         runs once per candidate per baseline, four times over on every slider drag, and
         numpy scalar indexing inside it costs several times what the greedy itself does.
         """
         if order_by is None:
-            order = np.lexsort((a_idx, who, -value))
+            order = np.lexsort((a_idx, who, -value, priority))
         else:
-            order = np.lexsort((a_idx, -value, who, -order_by[unit]))
+            order = np.lexsort((a_idx, -value, who, -order_by[unit], priority))
         seq = list(zip(order.tolist(), who[order].tolist(), unit[order].tolist(),
                        [bucket[a] for a in a_idx[order].tolist()], strict=True))
 
@@ -440,11 +527,12 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
 # --------------------------------------------------------------------------- #
 
 def _rows(chosen: list[dict[str, np.ndarray]], frame: pl.DataFrame, act_names: list[str],
-          lead_of: np.ndarray) -> pl.DataFrame:
+          lead_of: np.ndarray,
+          rules: dict[str, rule_table.Rule] | None = None) -> pl.DataFrame:
     """The chosen candidates as the `actions` table, ranked within each do-by day."""
     picked = {k: np.concatenate([c[k] for c in chosen]) for k in chosen[0]}
     meta = frame.select(
-        "_unit", "veteran_id", "tier",
+        "_unit", "veteran_id", "tier", "tier_rule",
         *[f"{f}_{k}" for f in _PER_NEED for k in NEEDS],
         service=pl.when("ckd_dialysis").then(pl.lit("dialysis"))
                   .when("active_cancer_tx").then(pl.lit("infusion"))
@@ -458,8 +546,11 @@ def _rows(chosen: list[dict[str, np.ndarray]], frame: pl.DataFrame, act_names: l
     drivers = joined.select([f"driver_1_{k}" for k in NEEDS]).rows()
     vids = joined["veteran_id"].to_list()
     tiers_ = joined["tier"].to_list()
+    fired = joined["tier_rule"].to_list()
     services = joined["service"].to_list()
     dates = [Date.fromordinal(int(d)) for d in picked["do_by"]]
+    # A rule-triggered row carries its own mechanism, in the words a clinician signed off.
+    because = {name: rule.because for name, rule in (rules or {}).items()}
 
     out = []
     for n in range(len(vids)):
@@ -475,7 +566,7 @@ def _rows(chosen: list[dict[str, np.ndarray]], frame: pl.DataFrame, act_names: l
             "rationale": _rationale(act, need, p, fields["p_lo80"][n, k],
                                     fields["p_hi80"][n, k],
                                     fields["p_epistemic_share"][n, k], drivers[n][k],
-                                    services[n]),
+                                    services[n], because.get(fired[n])),
             "headline": _headline(need, p, tier),
             "owner": OWNER.get(act, "care_team"), "message_id": f"msg-{aid}",
             "top_need": need, "top_driver": drivers[n][k],
@@ -501,15 +592,22 @@ def _headline(need: str, p: float, tier: str) -> str:
 
 
 def _rationale(action: str, need: str, p: float, lo: float, hi: float, share: float,
-               driver: str | None, service: str) -> str:
+               driver: str | None, service: str, because: str | None = None) -> str:
     """One sentence a care-team member can read aloud. Names the service, the medicine and
-    the driver on purpose -- so it is a drill-down line, never a board line (`_headline`)."""
+    the driver on purpose -- so it is a drill-down line, never a board line (`_headline`).
+
+    `because` is the `act_now.yaml` row that made this veteran Act-now, if one did. It goes
+    last and in full: the probability did not trigger the rule, so a care team told to act
+    today needs the mechanism that did, in the words a clinician signed off on.
+    """
     if action == CHECK_IN:
-        return (f"Three-minute check-in to find out: {p:.0%} chance of {NEED_PHRASE[need]}, "
+        said = (f"Three-minute check-in to find out: {p:.0%} chance of {NEED_PHRASE[need]}, "
                 f"and {share:.0%} of the uncertainty is what we do not know about them.")
-    why = f", driven by {driver}" if driver else ""
-    return (f"{LEAD[action].format(service=service)}: {p:.0%} chance of {NEED_PHRASE[need]} "
-            f"(80% interval {lo:.0%}-{hi:.0%}){why}.")
+    else:
+        why = f", driven by {driver}" if driver else ""
+        said = (f"{LEAD[action].format(service=service)}: {p:.0%} chance of "
+                f"{NEED_PHRASE[need]} (80% interval {lo:.0%}-{hi:.0%}){why}.")
+    return f"{said} {because}" if because else said
 
 
 def _empty() -> pl.DataFrame:
@@ -563,8 +661,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="allocate one do-by day (default: every day the window reaches)")
     args = ap.parse_args(argv)
     t0 = time.perf_counter()
+    # hazards and site_status are not optional here: without them no Act-now rule can fire
+    # and this would quietly write an actions.parquet missing the four rows the demo is made
+    # of. `make hazards` produces both, and `make score` runs after it.
     actions, _, too_late = compare(schema.read("scores"), schema.read("cohort"),
-                                   DEFAULT_CAPACITY, date=args.date)
+                                   DEFAULT_CAPACITY, date=args.date,
+                                   hazards=schema.read("hazards"),
+                                   site_status=schema.read("site_status"))
     path = schema.write(actions, "actions")
     print(f"  actions  {actions.height:,} rows over {actions['date'].n_unique()} do-by days, "
           f"total EHA {total_eha(actions):,.1f}, {time.perf_counter() - t0:.1f}s -> {path}")

@@ -550,17 +550,40 @@ Driver contributions = each term's posterior-mean contribution to the linear pre
 `EHA[i,a,t] = Σ_k w_k · mean_draws(p[i,k,t,draw]) · τ[a,k]`, plus `VOI[i] = Σ_k w_k · sqrt(epistemic_var[i,k,t])` for check-in calls.
 
 ### 7.4 allocate.py
-Greedy by EHA per unit cost under
+Selection order is **(round, tier band, EHA per unit cost)**, under
 `capacity = {call: 40, refill: 200, ride: 15, booking: 20, evac: 8, pharmacist_slot: 12, va_fill: 30}`;
 the pharmacist slot is deliberately scarce, because it is a real person's afternoon; one action per veteran per day unless the veteran is Act-now, then up to 3. Optional `group_floor = {borough: 0.1}` for the fairness floor. Deterministic; returns `actions.parquet` with rank and rationale.
+
+The three keys, and why they are in that order:
+
+1. **Round.** Nobody is offered a second action until everyone has been offered a first. An Act-now veteran may hold three slots, and letting them take all three before a Find-out veteran gets one is monopoly rather than priority — and costly, because second and third actions are valued on the risk the first leaves behind, so they are worth a fraction of somebody else's untouched first. Filling scarce buckets that way costs ~17% of total EHA; taking the rounds in order costs ~6% and serves the same Act-now veterans.
+2. **Tier band.** Within a round: Act-now, then Find-out, then Self-serve, then Everyday. This is the **resolution of prompt 10** — before it, allocation was pure greedy-by-EHA and a Self-serve veteran with broad moderate risk outranked an Act-now veteran with one sharp risk for the same call, so the tier badge promised a call the list never made. The band is a property of the **veteran on the work day** (the best tier among the risk days being worked for them that day), not of the individual candidate; banding candidates breaks capacity monotonicity, banding veterans does not, because within a veteran the order is still descending EHA.
+3. **EHA per unit cost**, as before.
+
+Together the first two keys are the promise the badge makes: *no Self-serve veteran holds a scarce-bucket slot while an Act-now veteran who could have used that bucket holds nothing at all.*
+
+Raising capacity still never lowers total EHA, and `tests/test_act_now_rules.py` pins both that and the 15% ceiling on what the band may cost.
 
 ### 7.4b Caregiver routing
 If `caregiver != none` and `caregiver_contact_consent`, `care_team_call` and `verified_text` target the caregiver first (τ for those actions +0.10 on treatment_gap and access_loss, because a co-resident can act same-day). If `caregiver == none`, `verified_text` τ is halved and `care_team_call` / `evacuation_assist` are preferred; `assign_buddy` becomes available (τ access_loss 0.35, cost unit `partner_slot`). If `low_assets`, `cooling_center_ride` and `evacuation_assist` are booked, not suggested, and `heap_application` is added as a 5-day-out action (τ heat 0.30 over the season).
 
 ### 7.5 tiers.py
-Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast), **or `mail_order_pharmacy` and `days_supply_remaining ≤ forecast lead time` on a day the scenario disrupts delivery to that ZIP, or `med_controlled` and the veteran's station is SiteDown**. The last two are close to deterministic, which is the point: they are the rows a care team can act on with no argument. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10. Self-serve: p_mean 0.05–0.25. Everyday: rest.
+Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, **or any row of the hazard-rule table matches**. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10. Self-serve: p_mean 0.05–0.25. Everyday: rest.
 
-**Acceptance:** `test_allocate.py` hand-checkable 5-veteran case; capacity never exceeded; raising capacity never lowers total EHA.
+`assign()` returns `veteran_id, date, tier, tier_rule`, where `tier_rule` names the row that forced Act-now, or is null when the probabilities decided on their own. It takes `cohort`, `hazards` and `site_status` together, or none of them — a partial set is refused, because a half-applied rule table would silently stop some rules firing and still look like a full answer.
+
+**The four hazard-triggered rules live in `leeward/decision/act_now.yaml`**, a clinician-editable table beside `severity.yaml` and `tau.yaml`, not in code. Each row ANDs up to three cells — `veteran` (cohort), `station` (site_status), `zip` (hazards) — and carries a `because` sentence that is printed verbatim in the action's rationale and on the veteran card, plus a `source`. A veteran who matches a row is Act-now **regardless of where their probability sits**, because each row encodes a mechanism the posterior has not seen. These are close to deterministic, which is the point: they are the rows a care team can act on with no argument.
+
+| Rule | veteran | station | zip | Mechanism |
+| --- | --- | --- | --- | --- |
+| `site_dependent_at_a_closed_station` | dialysis, infusion or OTP | `site_down` | — | Station 630 is in evacuation zone 1 and its OTP closed five months after Sandy; ~100 veterans needed guest-dosing |
+| `controlled_substance_at_a_closed_station` | `med_controlled` or OTP | `site_down` | — | The **VA Pharmacy Disaster Relief Plan**'s 10-day retail supply **excludes controlled substances**, so the fallback covering everyone else does not exist for them |
+| `mail_order_supply_short_on_a_disrupted_day` | `mail_order_pharmacy` and `days_supply_remaining ≤ 7` | — | `mail_delivery_disrupted` | ~80% of VA outpatient prescriptions arrive by mail, so a flooded ZIP is a medication-supply event |
+| `unattended_powered_equipment_in_an_outage` | `caregiver == none` and `powered_equipment != none` | — | `outage_frac ≥ 0.2` | emPOWER: the equipment stops and nobody in the home can act on it |
+
+The two thresholds are editable numbers in the YAML, not constants: 7 days is the forecast window, and 0.2 matches `leeward.demo.OUTAGE_ALERT_FRAC`. `load()` validates every column name against `leeward/schema.py` and every operator against the column's type, so a typo fails loudly rather than quietly never firing again.
+
+**Acceptance:** `test_allocate.py` hand-checkable 5-veteran case; capacity never exceeded; raising capacity never lowers total EHA. `test_act_now_rules.py` covers the four rules, the band, and the 15% EHA ceiling.
 
 **Claude Code prompt (Track C):**
 > Implement `leeward/decision/allocate.py`: greedy selection maximizing summed EHA per cost unit under `capacity: dict[str,int]`, at most one action per veteran unless tier == "act_now" (max 3). Add `group_floor` support. Write a 5-veteran test where the optimum is obvious, and a property test that increasing any capacity never decreases total EHA.

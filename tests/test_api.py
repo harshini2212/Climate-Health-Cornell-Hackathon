@@ -294,7 +294,11 @@ def test_class_notes_use_the_va_formulary_names_from_the_reference_table() -> No
 def test_actions_are_the_allocators_answer(client: TestClient) -> None:
     body = _post(client)
     resp = api.ActionsResponse.model_validate(body)
-    want = allocate(_table("scores"), _table("cohort"), DEFAULT_CAPACITY, date=DAY)
+    # The route serves hazards and site_status too, because the four Act-now rules read
+    # them (SPEC §7.5). On this day station 630 is closed, so leaving them out here would
+    # compare the route against a quieter allocator than the one it actually runs.
+    want = allocate(_table("scores"), _table("cohort"), DEFAULT_CAPACITY, date=DAY,
+                    hazards=_table("hazards"), site_status=_table("site_status"))
 
     assert [a.action_id for a in resp.actions] == want.sort("rank")["action_id"].to_list()
     assert [a.eha for a in resp.actions] == want.sort("rank")["eha"].to_list()
