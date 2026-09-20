@@ -90,6 +90,11 @@ class NeedScore(Base):
     p_lo80: float
     p_hi80: float
     p_epistemic_share: float
+    #: What this veteran's number would be if the fields the VA does not have on file turned
+    #: out to be their least- and most-risky values. Null when the record has no gap, which
+    #: is not the same as a gap that would not move the number.
+    p_gap_lo: float | None = None
+    p_gap_hi: float | None = None
     drivers: list[str] = Field(default_factory=list, max_length=3)
     driver_contribs: list[float] = Field(default_factory=list, max_length=3)
 

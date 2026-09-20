@@ -50,7 +50,7 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
-from leeward.cohort import medications
+from leeward.cohort import medications, missingness
 from leeward.schema import REFERENCE
 
 N_DEFAULT = 10_000
@@ -519,6 +519,10 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
     })
     # Prescriptions, the mechanisms they carry, and pharmacy logistics (medications.py).
     df = medications.attach(df, seed)
+
+    # What the VA actually has on file. The truth above stays; these are the nullable copies
+    # scoring is allowed to read (missingness.py).
+    df = missingness.apply(df, seed)
 
     contract = schema.TABLES["cohort"].columns
     flags = [pl.lit(True).alias(f"{c.name}_synthetic") for c in contract if c.synthetic]

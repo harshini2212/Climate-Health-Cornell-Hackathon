@@ -26,6 +26,7 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
+from leeward.cohort import missingness
 from leeward.decision import tau
 from leeward.schema import (
     ACTION_COST_UNIT,
@@ -200,7 +201,9 @@ def make_cohort(n: int, seed: int, zips: pl.DataFrame, fac: pl.DataFrame) -> pl.
     # Every synthetic column needs its flag. In fixtures, everything is synthetic.
     flags = {f"{c.name}_synthetic": pl.lit(True)
              for c in schema.TABLES["cohort"].columns if c.synthetic}
-    return df.with_columns(**flags)
+    # The same hiding the real cohort gets, from the same module -- a fixture with every
+    # field filled in would let the scorer's marginalisation go untested.
+    return missingness.apply(df.with_columns(**flags), seed)
 
 
 def make_hazards(zips: pl.DataFrame, days: list[date], seed: int) -> pl.DataFrame:
@@ -268,6 +271,15 @@ def make_scores(cohort: pl.DataFrame, days: list[date], seed: int) -> pl.DataFra
     lo = np.clip(p - width / 2, 0.0005, 0.99)
     hi = np.clip(p + width / 2, lo + 0.001, 0.999)
 
+    # A record gap on about a third of rows, straddling p_mean: what the veteran's number
+    # would be if the missing field turned out well or badly. Null where the record is whole,
+    # and wide enough on some rows to straddle a tier line, so the Find-out tier a lane
+    # develops against is not permanently empty.
+    gap = r.random(total) < 0.36
+    swing = np.where(gap, np.clip(r.gamma(1.7, 0.055, total), 0.002, 0.45), np.nan)
+    gap_lo = np.clip(p - swing * r.uniform(0.2, 0.8, total), 0.0005, 0.999)
+    gap_hi = np.clip(gap_lo + swing, gap_lo + 0.0005, 0.999)
+
     di = r.integers(0, len(DRIVER_PHRASES), (total, 3))
     return pl.DataFrame({
         "veteran_id": vids,
@@ -277,6 +289,8 @@ def make_scores(cohort: pl.DataFrame, days: list[date], seed: int) -> pl.DataFra
         "p_lo80": lo.round(4),
         "p_hi80": hi.round(4),
         "p_epistemic_share": np.clip(r.beta(2, 4, total), 0, 1).round(3),
+        "p_gap_lo": pl.Series(np.where(gap, gap_lo.round(4), np.nan), nan_to_null=True),
+        "p_gap_hi": pl.Series(np.where(gap, gap_hi.round(4), np.nan), nan_to_null=True),
         "driver_1": [DRIVER_PHRASES[i] for i in di[:, 0]],
         "driver_2": [DRIVER_PHRASES[i] for i in di[:, 1]],
         "driver_3": [DRIVER_PHRASES[i] for i in di[:, 2]],

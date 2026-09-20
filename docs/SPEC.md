@@ -202,7 +202,14 @@ The 82 °F hot-day threshold is from NYC Health's 2026 mortality report, not a t
 
 ### 3.4 scores.parquet
 
-`veteran_id, date, need, p_mean, p_lo80, p_hi80, p_epistemic_share, driver_1, driver_2, driver_3, driver_1_contrib, driver_2_contrib, driver_3_contrib`
+`veteran_id, date, need, p_mean, p_lo80, p_hi80, p_epistemic_share, p_gap_lo, p_gap_hi, driver_1, driver_2, driver_3, driver_1_contrib, driver_2_contrib, driver_3_contrib`
+
+`p_gap_lo` and `p_gap_hi` are nullable, and null means the record has no gap — which is not
+the same as a gap that would not move the number, and §7.5 needs to tell those apart. Where
+they are set, `p_gap_lo ≤ p_mean ≤ p_gap_hi` always: all three are averaged over the same
+posterior draws, because taking the ends at the mean coefficients instead puts `p_mean`
+outside its own range at these probabilities (Jensen) and breaks every threshold the tier
+compares them against.
 
 ### 3.5 actions.parquet
 
@@ -558,7 +565,9 @@ the pharmacist slot is deliberately scarce, because it is a real person's aftern
 If `caregiver != none` and `caregiver_contact_consent`, `care_team_call` and `verified_text` target the caregiver first (τ for those actions +0.10 on treatment_gap and access_loss, because a co-resident can act same-day). If `caregiver == none`, `verified_text` τ is halved and `care_team_call` / `evacuation_assist` are preferred; `assign_buddy` becomes available (τ access_loss 0.35, cost unit `partner_slot`). If `low_assets`, `cooling_center_ride` and `evacuation_assist` are booked, not suggested, and `heap_application` is added as a 5-day-out action (τ heat 0.30 over the season).
 
 ### 7.5 tiers.py
-Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast), **or `mail_order_pharmacy` and `days_supply_remaining ≤ forecast lead time` on a day the scenario disrupts delivery to that ZIP, or `med_controlled` and the veteran's station is SiteDown**. The last two are close to deterministic, which is the point: they are the rows a care team can act on with no argument. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10. Self-serve: p_mean 0.05–0.25. Everyday: rest.
+Act-now: p_mean ≥ 0.25 on any need with w ≥ 4 and epistemic share < 0.4, or any site-dependent × SiteDown, or (`no_caregiver` and `powered_equipment != none` and outage forecast), **or `mail_order_pharmacy` and `days_supply_remaining ≤ forecast lead time` on a day the scenario disrupts delivery to that ZIP, or `med_controlled` and the veteran's station is SiteDown**. The last two are close to deterministic, which is the point: they are the rows a care team can act on with no argument. Find-out: epistemic share ≥ 0.4 and p_mean ≥ 0.10, **or the veteran's record has a gap that straddles a line the team acts on** — `p_gap_lo < L ≤ p_gap_hi` for L in (0.10, 0.25), where `p_gap_lo`/`p_gap_hi` (scores.parquet, from `model/score_prior.py`) are the p_mean this veteran would be reported with if the fields the VA does not have on file turned out to be their least- and most-risky values. Self-serve: p_mean 0.05–0.25. Everyday: rest.
+
+The second Find-out rule is not a loosening of the first; it reads a different column, and that is why both are here. The epistemic share is Var(p) relative to p(1-p), and at rung 0 it is dominated by the prior spread every veteran shares rather than by anything about one of them: across 6,000,000 scored rows it reaches 0.426 against the 0.4 cut, so the first rule alone fires on 0.04% of veteran-days and the tier cannot be demonstrated. Lowering the cut is not the fix either, because Act-now requires the same share to be *below* it — at 0.25 Find-out reaches 3.1% and Act-now collapses from 1.37% to 0.004%. The two rules were competing for one threshold. Measured on the sandy_then_heat scenario, the gap rule brings Find-out to 2.4% of veteran-days (9.2% of actions) and leaves Act-now untouched at 16,424 veteran-days.
 
 **Acceptance:** `test_allocate.py` hand-checkable 5-veteran case; capacity never exceeded; raising capacity never lowers total EHA.
 
