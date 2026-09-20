@@ -26,8 +26,13 @@ export function AskPanel({ ctx, onGoto, compact = false }: Props) {
   const [thinking, setThinking] = useState(false);
   const endRef = useRef<HTMLDivElement>(null);
 
+  // Scroll the log, never the page. `scrollIntoView` here dragged the whole command
+  // center past the storm band the moment it mounted, which is the first thing anyone
+  // sees. Nothing to scroll to before the first question, either.
   useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    if (turns.length === 0) return;
+    const log = endRef.current?.parentElement;
+    if (log) log.scrollTo({ top: log.scrollHeight, behavior: "smooth" });
   }, [turns, thinking]);
 
   const ask = (text: string) => {
