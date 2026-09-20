@@ -33,3 +33,26 @@ Found and logged as **docs/PROMPTS.md 16** (not fixed — out of lane): `allocat
 the Impact chart shows Leeward below random on the fixtures (49.6 vs 54.4) even though its
 own picks scored as calls reach 76.6. The ranking is right; the metric and the budget
 disagree about what a check-in is worth.
+
+## 02:1x — eval/ablate.py
+Five blocks zeroed at the coefficient (psi_sitedown; theta_sitedown_x_sitedependent; both
+plus theta_sitedown_x_controlled; the medication block, derived from the design rather than
+listed so a C3/C4 term joins it; delta_heat lags 1–3 with the same-day term kept), each
+re-scored and re-run through the same `calibration.ece_overall` and the same `allocate` the
+Impact chart uses. 6 models × 10k × 30 days in **30.5 s**, seeded. `make ablate` caches
+`report/ablations.json`; `make report` reads it and says "not run" when it is absent, so the
+Model report card fills without putting 30 s inside a target run every few edits.
+**The headline is not what the deck assumes.** The SiteDown block as a whole is worth 6.97
+severity-weighted events a day at 40 calls — but `psi_sitedown` *on its own* costs 3.24:
+a flat lift for every patient of a closed station displaces veterans who actually have
+events, and `theta_sitedown_x_sitedependent` is the part carrying the signal. Non-additive,
+and worth saying out loud rather than rounding off. ECE barely moves (0.00503 → 0.00548 at
+worst); at rung 0 with rare events it is not the discriminating number, harm averted is.
+Gate: `ruff` clean, whole suite green **except** `test_the_slider_answers_inside_300ms…`,
+which is the known load-bound gate — A/B'd at `origin/main` dc1c730 with none of my code in
+it: 566 ms median there against 523 ms on this branch, with the model lane running 4-chain
+NUTS at 577% CPU (load average 55). Not this diff. Re-run it on a quiet machine before
+merging anything that touches the allocator.
+Out of lane, not done: `ui/public/fixtures/report.json` still carries `ablations: []`, so
+the offline UI fixture shows the empty card until the ui lane regenerates it after a
+`make ablate && make report`.
