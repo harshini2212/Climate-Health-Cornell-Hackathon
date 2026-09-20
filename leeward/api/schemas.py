@@ -190,9 +190,11 @@ class ActionsResponse(Base):
     counts_by_tier: dict[str, int] = Field(default_factory=dict)
     n_too_late: int = Field(
         default=0, ge=0,
-        description="Actions for the days ahead whose do-by day was already behind this one "
-                    "when the forecast arrived, so they are not offered. Show the number; it "
-                    "is what a late forecast costs.")
+        description="Actions for the risk days ahead whose do-by day already falls before "
+                    "`date`, so this work day cannot offer them however much capacity it "
+                    "has. On the first day of a forecast that is exactly what arriving late "
+                    "cost; on a later day it is the work that had to happen before today. "
+                    "Show the number either way.")
     model_rung: int = Field(ge=0, le=3)
 
 

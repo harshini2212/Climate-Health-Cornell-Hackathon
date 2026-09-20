@@ -111,7 +111,10 @@ def build_scores(cohort: pl.DataFrame, scores: pl.DataFrame, dates: list) -> dic
 def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int) -> dict:
     """The real allocator's list at the slider's maximum (100 calls), so the client can cut
     it at any smaller capacity with the same rules and still match what /actions would say.
-    Baselines need age, n_chronic and a seeded random key per row, so those ride along."""
+    Baselines need age, n_chronic and a seeded random key per row, so those ride along.
+
+    `day` is the do-by day, as it is everywhere else: some of these are for risk that lands
+    later, and each row's `lead_days` says how much later."""
     from leeward.decision.allocate import allocate
 
     r = np.random.default_rng(seed)
@@ -139,6 +142,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
             "name_display": v["name_display"], "modzcta": v["modzcta"], "borough": v["borough"],
             "action": v["action"], "tier": v["tier"], "eha": round(float(v["eha"]), 4),
             "capacity_bucket": v["capacity_bucket"], "owner": v["owner"],
+            "lead_days": int(v["lead_days"]),
             "headline": v["headline"], "rationale": v["rationale"],
             "top_driver": v["top_driver"],
             "message_id": v["message_id"],

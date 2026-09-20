@@ -13,9 +13,11 @@ seven daily lists. `date` in the `actions` table is the do-by day and `lead_days
 beside it, so the risk day is `date + lead_days`.
 
 An action whose do-by day is before `as_of` -- the day the forecast arrived, the first day in
-`scores` -- is not offered at all. `compare()` returns how many there were, which is a real
-number worth saying out loud: nine actions were already too late to book when the forecast
-came in.
+`scores` -- is not offered at all, because no amount of capacity can reach a day that has
+gone. `compare()` returns how many, counted the honest way: not every candidate that missed
+its window, but the work a team would actually have put on those days. It is a real number
+worth saying out loud -- nine actions were already too late to book when the forecast came
+in -- and for a single work day it reads as the work that had to happen before today.
 
 Each candidate is one (veteran, action, risk day) triple. It uses one unit of its capacity
 bucket (`schema.ACTION_COST_UNIT`) and one of the veteran's slots **on its do-by day**: one,
@@ -239,7 +241,10 @@ def compare(
 
     cand = _candidates(frame, T, act_names, lead_of, weights)
     if date is not None:
-        cand = {k: v[cand["do_by"] <= date.toordinal()] for k, v in cand.items()}
+        # Days after `date` belong to other work days and are not this one's business; days
+        # before it still are, because they are what this day is too late for.
+        in_reach = cand["do_by"] <= date.toordinal()
+        cand = {k: v[in_reach] for k, v in cand.items()}
 
     slots = np.where(frame["tier"].to_numpy() == "act_now", ACT_NOW_SLOTS, 1)
     vet = frame["_vet"].to_numpy()
@@ -378,34 +383,41 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
     # most any of the risk days being worked for them today allows.
     per_day = np.zeros(n_vets, dtype=np.int64)
     np.maximum.at(per_day, who, slots[unit])
+    limit, cost = per_day.tolist(), slots.tolist()
 
     def pick(order_by: np.ndarray | None) -> np.ndarray:
         """One greedy pass over the candidates: highest value first, or -- for a baseline --
         veterans from the highest `order_by` down, each one's own actions best first.
-        (value, veteran, action) breaks ties the same way every run."""
+        (value, veteran, action) breaks ties the same way every run.
+
+        The loop body reads plain Python lists rather than indexing the numpy arrays. It
+        runs once per candidate per baseline, four times over on every slider drag, and
+        numpy scalar indexing inside it costs several times what the greedy itself does.
+        """
         if order_by is None:
             order = np.lexsort((a_idx, who, -value))
         else:
             order = np.lexsort((a_idx, -value, who, -order_by[unit]))
+        seq = list(zip(order.tolist(), who[order].tolist(), unit[order].tolist(),
+                       [bucket[a] for a in a_idx[order].tolist()], strict=True))
 
-        used = np.zeros_like(per_day)
+        used: dict[int, int] = {}
         used_risk: dict[int, int] = {}
         remaining = dict(cap)
         quota = {(col, g, b): math.floor(f * cap[b] + 1e-9)
                  for col, f in floor.items() for g in set(groups[col]) for b in cap}
-        taken = np.zeros(len(order), dtype=bool)
+        taken = [False] * len(seq)
 
         def run(reserved_only: bool) -> None:
-            for c in order:
-                i, u, b = who[c], int(unit[c]), bucket[a_idx[c]]
-                if (taken[c] or used[i] >= per_day[i] or remaining[b] <= 0
-                        or used_risk.get(u, 0) >= slots[u]):
+            for c, i, u, b in seq:
+                if (taken[c] or used.get(i, 0) >= limit[i] or remaining[b] <= 0
+                        or used_risk.get(u, 0) >= cost[u]):
                     continue
-                mine = [(col, groups[col][unit[c]], b) for col in floor]
+                mine = [(col, groups[col][u], b) for col in floor]
                 if reserved_only and not any(quota[q] > 0 for q in mine):
                     continue
                 taken[c] = True
-                used[i] += 1
+                used[i] = used.get(i, 0) + 1
                 used_risk[u] = used_risk.get(u, 0) + 1
                 remaining[b] -= 1
                 for q in mine:
@@ -414,7 +426,7 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
         if floor:
             run(reserved_only=True)
         run(reserved_only=False)
-        return taken
+        return np.array(taken, dtype=bool)
 
     totals = {name: float(value[pick(col)].sum()) for name, col in orders.items()}
     mine = pick(None)

@@ -72,7 +72,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
             store.table(name)
         except store.DataUnavailable as e:
             log.warning("not loaded at startup: %s", e)
-    store.weights(), store.tau(), store.facilities(), store.med_classes()
+    store.weights(), store.tau(), store.leads(), store.facilities(), store.med_classes()
     yield
 
 
@@ -369,7 +369,7 @@ def actions(req: api.ActionsRequest) -> Response:
         chosen, baseline, n_too_late = compare(
             all_scores, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
             req.group_floor, rank_by=BASELINES, date=req.date, weights=store.weights(),
-            tau=store.tau())
+            tau=store.tau(), lead=store.leads())
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     store.remember(chosen)
