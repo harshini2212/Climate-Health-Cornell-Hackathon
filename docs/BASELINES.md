@@ -176,3 +176,30 @@ The rung-0 baseline — your "before"
 **Pipeline** — hazards 0.26s · cohort 0.53s · simulate 3.82s · score 36.1s · allocate 10.37s · report 23.07s · total 74.2s
 
 ---
+
+## Round D · missingness, discrimination, fairness ceiling — rung 0 — `c1679ef`
+
+*2026-09-20T11:31:41Z · Python 3.11.14 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **16.14** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **2.38× the best baseline** |
+| **Per call actually made** | **0.5185** — **3.05×**, spending 934 of 1200 available calls |
+| **Calibration (ECE, bar 0.03)** | max **0.0076** · mean 0.005 |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.048 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0076 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 327,397 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 7.08% · find-out 9.147%
+
+**Pipeline** — hazards 0.2s · cohort 0.37s · simulate 2.05s · score 20.25s · allocate 10.08s · report 19.8s · total 52.8s
+
+---
