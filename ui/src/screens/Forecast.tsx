@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ScreenKey } from "../App";
-import { IconAlert, IconArrow, IconBolt, IconDrop, IconMail, IconSun } from "../components/Icons";
+import { Spark } from "../components/Charts";
+import { IconAlert, IconArrow, IconBolt, IconBuilding, IconDrop, IconMail, IconSun } from "../components/Icons";
 import { getForecast, lastSource, postActions, type Source } from "../lib/api";
-import { ACTION_LABEL, EHA_EXPECTED, TIER_BADGE, TIER_LABEL, fmtDate } from "../lib/labels";
+import { ACTION_LABEL, EHA_EXPECTED, TIER_BADGE, TIER_LABEL, fmtDate, fmtInt, handleFor } from "../lib/labels";
 import { DEFAULT_CAPACITY, type ActionsResponse, type ForecastResponse } from "../lib/types";
 
 interface DayRow {
@@ -31,46 +32,20 @@ function summarise(f: ForecastResponse): DayRow[] {
   });
 }
 
-/** A small single-series line chart in the template's chart style. One axis, one hue. */
-function Spark({ rows, pick, threshold, unit }: { rows: DayRow[]; pick: (r: DayRow) => number; threshold?: number; unit: string }) {
-  const W = 420, H = 110, padL = 34, padR = 8, padT = 10, padB = 22;
-  const vals = rows.map(pick);
-  const lo = Math.min(...vals, threshold ?? Infinity) * 0.95;
-  const hi = Math.max(...vals, threshold ?? -Infinity) * 1.05 || 1;
-  const x = (i: number) => padL + (i * (W - padL - padR)) / Math.max(1, rows.length - 1);
-  const y = (v: number) => padT + (H - padT - padB) * (1 - (v - lo) / (hi - lo));
-  const path = vals.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
-  return (
-    <svg className="chart2" viewBox={`0 0 ${W} ${H}`}>
-      {threshold !== undefined && (
-        <>
-          <line x1={padL} x2={W - padR} y1={y(threshold)} y2={y(threshold)} stroke="var(--red)" strokeDasharray="4 4" strokeWidth="1" />
-          <text className="axl" x={W - padR} y={y(threshold) - 4} textAnchor="end" fill="var(--red)">{threshold}{unit}</text>
-        </>
-      )}
-      <path d={path} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
-      {vals.map((v, i) => (
-        <circle key={i} cx={x(i)} cy={y(v)} r={3.5} fill="var(--panel)" stroke="var(--accent)" strokeWidth="2">
-          <title>{fmtDate(rows[i].date)}: {v.toFixed(0)}{unit}</title>
-        </circle>
-      ))}
-      {rows.map((r, i) => (
-        <text key={r.date} className="axl" x={x(i)} y={H - 6} textAnchor="middle">{fmtDate(r.date).split(" ")[0]}</text>
-      ))}
-      <text className="axl" x={padL - 6} y={y(hi) + 4} textAnchor="end">{hi.toFixed(0)}</text>
-      <text className="axl" x={padL - 6} y={y(lo) + 4} textAnchor="end">{lo.toFixed(0)}</text>
-    </svg>
-  );
-}
-
 export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string; day?: number; onSource: (s: Source) => void; onOpen: (s: ScreenKey) => void }) {
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [actions, setActions] = useState<ActionsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getForecast(scenario, day).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
-    postActions({ date: "", capacity: { ...DEFAULT_CAPACITY }, scenario }).then(setActions).catch((e) => setError(String(e)));
+    getForecast(scenario, day)
+      .then((f) => {
+        setForecast(f);
+        onSource(lastSource());
+        return postActions({ date: f.dates[0], capacity: { ...DEFAULT_CAPACITY }, scenario });
+      })
+      .then(setActions)
+      .catch((e) => setError(String(e)));
   }, [scenario, day, onSource]);
 
   const days = useMemo(() => (forecast ? summarise(forecast) : []), [forecast]);
@@ -87,14 +62,14 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
   const peakOutage = Math.max(0, ...days.map((d) => d.outage));
 
   if (error) return <div className="page"><div className="empty"><div className="eh">Could not load</div>{error}</div></div>;
-  if (!forecast || !actions) return <div className="page"><div className="skgrid"><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /><div className="sk" style={{ height: 96 }} /></div></div>;
+  if (!forecast || !actions) return <div className="page dash"><div className="skgrid">{Array.from({ length: 5 }, (_, i) => <div key={i} className="sk" style={{ height: 96 }} />)}</div><div className="row g2"><div className="sk" style={{ height: 420 }} /><div className="sk" style={{ height: 420 }} /></div></div>;
 
   const brief = [
-    `It is ${fmtDate(forecast.dates[0])}. ${actions.n_panel.toLocaleString()} veterans are on the panel.`,
+    `It is ${fmtDate(forecast.dates[0])}. ${fmtInt(actions.n_panel)} veterans are on the panel.`,
     landfall ? `A coastal flood warning covers ${landfall.flood} ZIPs on ${fmtDate(landfall.date)}, with ${peakOutage} ZIPs facing an outage and mail delivery disrupted in ${peakMail}.` : "No flood warning in the window.",
-    down.length ? `${down.map((d) => d.name).join(", ")} is down: dialysis, infusion and OTP patients there need an alternate site booked before the closure.` : "All 14 VA sites are open.",
+    down.length ? `${down.map((d) => d.name).join(", ")} is down: dialysis, infusion and OTP patients there need an alternate site booked before the closure bites.` : "All 14 VA sites are open.",
     firstHeat ? `A heat alert starts ${fmtDate(firstHeat.date)}, while power is still being restored.` : "No heat alert in the window.",
-    `At ${callsCap} calls today the list is expected to avert ${leeward.toFixed(0)} severity-weighted need-days${ratio ? `, ${ratio.toFixed(2)}× calling the oldest patients first at the same capacity` : ""}.`,
+    `At ${callsCap} calls today the list is expected to avert ${leeward.toFixed(0)} severity-weighted need-days${ratio ? `, ${ratio.toFixed(2)}× calling the oldest patients first` : ""}.`,
   ].join(" ");
 
   return (
@@ -102,7 +77,7 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
       <div className="strip">
         <div className="stat">
           <div className="k">Veterans on the panel</div>
-          <div className="vrow"><div className="v">{actions.n_panel.toLocaleString()}</div></div>
+          <div className="vrow"><div className="v">{fmtInt(actions.n_panel)}</div></div>
           <div className="s">synthetic people · real ZIP rates</div>
         </div>
         <div className="stat crit">
@@ -112,35 +87,35 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
         </div>
         <div className="stat">
           <div className="k">Calls the team can make</div>
-          <div className="vrow"><div className="v">{callsUsed} / {callsCap}</div></div>
-          <div className="prog" style={{ marginTop: 8 }}><i style={{ width: `${(100 * callsUsed) / callsCap}%` }} /></div>
+          <div className="vrow"><div className="v">{callsUsed}<small>/ {callsCap}</small></div></div>
+          <div className="prog" style={{ marginTop: 10 }}><i style={{ width: `${(100 * callsUsed) / callsCap}%` }} /></div>
         </div>
         <div className="stat hero">
-          <div className="k">Expected harm averted at {callsCap} calls</div>
+          <div className="k">Expected harm averted today</div>
           <div className="vrow"><div className="v">{leeward.toFixed(1)}</div>{ratio && <span className="delta up">▲ {ratio.toFixed(2)}×</span>}</div>
-          <div className="s" title={EHA_EXPECTED.line}>vs. oldest-first ranking · {EHA_EXPECTED.short}</div>
+          <div className="s" title={EHA_EXPECTED.line}>vs. oldest-first, same {callsCap} calls · {EHA_EXPECTED.short}</div>
         </div>
         <div className="stat">
           <div className="k">VA sites down</div>
           <div className="vrow"><div className="v">{down.length}</div>{down.length ? <span className="pillbadge pill-critical">station {down.map((d) => d.facility_id).join(", ")}</span> : <span className="pillbadge pill-healthy">all open</span>}</div>
-          <div className="s">of 14 NYC facilities · {alertDays} of {days.length} days under an alert</div>
+          <div className="s">of 14 · {alertDays} of {days.length} days under an alert</div>
         </div>
       </div>
 
       <div className="row g2">
         <div className="card">
-          <div className="ch"><h3>Seven-day hazard</h3><span className="muted" style={{ fontSize: 12 }}>citywide · NWS + AirNow</span><span className="sp" /><span className="pillbadge">{forecast.scenario}</span></div>
-          <div className="row2">
+          <div className="ch"><h3>Seven-day hazard</h3><span className="sub">citywide · NWS + AirNow</span><span className="sp" /><span className="tag">{forecast.scenario}</span></div>
+          <div className="row gh">
             <div>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>Max heat index, mean over ZIPs · hinge at 82 °F (NYC Health)</div>
-              <Spark rows={days} pick={(r) => r.heat} threshold={82} unit="°F" />
+              <div className="chart-title">Max heat index, mean over ZIPs · hinge at 82 °F (NYC Health)</div>
+              <Spark dates={days.map((d) => d.date)} values={days.map((d) => d.heat)} threshold={82} unit="°F" />
             </div>
             <div>
-              <div className="muted" style={{ fontSize: 12, marginBottom: 4 }}>PM2.5, worst ZIP · smoke alert at 55.5 µg/m³</div>
-              <Spark rows={days} pick={(r) => r.pm25} threshold={55.5} unit="" />
+              <div className="chart-title">PM2.5, worst ZIP · smoke alert at 55.5 µg/m³</div>
+              <Spark dates={days.map((d) => d.date)} values={days.map((d) => d.pm25)} threshold={55.5} />
             </div>
           </div>
-          <table style={{ marginTop: 10 }}>
+          <table style={{ marginTop: 14 }}>
             <thead><tr><th>Day</th><th className="n">Heat idx</th><th className="n">PM2.5</th><th className="n">Flood ZIPs</th><th className="n">Outage ZIPs</th><th className="n">Mail disrupted</th><th>Flags</th></tr></thead>
             <tbody>
               {days.map((d) => (
@@ -152,8 +127,8 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
                   <td className="n">{d.outage || "—"}</td>
                   <td className="n">{d.mail || "—"}</td>
                   <td>
+                    {d.flood > 0 && <span className="flagpill crit" style={{ marginRight: 4 }}>flood warning</span>}
                     {d.heatAlert && <span className="flagpill">heat alert</span>}
-                    {d.flood > 0 && <span className="flagpill" style={{ background: "var(--redbg)", color: "var(--crit)" }}>flood warning</span>}
                   </td>
                 </tr>
               ))}
@@ -161,13 +136,13 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
           </table>
         </div>
 
-        <div className="dash">
+        <div className="stack">
           <div className="card">
             <div className="ch"><h3>Needs attention</h3><span className="sp" /><span className="aipill">◆ from the forecast</span></div>
-            <div className="insights" style={{ gridTemplateColumns: "1fr" }}>
+            <div className="insights one">
               {down.map((d) => (
-                <div className="insight" key={d.facility_id}>
-                  <div className="ic ic-critical"><IconAlert /></div>
+                <div className="insight flat" key={d.facility_id}>
+                  <div className="ic ic-critical"><IconBuilding /></div>
                   <div className="bd">
                     <div className="t">{d.name} is down · <span className="amt">evac zone {d.evac_zone}</span></div>
                     <div className="d">Dialysis, infusion and OTP on site. Book alternate sites now; controlled-substance patients cannot use the retail refill route.</div>
@@ -176,7 +151,7 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
                 </div>
               ))}
               {landfall && (
-                <div className="insight">
+                <div className="insight flat">
                   <div className="ic ic-high"><IconDrop /></div>
                   <div className="bd">
                     <div className="t">Coastal flood warning {fmtDate(landfall.date)} · <span className="amt">{landfall.flood} ZIPs</span></div>
@@ -186,42 +161,36 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
                 </div>
               )}
               {peakOutage > 0 && (
-                <div className="insight">
+                <div className="insight flat">
                   <div className="ic ic-high"><IconBolt /></div>
-                  <div className="bd">
-                    <div className="t">Outage in {peakOutage} ZIPs at peak</div>
-                    <div className="d">Oxygen, ventilator and home-dialysis patients need a backup-power plan and a call within two hours of the outage.</div>
-                  </div>
+                  <div className="bd"><div className="t">Outage in {peakOutage} ZIPs at peak</div><div className="d">Oxygen, ventilator and home-dialysis patients need a backup-power plan and a call within two hours of the outage.</div></div>
                 </div>
               )}
               {firstHeat && (
-                <div className="insight">
+                <div className="insight flat">
                   <div className="ic ic-medium"><IconSun /></div>
-                  <div className="bd">
-                    <div className="t">Heat alert from {fmtDate(firstHeat.date)}</div>
-                    <div className="d">Diuretic and anticholinergic loads, no AC, utility-shutoff risk: cooling-center rides are booked, not suggested.</div>
-                  </div>
+                  <div className="bd"><div className="t">Heat alert from {fmtDate(firstHeat.date)}</div><div className="d">Diuretic and anticholinergic loads, no AC, utility-shutoff risk: cooling-center rides are booked, not suggested.</div></div>
                 </div>
               )}
               {peakMail > 0 && (
-                <div className="insight">
+                <div className="insight flat">
                   <div className="ic ic-medium"><IconMail /></div>
-                  <div className="bd">
-                    <div className="t">Mail delivery disrupted in {peakMail} ZIPs</div>
-                    <div className="d">Four in five VA prescriptions arrive by mail. Early refills and local pickup for anyone under ten days of supply.</div>
-                  </div>
+                  <div className="bd"><div className="t">Mail delivery disrupted in {peakMail} ZIPs</div><div className="d">Four in five VA prescriptions arrive by mail. Early refills and local pickup for anyone under ten days of supply.</div></div>
                 </div>
+              )}
+              {!down.length && !landfall && !firstHeat && (
+                <div className="insight flat"><div className="ic ic-good"><IconAlert /></div><div className="bd"><div className="t">Quiet week</div><div className="d">No alerts in the window.</div></div></div>
               )}
             </div>
           </div>
 
-          <div className="aiask" style={{ marginTop: 0 }}>
+          <div className="aiask">
             <div className="aiask-h"><span className="aidiamond">◆</span> Care-team morning brief <span className="aiask-tag">from the forecast</span></div>
             <div className="aiask-sub">Written from today's hazards, the site status table and the action list. No model call: every sentence is a number on this page.</div>
-            <div className="brief"><div className="bt">{brief}</div></div>
+            <div className="brief"><p className="bt">{brief}</p></div>
             <div className="askchips">
-              <span onClick={() => onOpen("careteam")}>Open today's action list</span>
-              <span onClick={() => onOpen("map")}>Show the map on landfall day</span>
+              <span onClick={() => onOpen("week")}>Open the week board</span>
+              <span onClick={() => onOpen("careteam")}>Today's action list</span>
               <span onClick={() => onOpen("report")}>How do we know it works?</span>
             </div>
           </div>
@@ -229,18 +198,18 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
       </div>
 
       <div>
-        <div className="tbar"><h2 style={{ margin: 0 }}>Top of today's list</h2><span className="ct">{actions.n_selected} actions at {callsCap} calls</span><span className="sp" /><button className="sm" onClick={() => onOpen("careteam")}>Full list <IconArrow /></button></div>
-        <div className="tablewrap" style={{ maxHeight: "none" }}>
+        <div className="tbar"><h2>Top of today's list</h2><span className="ct">{actions.n_selected} actions at {callsCap} calls</span><span className="sp" /><button className="sm" onClick={() => onOpen("careteam")}>Full list <IconArrow /></button></div>
+        <div className="tablewrap auto">
           <table>
-            <thead><tr><th className="n">#</th><th>Veteran</th><th>Tier</th><th>Action</th><th>Top driver</th><th className="n">EHA</th></tr></thead>
+            <thead><tr><th className="n">#</th><th>Veteran</th><th>Tier</th><th>Action</th><th>Owner</th><th className="n">Expected harm averted</th></tr></thead>
             <tbody>
               {actions.actions.slice(0, 8).map((a) => (
                 <tr key={a.action_id} className="click" onClick={() => onOpen("careteam")}>
                   <td className="n">{a.rank}</td>
-                  <td>{a.name_display} <span className="tag">{a.borough} · {a.modzcta}</span></td>
+                  <td>{handleFor(a.name_display, a.veteran_id)}<span className="sub">{a.borough} · {a.modzcta}</span></td>
                   <td><span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span></td>
                   <td>{ACTION_LABEL[a.action] ?? a.action}</td>
-                  <td className="muted">{a.top_driver ?? "—"}</td>
+                  <td className="muted">{a.owner.replace("_", " ")}</td>
                   <td className="n">{a.eha.toFixed(2)}</td>
                 </tr>
               ))}
