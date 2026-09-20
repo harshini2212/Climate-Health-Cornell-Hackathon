@@ -291,19 +291,19 @@ def _five_compare(rank_by: dict[str, str], ages: dict[str, int] = FIVE_AGES, **c
 
 
 def test_baselines_hand_checked() -> None:
-    got, totals, _ = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
+    got, totals, _, _ = _five_compare({"rank_by_age": "age", "in_order": "rank_key"})
     assert total_eha(got) == pytest.approx(2.77174375), "the allocator's own list must not change"
     assert totals["rank_by_age"] == pytest.approx(2.1004)
     assert totals["in_order"] == pytest.approx(2.64774375), "all keys tied means veteran order"
 
 
 def test_compare_returns_exactly_what_allocate_returns() -> None:
-    got, _, _ = _five_compare({"rank_by_age": "age"})
+    got, _, _, _ = _five_compare({"rank_by_age": "age"})
     assert got.equals(_five())
 
 
 def test_a_baseline_with_no_names_is_just_allocate() -> None:
-    got, totals, _ = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
+    got, totals, _, _ = compare(_scores(FIVE_RISK), _cohort(FIVE_COHORT), _cap(**FIVE_CAP),
                              lead=NO_LEAD)
     assert totals == {} and got.equals(_five())
 
@@ -316,7 +316,7 @@ def test_a_baseline_on_a_missing_column_fails_loudly() -> None:
 
 def test_a_baseline_with_nothing_to_score_totals_zero() -> None:
     cohort = _cohort([{**c, "age": 70} for c in FIVE_COHORT])
-    _, totals, _ = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
+    _, totals, _, _ = compare(_scores(FIVE_RISK), cohort, _cap(**FIVE_CAP),
                            rank_by={"x": "age"}, date=date(2000, 1, 1), lead=NO_LEAD)
     assert totals == {"x": 0.0}
 

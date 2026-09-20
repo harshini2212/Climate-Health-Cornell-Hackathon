@@ -40,6 +40,10 @@ class ZipHazard(Base):
 
 class FacilityStatus(Base):
     facility_id: str
+    #: One row per facility **per day**, like `ZipHazard`. A closure is a fact about a day,
+    #: not about the window: Sandy shuts station 630 for 45 days and the ribbon has to put
+    #: that on the day it starts. A caller that wants the window's answer takes `.any()`.
+    date: Date
     name: str
     lat: float
     lon: float
@@ -145,6 +149,11 @@ class ActionsRequest(Base):
         default=None, description="Minimum share of slots per group, e.g. {'borough': 0.1}")
     prior_scale: float = Field(default=1.0, description="0.5, 1.0 or 2.0; picks a cached posterior")
     scenario: str = "sandy_then_heat"
+    limit: int | None = Field(
+        default=None, ge=0,
+        description="Return at most this many rows, highest EHA first. The allocation is "
+                    "unchanged and every count still describes all of it, so a board that "
+                    "renders a top slice can say '40 of 6,303'. Null means every row.")
 
 
 class ActionRow(Base):
@@ -182,12 +191,21 @@ class ActionsResponse(Base):
     #: The do-by day this list is worked on. Every row's risk day is `date + lead_days`.
     date: Date
     capacity: dict[str, int]
+    #: The allocation, highest EHA first, cut to `ActionsRequest.limit` if one was asked for.
+    #: Every count below is of the whole allocation, never of this list.
     actions: list[ActionRow]
     total_eha: float
     baselines: list[BaselineResult] = Field(default_factory=list)
     n_panel: int
     n_selected: int
     counts_by_tier: dict[str, int] = Field(default_factory=dict)
+    n_not_reached: int = Field(
+        default=0, ge=0,
+        description="Veterans this capacity does not reach with a person at all: Act-now or "
+                    "Find-out, offered a human action by an uncapped team, and given none "
+                    "here. A free verified text is not being reached. It is the same number "
+                    "a second uncapped request would have shown, computed in the one pass "
+                    "that already values every candidate, so nobody has to ask twice.")
     n_too_late: int = Field(
         default=0, ge=0,
         description="Actions for the risk days ahead whose do-by day already falls before "

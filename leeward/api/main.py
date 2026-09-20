@@ -187,15 +187,13 @@ def forecast(scenario: str = SCENARIO, day: int | None = Query(None, ge=0)) -> R
     window = dates[day:day + FORECAST_DAYS]
     hz = hazards.filter(pl.col("date").is_in(window)).sort("date", "modzcta")
 
-    # FacilityStatus carries no date, so a site counts as down if it is down on any day of the
-    # window: "will this site be there when the veteran needs it?"
+    # One row per facility per day, straight off `site_status`, which is already keyed that
+    # way. A closure is a fact about a day: the ribbon puts it on the day it starts, and a
+    # caller that wants "will this site be there at all this week?" takes .any() itself.
     site = (store.table("site_status").filter(pl.col("date").is_in(window))
-                 .group_by("facility_id")
-                 .agg(pl.col("site_down").any(), pl.col("evac_zone").first(),
-                      pl.col("site_dependent_services").first())
                  .join(store.facilities(), left_on="facility_id", right_on="station_no",
                        how="left")
-                 .sort("facility_id"))
+                 .sort("facility_id", "date"))
     facilities = site.select(list(api.FacilityStatus.model_fields)).to_dicts()
 
     alerts = hz.group_by("date").agg(pl.col("flood_warning").any(), pl.col("heat_alert").any(),
@@ -210,9 +208,14 @@ def forecast(scenario: str = SCENARIO, day: int | None = Query(None, ge=0)) -> R
         if r["smoke_alert"]:
             bits.append(f"smoke {d}")
     headline = "; ".join(dict.fromkeys(bits)) or "No active alerts in the 7-day window"
-    down = [f["name"] for f in facilities if f["site_down"]]
+    #: The first day of the window each site is down, so the banner says when, not just who.
+    down: dict[str, Date] = {}
+    for f in facilities:
+        if f["site_down"] and f["name"] not in down:
+            down[f["name"]] = f["date"]
     if down:
-        headline += f". Site down: {', '.join(down)}"
+        headline += ". Site down: " + ", ".join(
+            f"{name} from {on.strftime('%a %d %b')}" for name, on in down.items())
 
     return _json(api.ForecastResponse.model_validate({
         "scenario": scenario, "day": day, "dates": window, "headline": headline,
@@ -388,6 +391,14 @@ def actions(req: api.ActionsRequest) -> Response:
     `date + the longest lead in tau.yaml` -- and returns what has to be done on `date`.
     Each do-by day gets the whole team for a day and they share nothing, so one day is still
     one request.
+
+    `n_not_reached` is the other half of the slider and comes back in the same answer: the
+    Act-now and Find-out veterans a limitless team would put a person on and this capacity
+    reaches with nobody. It is one extra greedy pass over candidates this request has
+    already valued, so it costs a fraction of the second, uncapped request it replaces.
+
+    `limit` cuts the rows returned, never the allocation: `n_selected`, `total_eha`,
+    `counts_by_tier` and `n_not_reached` all describe the whole day's work either way.
     """
     _check_scenario(req.scenario)
     if req.prior_scale != PRIOR_SCALE:
@@ -400,17 +411,20 @@ def actions(req: api.ActionsRequest) -> Response:
 
     shuffle = np.random.default_rng([0, req.date.toordinal()]).random(cohort.height)
     try:
-        chosen, baseline, n_too_late = compare(
+        chosen, baseline, n_too_late, n_not_reached = compare(
             all_scores, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
             req.group_floor, rank_by=BASELINES, date=req.date, weights=store.weights(),
-            tau=store.tau(), lead=store.leads())
+            tau=store.tau(), lead=store.leads(), headroom=True)
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     store.remember(chosen)
 
-    rows = (chosen.join(cohort.select("veteran_id", "name_display", "modzcta", "borough"),
-                        on="veteran_id", how="left")
-                  .sort("rank").select(list(api.ActionRow.model_fields)).to_dicts())
+    # `limit` cuts the rows and nothing else: every count below is of the whole allocation,
+    # so a board showing a top slice can say "40 of 6,303" without asking a second time.
+    shown = chosen if req.limit is None else chosen.sort("rank").head(req.limit)
+    rows = (shown.join(cohort.select("veteran_id", "name_display", "modzcta", "borough"),
+                       on="veteran_id", how="left")
+                 .sort("rank").select(list(api.ActionRow.model_fields)).to_dicts())
     by_tier = dict.fromkeys(TIERS, 0) | dict(chosen.group_by("tier").len().iter_rows())
     total = total_eha(chosen)
     return _json(api.ActionsResponse.model_validate({
@@ -418,7 +432,8 @@ def actions(req: api.ActionsRequest) -> Response:
         "baselines": [{"name": "leeward", "total_eha": total},
                       *({"name": n, "total_eha": t} for n, t in baseline.items())],
         "n_panel": cohort.height, "n_selected": chosen.height, "counts_by_tier": by_tier,
-        "n_too_late": n_too_late, "model_rung": _rung(all_scores),
+        "n_too_late": n_too_late, "n_not_reached": n_not_reached,
+        "model_rung": _rung(all_scores),
     }))
 
 

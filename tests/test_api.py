@@ -169,7 +169,8 @@ def test_forecast_is_seven_days_of_every_zip_and_every_facility(client: TestClie
     assert fc.day == 5 and fc.dates == hazard_days[5:12]
     assert len(fc.zips) == 7 * 178
     assert {z.date for z in fc.zips} == set(fc.dates)
-    assert len(fc.facilities) == 14
+    assert len(fc.facilities) == 7 * 14
+    assert {f.date for f in fc.facilities} == set(fc.dates)
 
 
 def test_forecast_says_when_a_site_is_down(client: TestClient) -> None:
@@ -182,6 +183,29 @@ def test_forecast_says_when_a_site_is_down(client: TestClient) -> None:
     assert "Site down" in fc.headline
     quiet = api.ForecastResponse.model_validate(client.get("/forecast", params={"day": 0}).json())
     assert not any(f.site_down for f in quiet.facilities)
+
+
+def test_a_closure_lands_on_the_day_it_starts(client: TestClient) -> None:
+    """A facility row is a fact about one day, not about the window.
+
+    The ribbon draws seven days. A closure that begins on the fourth of them has to be on
+    the fourth day and on no day before it, or the board says the station was shut when it
+    was open. Station 630 closes on `DAY` and stays closed, so a window opening three days
+    earlier is the case that tells the two apart.
+    """
+    days = sorted(_table("hazards")["date"].unique().to_list())
+    fc = api.ForecastResponse.model_validate(
+        client.get("/forecast", params={"day": days.index(DAY) - 3}).json())
+    assert fc.dates[3] == DAY, "the closure has to begin inside the window, not on its edge"
+
+    truth = _table("site_status").filter(pl.col("date").is_in(fc.dates))
+    assert {(f.facility_id, f.date, f.site_down) for f in fc.facilities} == {
+        (r["facility_id"], r["date"], r["site_down"]) for r in truth.to_dicts()}
+
+    down = sorted(f.date for f in fc.facilities if f.facility_id == "630" and f.site_down)
+    assert down == fc.dates[3:], f"630 closes on {DAY} and stays closed, got {down}"
+    assert all(not f.site_down for f in fc.facilities if f.date < DAY), (
+        "no site is down before the day its closure starts")
 
 
 def test_forecast_rejects_what_it_cannot_serve(client: TestClient) -> None:
@@ -415,6 +439,49 @@ def test_baselines_are_the_same_team_in_a_different_order(client: TestClient) ->
     assert by_name["leeward"] == resp.total_eha
     for name in ("rank_by_age", "rank_by_chronic", "random"):
         assert 0 < by_name[name] <= by_name["leeward"], (name, by_name)
+
+
+def test_n_not_reached_is_the_second_call_the_board_no_longer_has_to_make(
+        client: TestClient) -> None:
+    """The board's "14 veterans not reached at this capacity" used to cost a second,
+    uncapped POST per day. The number is the same one, computed here: veterans an uncapped
+    team would have put a person on -- Act-now or Find-out, not a free text -- whom this
+    capacity does not reach at all."""
+    uncapped = dict.fromkeys(DEFAULT_CAPACITY, 100_000)
+    tight = api.ActionsResponse.model_validate(_post(client, capacity={"call": 10}))
+    free = api.ActionsResponse.model_validate(_post(client, capacity=uncapped))
+
+    reached = {a.veteran_id for a in tight.actions if a.capacity_bucket != "free"}
+    wanted = {a.veteran_id for a in free.actions
+              if a.capacity_bucket != "free" and a.tier in ("act_now", "find_out")}
+    assert tight.n_not_reached == len(wanted - reached) > 0
+
+    assert free.n_not_reached == 0, "nothing is turned away when nothing is capped"
+    turned_away = [_post(client, capacity={"call": c})["n_not_reached"] for c in (0, 10, 40, 200)]
+    assert turned_away == sorted(turned_away, reverse=True), turned_away
+
+
+def test_limit_cuts_the_rows_and_changes_no_count(client: TestClient) -> None:
+    """`POST /actions` answers with every row -- thousands of them, nearly all free verified
+    texts. A board that renders a top slice may ask for one, and must still be able to say
+    "40 of 6,303": the counts are of the whole allocation, never of the slice."""
+    full = api.ActionsResponse.model_validate(_post(client))
+    assert len(full.actions) == full.n_selected > 40, "the default is still no limit"
+
+    cut = api.ActionsResponse.model_validate(_post(client, limit=40))
+    assert [a.action_id for a in cut.actions] == [a.action_id for a in full.actions[:40]]
+    assert (cut.n_selected, cut.total_eha, cut.counts_by_tier, cut.n_not_reached) == (
+        full.n_selected, full.total_eha, full.counts_by_tier, full.n_not_reached)
+    assert cut.baselines == full.baselines and cut.n_too_late == full.n_too_late
+
+    assert _post(client, limit=10 ** 6)["n_selected"] == full.n_selected
+    assert len(_post(client, limit=10 ** 6)["actions"]) == full.n_selected
+    assert _post(client, limit=0)["actions"] == [], "counts without rows is a legal ask"
+    assert client.post("/actions", json={"date": str(DAY), "limit": -1}).status_code == 422
+
+    # The rows are cut, the allocation is not: a row the caller never saw is still an action
+    # the API issued, so GET /message can still answer for it.
+    assert store.find_action(full.actions[-1].action_id) is not None
 
 
 def test_a_group_floor_is_passed_through(client: TestClient) -> None:

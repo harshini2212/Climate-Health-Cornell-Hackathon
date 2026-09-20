@@ -54,6 +54,12 @@ changes; each veteran's own actions are still tried best first, so the gap to `a
 what risk-ranking the veterans is worth. The shared work is done once and only the greedy pass
 repeats, which is what keeps `POST /actions` inside its 300 ms.
 
+`compare(headroom=True)` buys the other half of that comparison the same way: one more pass,
+under a capacity nothing exhausts, counting the Act-now and Find-out veterans a limitless team
+reaches with a person and this one does not reach at all. It is the honest half of the slider
+-- not what the cut averts, but who it leaves -- and it is a pass over candidates already
+valued, not a second allocation.
+
 `group_floor={"borough": 0.1}` reserves floor(0.1 x capacity) of every bucket for each
 borough. Reserved slots are filled greedily first; whatever a group cannot use goes back to
 everyone. A floor is a constraint, so it can cost harm averted, and the argument above does
@@ -88,6 +94,12 @@ ACT_NOW_SLOTS = 3
 #: An action worth less than this averts nothing. Do not spend a slot on it.
 EPS = 1e-12
 BUCKETS = sorted(set(ACTION_COST_UNIT.values()))
+#: A budget no day of candidates can exhaust. The headroom pass runs under it to ask who a
+#: team would reach if room were never the constraint -- see `compare()`'s `n_not_reached`.
+NO_LIMIT = dict.fromkeys(BUCKETS, 1 << 30)
+#: The tiers the board counts as needing a person. At unlimited capacity almost everyone is
+#: handed something; "not reached" is a claim about the two tiers that asked for a human.
+NEEDS_A_PERSON = ("act_now", "find_out")
 
 #: Who does it. Medication actions go to the pharmacist, who decides; Leeward changes nothing.
 OWNER = {
@@ -189,8 +201,10 @@ def compare(
     tau: dict[str, dict[str, float]] | None = None,
     lead: dict[str, int] | None = None,
     as_of: Date | None = None,
-) -> tuple[pl.DataFrame, dict[str, float], int]:
-    """`allocate()`'s table, each baseline's total EHA, and the count that arrived too late.
+    headroom: bool = False,
+) -> tuple[pl.DataFrame, dict[str, float], int, int]:
+    """`allocate()`'s table, each baseline's total EHA, the count that arrived too late, and
+    -- with `headroom` -- the count capacity turned away.
 
     `date` picks one **do-by day**: the work list for that day, drawn from the risk days it
     can still reach (`date` through `date + max lead`). It is not a filter on the risk day,
@@ -204,6 +218,13 @@ def compare(
     veterans from the highest value of the column down (ties in veteran order, so the answer
     does not depend on risk). The total is summed over every do-by day allocated, like
     `total_eha`.
+
+    `headroom` runs one more greedy pass per work day under a capacity nothing exhausts, and
+    returns how many Act-now and Find-out veterans it reaches with a person that `capacity`
+    does not reach at all. Every candidate is already valued by then, so the pass costs a
+    fraction of the request and answers the question a caller would otherwise have to ask in
+    a second, uncapped one. Distinct veterans, summed over the work days allocated; a free
+    verified text is not being reached. Zero without `headroom`, which is not "nobody".
     """
     weights = weights if weights is not None else severity.load()
     table = tau if tau is not None else tau_table.load()
@@ -223,7 +244,7 @@ def compare(
         scores = scores.filter(pl.col("date").is_between(date, date + timedelta(days=horizon)))
         as_of = date if as_of is None else as_of
     if scores.height == 0:
-        return _empty(), dict.fromkeys(rank_by, 0.0), 0
+        return _empty(), dict.fromkeys(rank_by, 0.0), 0, 0
 
     wide = eha.needs_wide(scores)
     unknown = wide.join(cohort, on="veteran_id", how="anti")["veteran_id"].unique()
@@ -250,6 +271,9 @@ def compare(
     vet = frame["_vet"].to_numpy()
     groups = {col: frame[col].to_list() for col in floor}
     orders = {name: frame[col].to_numpy().astype(float) for name, col in rank_by.items()}
+    #: A person, not a free verified text (`human`), for someone whose tier asked for one.
+    human = np.array([ACTION_COST_UNIT[a] != "free" for a in act_names])
+    asked = np.isin(frame["tier"].to_numpy(), NEEDS_A_PERSON)
 
     # Do-by days that have already gone are allocated too, but only to be counted: what a
     # team would have had to do before the forecast reached them is the honest size of
@@ -259,12 +283,15 @@ def compare(
     chosen: list[dict[str, np.ndarray]] = []
     totals = dict.fromkeys(rank_by, 0.0)
     n_vets = int(vet.max()) + 1
-    n_too_late = 0
+    n_too_late = n_not_reached = 0
     for day in _split_by_day(cand):
         on = int(day["do_by"][0])
         keep = on == want if want is not None else on >= gone
-        taken, day_totals = _allocate_do_by_day(day, cap, floor, act_names, slots, vet,
-                                                groups, orders if keep else {}, n_vets)
+        taken, day_totals, spare = _allocate_do_by_day(
+            day, cap, floor, act_names, slots, vet, groups, orders if keep else {}, n_vets,
+            headroom=keep and headroom)
+        if keep and spare is not None:
+            n_not_reached += _turned_away(day, taken, spare, vet, human, asked)
         if taken is None:
             continue
         if keep:
@@ -274,8 +301,25 @@ def compare(
         elif on < gone:
             n_too_late += len(taken["unit"])
     if not chosen:
-        return _empty(), totals, n_too_late
-    return _rows(chosen, frame, act_names, lead_of), totals, n_too_late
+        return _empty(), totals, n_too_late, n_not_reached
+    return _rows(chosen, frame, act_names, lead_of), totals, n_too_late, n_not_reached
+
+
+def _turned_away(day: dict[str, np.ndarray], taken: dict[str, np.ndarray] | None,
+                 spare: np.ndarray, vet: np.ndarray, human: np.ndarray,
+                 asked: np.ndarray) -> int:
+    """Veterans this day's capacity does not reach with a person at all.
+
+    Counted as distinct veterans, not actions: a team that offers someone one call instead
+    of two has reached them. Offering them a free verified text has not.
+    """
+    sel = spare & human[day["action"]] & asked[day["unit"]]
+    wanted = np.unique(vet[day["unit"][sel]])
+    if wanted.size == 0:
+        return 0
+    reached = (np.empty(0, dtype=vet.dtype) if taken is None
+               else vet[taken["unit"][human[taken["action"]]]])
+    return int(np.isin(wanted, reached, invert=True).sum())
 
 
 def total_eha(actions: pl.DataFrame) -> float:
@@ -370,8 +414,13 @@ def _split_by_day(cand: dict[str, np.ndarray]):
 def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
                         floor: dict[str, float], act_names: list[str], slots: np.ndarray,
                         vet: np.ndarray, groups: dict[str, list], orders: dict[str, np.ndarray],
-                        n_vets: int) -> tuple[dict[str, np.ndarray] | None, dict[str, float]]:
-    """Who gets what on one work day, and what each baseline would have averted instead."""
+                        n_vets: int, headroom: bool = False,
+                        ) -> tuple[dict[str, np.ndarray] | None, dict[str, float],
+                                   np.ndarray | None]:
+    """Who gets what on one work day, what each baseline would have averted instead, and --
+    when `headroom` -- which candidates a team with no capacity limit at all would have
+    taken. That last one is another greedy pass over candidates already valued, which is
+    the whole reason it is in here and not a second request."""
     unit, a_idx, value = day["unit"], day["action"], day["value"]
     bucket = [ACTION_COST_UNIT[a] for a in act_names]
     who = vet[unit]
@@ -385,15 +434,22 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
     np.maximum.at(per_day, who, slots[unit])
     limit, cost = per_day.tolist(), slots.tolist()
 
-    def pick(order_by: np.ndarray | None) -> np.ndarray:
+    def pick(order_by: np.ndarray | None, budget: dict[str, int] | None = None,
+             reserve: dict[str, float] | None = None) -> np.ndarray:
         """One greedy pass over the candidates: highest value first, or -- for a baseline --
         veterans from the highest `order_by` down, each one's own actions best first.
         (value, veteran, action) breaks ties the same way every run.
+
+        `budget` and `reserve` default to this day's real capacity and floor; the headroom
+        pass hands in a capacity nothing can exhaust, to ask who would be reached if room
+        were not the constraint.
 
         The loop body reads plain Python lists rather than indexing the numpy arrays. It
         runs once per candidate per baseline, four times over on every slider drag, and
         numpy scalar indexing inside it costs several times what the greedy itself does.
         """
+        budget = cap if budget is None else budget
+        reserve = floor if reserve is None else reserve
         if order_by is None:
             order = np.lexsort((a_idx, who, -value))
         else:
@@ -403,9 +459,9 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
 
         used: dict[int, int] = {}
         used_risk: dict[int, int] = {}
-        remaining = dict(cap)
-        quota = {(col, g, b): math.floor(f * cap[b] + 1e-9)
-                 for col, f in floor.items() for g in set(groups[col]) for b in cap}
+        remaining = dict(budget)
+        quota = {(col, g, b): math.floor(f * budget[b] + 1e-9)
+                 for col, f in reserve.items() for g in set(groups[col]) for b in budget}
         taken = [False] * len(seq)
 
         def run(reserved_only: bool) -> None:
@@ -413,7 +469,7 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
                 if (taken[c] or used.get(i, 0) >= limit[i] or remaining[b] <= 0
                         or used_risk.get(u, 0) >= cost[u]):
                     continue
-                mine = [(col, groups[col][u], b) for col in floor]
+                mine = [(col, groups[col][u], b) for col in reserve]
                 if reserved_only and not any(quota[q] > 0 for q in mine):
                     continue
                 taken[c] = True
@@ -423,16 +479,19 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
                 for q in mine:
                     quota[q] = max(0, quota[q] - 1)
 
-        if floor:
+        if reserve:
             run(reserved_only=True)
         run(reserved_only=False)
         return np.array(taken, dtype=bool)
 
     totals = {name: float(value[pick(col)].sum()) for name, col in orders.items()}
+    # No floor on the headroom pass: it asks what unlimited room would reach, and a floor
+    # only ever moves slots between groups that are no longer scarce.
+    spare = pick(None, budget=NO_LIMIT, reserve={}) if headroom else None
     mine = pick(None)
     if not mine.any():
-        return None, totals
-    return {k: v[mine] for k, v in day.items()}, totals
+        return None, totals, spare
+    return {k: v[mine] for k, v in day.items()}, totals, spare
 
 
 # --------------------------------------------------------------------------- #
@@ -563,8 +622,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="allocate one do-by day (default: every day the window reaches)")
     args = ap.parse_args(argv)
     t0 = time.perf_counter()
-    actions, _, too_late = compare(schema.read("scores"), schema.read("cohort"),
-                                   DEFAULT_CAPACITY, date=args.date)
+    actions, _, too_late, _ = compare(schema.read("scores"), schema.read("cohort"),
+                                      DEFAULT_CAPACITY, date=args.date)
     path = schema.write(actions, "actions")
     print(f"  actions  {actions.height:,} rows over {actions['date'].n_unique()} do-by days, "
           f"total EHA {total_eha(actions):,.1f}, {time.perf_counter() - t0:.1f}s -> {path}")
