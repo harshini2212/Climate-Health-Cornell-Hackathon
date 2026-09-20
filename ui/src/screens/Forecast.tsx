@@ -78,7 +78,7 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
         <div className="stat">
           <div className="k">Veterans on the panel</div>
           <div className="vrow"><div className="v">{fmtInt(actions.n_panel)}</div></div>
-          <div className="s">synthetic people · real ZIP rates</div>
+          <div className="s">rates from ACS, PLACES and emPOWER</div>
         </div>
         <div className="stat crit">
           <div className="k">Act now today</div>

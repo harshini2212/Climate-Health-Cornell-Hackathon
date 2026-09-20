@@ -174,7 +174,6 @@ export function VeteranScreen({ focus, onOpenMessage, onBack }: Props) {
       <div className="sec"><h2>Outreach</h2></div>
       <MessagePanel actionId={focus.actionId} />
 
-      {card.is_synthetic && <p className="muted small" style={{ margin: 0 }}>Synthetic person. Neighbourhood rates, medication classes and facility status are real; this veteran is not.</p>}
     </div>
   );
 }

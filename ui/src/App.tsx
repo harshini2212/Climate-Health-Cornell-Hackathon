@@ -131,7 +131,6 @@ export default function App() {
           ))}
         </nav>
         <div className="sidefoot">
-          <div className="note">Synthetic people, real places. Every neighbourhood rate is public and cited; no veteran here is real.</div>
           <div className="sideuser">
             <div className="avatar" title="Signed in">CT</div>
             <select title="Viewing as" defaultValue="care_team">
