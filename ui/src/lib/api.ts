@@ -5,8 +5,8 @@
  * only to show a small badge.
  *
  * Fixture mode is deliberately behavioural, not just shaped: the capacity cut, the dense
- * ranks and the baselines are computed here from a candidate list, so the CapacitySlider
- * tells the same story before and after the real allocator lands.
+ * ranks and the baselines are computed here from the real allocator's candidate list, so
+ * the CapacitySlider tells the same story with the network off.
  */
 
 import type {
@@ -17,6 +17,7 @@ import type {
   Capacity,
   ForecastResponse,
   Message,
+  ReportResponse,
   ScoresResponse,
   Tier,
   VeteranCard,
@@ -26,13 +27,20 @@ export type Source = "api" | "fixture";
 let source: Source = "fixture";
 export const lastSource = (): Source => source;
 
-const API = import.meta.env.VITE_API_URL ?? "/api";
+export const API = import.meta.env.VITE_API_URL ?? "/api";
 const FIXTURES = `${import.meta.env.BASE_URL}fixtures`;
+
+/**
+ * A 10k-veteran allocation takes ~0.6 s live and the API serves one at a time, so a week
+ * queued behind other requests can take several seconds. The proxy fails in ~1 ms when the
+ * API is down, so a long timeout costs nothing offline.
+ */
+const TIMEOUT_MS = 30_000;
 
 async function tryApi<T>(path: string, init?: RequestInit): Promise<T | null> {
   try {
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), 1500);
+    const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
     const res = await fetch(`${API}${path}`, { ...init, signal: ctl.signal });
     clearTimeout(timer);
     if (!res.ok) return null;
@@ -60,15 +68,23 @@ function fixture<T>(name: string): Promise<T> {
 
 // ---------------------------------------------------------------------------
 
+const forecastCache = new Map<string, Promise<ForecastResponse>>();
+
 /**
- * `day` omitted asks the API for the window the demo opens on (leeward/demo.py), rather
- * than day 0, which in this scenario is nine weeks before anything happens. Offline there
- * is one forecast fixture and it is already built for that window, so both agree.
+ * `day` omitted asks the API for the window the demo opens on (leeward/demo.py: two days
+ * in front of the first alert), rather than day 0, which is nine weeks before anything
+ * happens. Offline there is one forecast fixture, built for the landfall week.
  */
-export async function getForecast(scenario: string, day?: number): Promise<ForecastResponse> {
-  const q = day === undefined ? "" : `&day=${day}`;
-  const live = await tryApi<ForecastResponse>(`/forecast?scenario=${scenario}${q}`);
-  return live ?? fixture<ForecastResponse>("forecast");
+export function getForecast(scenario: string, day?: number): Promise<ForecastResponse> {
+  const key = `${scenario}|${day ?? "opening"}`;
+  if (!forecastCache.has(key)) {
+    forecastCache.set(key, (async () => {
+      const q = day === undefined ? "" : `&day=${day}`;
+      const live = await tryApi<ForecastResponse>(`/forecast?scenario=${scenario}${q}`);
+      return live ?? fixture<ForecastResponse>("forecast");
+    })());
+  }
+  return forecastCache.get(key)!;
 }
 
 /** Fixture shape: { [date]: { [need]: ScoresResponse } }. */
@@ -118,7 +134,6 @@ const sum = (rows: { eha: number }[]) => rows.reduce((s, r) => s + r.eha, 0);
 
 export function allocateFixture(fx: ActionsFixture, capacity: Capacity): ActionsResponse {
   const chosen = cut(fx.candidates, capacity, (c) => c.eha);
-  // Ranks are dense and ordered by EHA, exactly what test_guardrails asserts of the real one.
   const actions: ActionRow[] = chosen
     .sort((a, b) => b.eha - a.eha)
     .map(({ age: _a, n_chronic: _n, rand: _r, ...row }, i) => ({ ...row, rank: i + 1 }));
@@ -143,34 +158,52 @@ export function allocateFixture(fx: ActionsFixture, capacity: Capacity): Actions
   };
 }
 
-export async function postActions(req: ActionsRequest): Promise<ActionsResponse> {
-  const live = await tryApi<ActionsResponse>("/actions", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(req),
-  });
-  if (live) return live;
-  const fx = await fixture<ActionsFixture>("actions_candidates");
-  return allocateFixture(fx, req.capacity);
+/** Responses are deterministic for a given request, so a click never re-runs an allocation. */
+const actionsCache = new Map<string, Promise<ActionsResponse>>();
+
+export function postActions(req: ActionsRequest): Promise<ActionsResponse> {
+  const key = JSON.stringify(req);
+  if (!actionsCache.has(key)) {
+    actionsCache.set(key, (async () => {
+      const live = req.date
+        ? await tryApi<ActionsResponse>("/actions", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(req) })
+        : null;
+      if (live) return live;
+      const fx = await fixture<ActionsFixture>("actions_candidates");
+      return allocateFixture(fx, req.capacity);
+    })());
+  }
+  return actionsCache.get(key)!;
 }
 
-// ---------------------------------------------------------------------------
-// The week. ActionsRequest is single-day and the api lane owns that shape, so a
-// week is seven requests in parallel rather than a new field. Offline each one
-// falls through to allocateFixture, so the board fills with the network off.
-
+/**
+ * The week, a day at a time. ActionsRequest is single-day and the api lane owns that
+ * shape, so a week is seven requests; the API serves them one at a time, so they go out
+ * two at a time and `onDay` lets the board fill as each lands rather than all at once.
+ */
 export async function postActionsWeek(
   dates: string[],
   base: Omit<ActionsRequest, "date">,
+  onDay?: (index: number, resp: ActionsResponse) => void,
+  concurrency = 2,
 ): Promise<ActionsResponse[]> {
-  const week = await Promise.all(dates.map((date) => postActions({ ...base, date })));
-  // Fixture mode answers from one modelled day and stamps it with that day's date.
-  // The board is keyed by the date it asked for, so put that back.
-  return week.map((r, i) => (r.date === dates[i] ? r : { ...r, date: dates[i] }));
+  const out: ActionsResponse[] = new Array(dates.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < dates.length) {
+      const i = next++;
+      const r = await postActions({ ...base, date: dates[i] });
+      const fixed = r.date === dates[i] ? r : { ...r, date: dates[i] };
+      out[i] = fixed;
+      onDay?.(i, fixed);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, dates.length) }, worker));
+  return out;
 }
 
 // ---------------------------------------------------------------------------
-// The two detail views. Fixtures are keyed by id, so a click is a map lookup.
+// Detail views and the report. Fixtures are keyed by id, so a click is a map lookup.
 
 export async function getVeteran(veteranId: string, date: string): Promise<VeteranCard> {
   const live = await tryApi<VeteranCard>(`/veteran/${veteranId}?date=${date}`);
@@ -189,3 +222,11 @@ export async function getMessage(actionId: string): Promise<Message> {
   if (!msg) throw new Error(`no message for action ${actionId}`);
   return msg;
 }
+
+export async function getReport(): Promise<ReportResponse> {
+  const live = await tryApi<ReportResponse>("/report");
+  return live ?? fixture<ReportResponse>("report");
+}
+
+/** The partner-sheet CSV only exists live; offline the button explains why. */
+export const exportUrl = (date: string) => `${API}/export?date=${date}`;

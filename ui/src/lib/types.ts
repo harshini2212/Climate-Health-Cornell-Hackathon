@@ -193,3 +193,58 @@ export interface Message {
   includes_crisis_line: boolean;
   scam_card_url?: string | null;
 }
+
+// GET /report --------------------------------------------------------------
+
+export interface RecoveryRow {
+  parameter: string;
+  truth: number;
+  post_mean: number;
+  lo90: number;
+  hi90: number;
+  covered: boolean;
+}
+
+export interface CalibrationBin {
+  need: string;
+  predicted: number;
+  observed: number;
+  n: number;
+}
+
+export interface FairnessRow {
+  stratum: string;
+  group: string;
+  n: number;
+  ece: number;
+  fnr: number;
+  fnr_ratio_to_cohort: number;
+  flagged: boolean;
+}
+
+export interface AblationRow {
+  dropped: string;
+  ece: number;
+  harm_averted_at_40: number;
+}
+
+export interface DecisionQualityRow {
+  k: number;
+  strategy: string;
+  harm_averted: number;
+}
+
+export interface ReportResponse {
+  model_rung: number;
+  rhat_max?: number | null;
+  divergences?: number | null;
+  recovery: RecoveryRow[];
+  recovery_coverage?: number | null;
+  calibration: CalibrationBin[];
+  ece_by_need: Record<string, number>;
+  ablations: AblationRow[];
+  decision_quality: DecisionQualityRow[];
+  fairness: FairnessRow[];
+  fairness_failed: boolean;
+  generated_at?: string | null;
+}

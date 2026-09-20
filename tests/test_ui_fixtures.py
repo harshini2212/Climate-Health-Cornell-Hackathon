@@ -220,8 +220,20 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
 
 def test_handle_never_leaks_more_than_initials() -> None:
     """handleFor('James Okafor', 'SYN-000309') -> 'J.O. - 0309' and nothing more."""
-    src = (ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8")
+    src = (ROOT / "ui" / "src" / "lib" / "labels.ts").read_text(encoding="utf-8")
     fn = src.split("export function handleFor(", 1)[1].split("\n}", 1)[0]
     assert "slice(0, 2)" in fn, "the handle takes at most two initials"
     assert "[0]" in fn, "the handle takes the first letter of a name part, never the part"
     assert "slice(-4)" in fn, "the handle takes the last four of the id, never the whole id"
+
+
+def test_report_fixture_is_a_report_response() -> None:
+    """The Model report screen renders whatever /report returns; empty sections say 'not run'."""
+    rep = api.ReportResponse(**_load("report"))
+    assert rep.model_rung in (0, 1, 2, 3)
+    for row in rep.decision_quality:
+        assert row.strategy in ("leeward", "rank_by_age", "rank_by_chronic", "random")
+        assert row.k in (20, 40, 80)
+    if rep.decision_quality:
+        at = {(r.k, r.strategy): r.harm_averted for r in rep.decision_quality}
+        assert at[(40, "leeward")] > at[(40, "random")], "Leeward must beat random at 40 calls"
