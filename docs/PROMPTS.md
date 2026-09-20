@@ -506,6 +506,40 @@ both scales, and it is the chart the deck opens on.
 >
 > Run `make check`; green; commit; push; two lines in `status/api.md`; stop.
 
+### 16 · `cohort` — honest missingness, and the find-out tier that depends on it  ← cheapest fix with the biggest pitch payoff
+
+"A wide interval earns a cheap three-minute check-in call" is one of the five things the
+pitch is built on, and it does not demo: the find-out tier fires on **0.144%** of actions.
+
+The reason is not the model. It is that **`leeward/cohort/missingness.py` was never built.**
+`docs/SPEC.md` §5.5 says to hide 20% of the AC, floor and deployment fields at random, and
+nothing is hidden — every one of the 10,000 veterans has complete data. So every veteran's
+epistemic variance comes from the same prior spread, the share is flat, and no one is ever
+uncertain enough to earn a check-in.
+
+Fixing this is an hour and the payoff is certain. Rung 1 NUTS is four hours and the payoff
+is not. Do this one first.
+
+> Read `docs/SPEC.md` §5.5 and `leeward/model/score_prior.py` (the `p_epistemic_share`
+> derivation). Implement `leeward/cohort/missingness.py`: hide a seeded 20% of `home_ac`,
+> `floor` and `deployment_era`, writing `<col>_observed` siblings that are null where the
+> value is hidden and equal to the value where it is not. The truth stays in the cohort —
+> the simulator needs it — but scoring may only read the `_observed` copy.
+>
+> Then make `score_prior.py` marginalise over a hidden field rather than assuming it:
+> draw the unknown value from its population rate on each posterior draw, so a veteran with
+> a hidden floor in a high-stormwater ZIP gets a genuinely wider interval than one whose
+> floor is known. That is the whole claim — uncertainty about *this person*, not about the
+> world.
+>
+> **Write the test first.** Veterans with a hidden field must have a strictly higher mean
+> `p_epistemic_share` than veterans with none; the find-out tier must fire on at least 2% of
+> actions; and `make baseline-diff` must show `find_out_share` up and `ece_max` not
+> materially worse.
+>
+> Record a baseline when it lands: `make baseline LABEL="missingness"`.
+> Run `make check`; green; commit; push; two lines in `status/cohort.md`; stop.
+
 ---
 
 ## Merge 2 → Round C is rehearsal only
