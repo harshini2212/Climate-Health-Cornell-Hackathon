@@ -452,6 +452,94 @@ design — which is right for the care-team drill-down, and wrong for a wall boa
 >
 > Run `make check`; green; commit; push; two lines in `status/demo.md`; stop.
 
+
+### 16 · `api` — half of Leeward's call budget buys information the Impact chart scores at zero  ← the Impact bar chart is on the never-cut list
+
+Found while wiring `leeward/eval/report.py`. On the 500-veteran fixtures, under
+`decision_quality`'s calls-only budget, `allocate()` spends its 80 call slots like this:
+
+```
+care_team_call   40      tau 0.20-0.40 across the five needs
+check_in_call    40      no tau row at all -- it prevents nothing, it finds out
+```
+
+`tau.yaml` leaves `check_in_call` out on purpose ("it prevents nothing by itself, it finds
+out") and `eha.py` values it by VOI instead — `sum_k w_k * epistemic_var`. That is a
+defensible decision layer. But `decision_quality.harm_averted` only counts realized harm, so
+every slot spent on information scores exactly 0, and the chart reads:
+
+```
+K=80, mean harm averted per day, 30 held-out days
+  leeward           49.6
+  random            54.4        <- beats Leeward
+  rank_by_age       51.2        <- beats Leeward
+  leeward's own picks, scored as if each got a care_team_call:   76.6
+```
+
+So the **ranking is not the problem** — Leeward's choice of who to call is worth +41% over
+random and +50% over rank-by-age. It loses on the scoreboard because it is playing 40 slots
+against their 80. A baseline that only knows how to make one generic call is structurally
+advantaged by a metric that only scores prevention.
+
+This is fixture-scale; item 15 records 4.2x over rank-by-age on the real 10,000-veteran run,
+where epistemic share is lower and fewer slots go to check-ins. The mechanism is the same at
+both scales, and it is the chart the deck opens on.
+
+> Read `leeward/decision/eha.py` (VOI), `leeward/decision/tau.yaml` (the deliberate absence)
+> and `leeward/eval/decision_quality.py` (`harm_averted`, `call_budget`). Decide which of
+> these three it is, and say which in the commit:
+>
+> 1. **VOI should not spend a scarce `call` slot at rung 0.** Prior-only scores make
+>    epistemic share high everywhere, so VOI is nearly uniform and buys little — gate
+>    check-ins behind a rung or an epistemic-share floor.
+> 2. **The comparison should price information.** Score a check-in at the harm averted by
+>    the action it would unlock, or report a second series, so the chart stops valuing
+>    "find out" at zero.
+> 3. **It is correct and belongs on the slide**: Leeward buys information the baselines
+>    cannot, and the honest chart shows both bars with a label.
+>
+> Do not fix it inside `decision_quality.harm_averted` by quietly giving `check_in_call` a
+> tau — that would make the Impact chart disagree with the allocator it is scoring.
+>
+> Whatever you choose, `tests/test_report.py::test_decision_quality_carries_every_strategy_as_measured`
+> pins that the assembler reports the comparison rather than curating it. Leave that pinned.
+>
+> Run `make check`; green; commit; push; two lines in `status/api.md`; stop.
+
+### 16 · `cohort` — honest missingness, and the find-out tier that depends on it  ← cheapest fix with the biggest pitch payoff
+
+"A wide interval earns a cheap three-minute check-in call" is one of the five things the
+pitch is built on, and it does not demo: the find-out tier fires on **0.144%** of actions.
+
+The reason is not the model. It is that **`leeward/cohort/missingness.py` was never built.**
+`docs/SPEC.md` §5.5 says to hide 20% of the AC, floor and deployment fields at random, and
+nothing is hidden — every one of the 10,000 veterans has complete data. So every veteran's
+epistemic variance comes from the same prior spread, the share is flat, and no one is ever
+uncertain enough to earn a check-in.
+
+Fixing this is an hour and the payoff is certain. Rung 1 NUTS is four hours and the payoff
+is not. Do this one first.
+
+> Read `docs/SPEC.md` §5.5 and `leeward/model/score_prior.py` (the `p_epistemic_share`
+> derivation). Implement `leeward/cohort/missingness.py`: hide a seeded 20% of `home_ac`,
+> `floor` and `deployment_era`, writing `<col>_observed` siblings that are null where the
+> value is hidden and equal to the value where it is not. The truth stays in the cohort —
+> the simulator needs it — but scoring may only read the `_observed` copy.
+>
+> Then make `score_prior.py` marginalise over a hidden field rather than assuming it:
+> draw the unknown value from its population rate on each posterior draw, so a veteran with
+> a hidden floor in a high-stormwater ZIP gets a genuinely wider interval than one whose
+> floor is known. That is the whole claim — uncertainty about *this person*, not about the
+> world.
+>
+> **Write the test first.** Veterans with a hidden field must have a strictly higher mean
+> `p_epistemic_share` than veterans with none; the find-out tier must fire on at least 2% of
+> actions; and `make baseline-diff` must show `find_out_share` up and `ece_max` not
+> materially worse.
+>
+> Record a baseline when it lands: `make baseline LABEL="missingness"`.
+> Run `make check`; green; commit; push; two lines in `status/cohort.md`; stop.
+
 ---
 
 ## Merge 2 → Round C is rehearsal only

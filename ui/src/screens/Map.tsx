@@ -22,7 +22,7 @@ interface Feature {
   properties: { modzcta: string; label: string; pop_est: number };
 }
 
-export function Map({ scenario, onSource }: { scenario: string; onSource: (s: Source) => void }) {
+export function Map({ scenario, day, onSource }: { scenario: string; day?: number; onSource: (s: Source) => void }) {
   const [need, setNeed] = useState<string>("treatment_gap");
   const [dayIdx, setDayIdx] = useState(0);
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
@@ -32,8 +32,8 @@ export function Map({ scenario, onSource }: { scenario: string; onSource: (s: So
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getForecast(scenario, 0).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
-  }, [scenario, onSource]);
+    getForecast(scenario, day).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
+  }, [scenario, day, onSource]);
 
   const date = forecast?.dates[dayIdx] ?? null;
   useEffect(() => {

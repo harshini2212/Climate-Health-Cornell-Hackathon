@@ -6,7 +6,8 @@
 
 Outputs, all under ui/public/fixtures/ and committed (they are small):
 
-    forecast.json             ForecastResponse: 7 days from the actions date, from
+    forecast.json             ForecastResponse: the 7 days the demo opens on (see
+                              leeward/demo.py, or pass --date/--day), from
                               data/hazards.parquet + data/site_status.parquet
     scores.json               { date: { need: ScoresResponse } } for the same 7 days,
                               from data/scores.parquet aggregated per ZIP
@@ -33,7 +34,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from leeward import schema
+from leeward import demo, schema
 from leeward.api import schemas as api
 from leeward.schema import DEFAULT_CAPACITY
 
@@ -51,7 +52,7 @@ def _dump(obj, path: Path) -> None:
     print(f"  {path.relative_to(ROOT).as_posix():44s} {path.stat().st_size / 1e3:8.1f} kB")
 
 
-def build_forecast(dates: list) -> api.ForecastResponse:
+def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
     hz = schema.read("hazards").filter(pl.col("date").is_in(dates))
     # FacilityStatus carries no date, so a site counts as down if it is down on any day
     # of the forecast window: "will this site be there when the veteran needs it?"
@@ -82,8 +83,8 @@ def build_forecast(dates: list) -> api.ForecastResponse:
     headline = "; ".join(dict.fromkeys(bits)) or "No active alerts in the 7-day window"
     if down:
         headline += f". Site down: {', '.join(down)}"
-    return api.ForecastResponse(scenario="sandy_then_heat", day=0, dates=dates, zips=zips,
-                                facilities=facilities, headline=headline)
+    return api.ForecastResponse(scenario="sandy_then_heat", day=day_index, dates=dates,
+                                zips=zips, facilities=facilities, headline=headline)
 
 
 def build_scores(cohort: pl.DataFrame, scores: pl.DataFrame, dates: list) -> dict:
@@ -346,17 +347,32 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=7, help="forecast window length")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--date", type=str, default=None,
-                    help="demo day (default: first day in actions.parquet). For Sandy use "
-                         "2026-08-03, landfall day")
+    ap.add_argument("--date", type=str, default=None, help="demo day, as a date")
+    ap.add_argument("--day", type=int, default=None,
+                    help="demo day, scenario-relative: 0 is the first day in hazards.parquet")
     args = ap.parse_args(argv)
+    if args.date and args.day is not None:
+        raise SystemExit("pass --date or --day, not both")
 
     cohort = schema.read("cohort")
     scores = schema.read("scores")
     actions = schema.read("actions")
-    day = date.fromisoformat(args.date) if args.date else actions["date"][0]
+    hazards = schema.read("hazards")
+    # Default: the window the demo opens on, off the hazards table (leeward/demo.py), so a
+    # rebuild lands on landfall week rather than on whatever day 0 happens to be. The API
+    # answers an unasked `GET /forecast` with the same window, so offline and live agree.
+    if args.date:
+        day = date.fromisoformat(args.date)
+    elif args.day is not None:
+        scenario_days = sorted(hazards["date"].unique().to_list())
+        if not 0 <= args.day < len(scenario_days):
+            raise SystemExit(f"--day {args.day} is outside 0..{len(scenario_days) - 1}")
+        day = scenario_days[args.day]
+    else:
+        day = demo.opening_date(hazards, schema.read("site_status"), window=args.days)
     if actions.filter(pl.col("date") == day).height == 0:
-        raise SystemExit(f"actions.parquet has no rows on {day}")
+        raise SystemExit(f"actions.parquet has no rows on {day}; run `make score`, or pass "
+                         "--date/--day for a day it does cover")
     dates = [day + timedelta(days=i) for i in range(args.days)]
     have = set(scores["date"].unique().to_list())
     dates = [d for d in dates if d in have]
@@ -365,7 +381,9 @@ def main(argv: list[str] | None = None) -> int:
 
     OUT.mkdir(parents=True, exist_ok=True)
     print(f"UI fixtures for {dates[0]} .. {dates[-1]}  (model rung {scores['model_rung'][0]})")
-    _dump(build_forecast(dates).model_dump(mode="json"), OUT / "forecast.json")
+    scenario_days = sorted(hazards["date"].unique().to_list())
+    _dump(build_forecast(dates, scenario_days.index(dates[0])).model_dump(mode="json"),
+          OUT / "forecast.json")
     _dump(build_scores(cohort, scores, dates), OUT / "scores.json")
     cands = build_candidates(cohort, scores, day, args.seed)
     _dump(cands, OUT / "actions_candidates.json")

@@ -421,6 +421,23 @@ that it would work.
 `decision_quality.py`, the verification-phrase generator. The same click must produce the
 same number in the rehearsal and on stage.
 
+**Open on a day that earns the screen.** Day 0 of `sandy_then_heat` is 1 June and landfall
+is 3 August, so a board that opens at day 0 opens on an empty ribbon. `leeward/demo.py`
+reads the opening window off the hazards table — two days in front of the first alert, so
+1–7 August: two quiet days, landfall, the outage, the first two days of the heat wave. The
+UI asks `/forecast` for no day at all and takes that window; `make demo DAY=0` and the
+topbar picker both reach the calm week, which is worth showing second, never first.
+
+**Two harm-averted numbers, and they are not the same number.** `POST /actions` holds the
+candidates and the capacity fixed and changes only the ordering, so its ratio is *expected*
+harm averted — what the model thinks better ranking is worth. `decision_quality` scores the
+same choices against the simulated outcomes on held-out days, so its ratio is *realized*
+harm averted, and it is several times larger. Both are correct. Say which one is on screen
+before anyone asks: **"expected · ranking only"** on the action list and the forecast tiles,
+**"realized · vs simulated outcomes"** on the model report and its slide. Quote the ratio
+from `report/decision_quality.csv` on the day you present — it moves when the model refits,
+so never hard-code it into the deck.
+
 **Pre-warm.** Boot the API and UI ten minutes before you present, click through every screen
 once, leave the tabs open. Cold JIT on the first deck.gl render is a five-second silence at
 the worst possible moment.

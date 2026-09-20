@@ -60,8 +60,14 @@ function fixture<T>(name: string): Promise<T> {
 
 // ---------------------------------------------------------------------------
 
-export async function getForecast(scenario: string, day: number): Promise<ForecastResponse> {
-  const live = await tryApi<ForecastResponse>(`/forecast?scenario=${scenario}&day=${day}`);
+/**
+ * `day` omitted asks the API for the window the demo opens on (leeward/demo.py), rather
+ * than day 0, which in this scenario is nine weeks before anything happens. Offline there
+ * is one forecast fixture and it is already built for that window, so both agree.
+ */
+export async function getForecast(scenario: string, day?: number): Promise<ForecastResponse> {
+  const q = day === undefined ? "" : `&day=${day}`;
+  const live = await tryApi<ForecastResponse>(`/forecast?scenario=${scenario}${q}`);
   return live ?? fixture<ForecastResponse>("forecast");
 }
 
