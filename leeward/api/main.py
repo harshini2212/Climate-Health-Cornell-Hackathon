@@ -5,8 +5,8 @@
 Every route reads a cached parquet through `leeward.schema.read` (see `store.py`); nothing here
 fits, scores or samples, so the `make demo` path needs no network and no key. The one thing a
 request computes is `POST /actions`, which is the capacity slider: it calls
-`leeward.decision.allocate.compare` on one day of cached scores and answers in well under
-300 ms at 10,000 veterans.
+`leeward.decision.allocate.compare` on the days of cached scores that one work day can still
+act on, and answers in well under 300 ms at 10,000 veterans.
 
 Response bodies are the frozen models in `schemas.py`. The large ones are built as plain dicts
 and validated against the model in one pass, then serialized straight to JSON, which is the
@@ -336,24 +336,31 @@ def veteran(veteran_id: str, date: Date) -> Response:
 
 @app.post("/actions", response_model=api.ActionsResponse)
 def actions(req: api.ActionsRequest) -> Response:
-    """Today's list cut at `capacity`, its total EHA, and what the same team would have
-    averted working the same candidates oldest-first, most-chronic-first, or in a seeded
-    shuffle. `capacity` may be partial: buckets it omits keep their defaults.
+    """The work list for `date` cut at `capacity`, its total EHA, and what the same team
+    would have averted working the same candidates oldest-first, most-chronic-first, or in a
+    seeded shuffle. `capacity` may be partial: buckets it omits keep their defaults.
+
+    `date` is the do-by day, not the risk day. An alternate-site booking for Wednesday's
+    surge is Monday's work, so this reads the days `date` can still act on -- `date` through
+    `date + the longest lead in tau.yaml` -- and returns what has to be done on `date`.
+    Each do-by day gets the whole team for a day and they share nothing, so one day is still
+    one request.
     """
     _check_scenario(req.scenario)
     if req.prior_scale != PRIOR_SCALE:
         raise HTTPException(422, f"prior_scale {req.prior_scale} is not cached; the cached "
                                  f"posterior uses {PRIOR_SCALE}")
     all_scores = store.table("scores")
-    today = _need_scored_day(all_scores, req.date)
+    _need_scored_day(all_scores, req.date)       # 404 rather than an empty list for a typo
     cohort = store.table("cohort")
     capacity = {**DEFAULT_CAPACITY, **req.capacity}
 
     shuffle = np.random.default_rng([0, req.date.toordinal()]).random(cohort.height)
     try:
-        chosen, baseline = compare(
-            today, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
-            req.group_floor, rank_by=BASELINES, weights=store.weights(), tau=store.tau())
+        chosen, baseline, n_too_late = compare(
+            all_scores, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
+            req.group_floor, rank_by=BASELINES, date=req.date, weights=store.weights(),
+            tau=store.tau())
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     store.remember(chosen)
@@ -368,7 +375,7 @@ def actions(req: api.ActionsRequest) -> Response:
         "baselines": [{"name": "leeward", "total_eha": total},
                       *({"name": n, "total_eha": t} for n, t in baseline.items())],
         "n_panel": cohort.height, "n_selected": chosen.height, "counts_by_tier": by_tier,
-        "model_rung": _rung(all_scores),
+        "n_too_late": n_too_late, "model_rung": _rung(all_scores),
     }))
 
 

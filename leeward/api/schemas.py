@@ -137,6 +137,8 @@ class VeteranCard(Base):
 # --------------------------------------------------------------------------- #
 
 class ActionsRequest(Base):
+    #: The **do-by day**: the day this work list is worked. An action here may be for a risk
+    #: that lands later -- see `ActionRow.lead_days`.
     date: Date
     capacity: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_CAPACITY))
     group_floor: dict[str, float] | None = Field(
@@ -157,6 +159,10 @@ class ActionRow(Base):
     eha: float
     capacity_bucket: str
     owner: str
+    lead_days: int = Field(
+        ge=0, description="Days ahead of the risk this has to happen to work at all. The "
+                          "response's `date` is the do-by day, so the risk day this action "
+                          "is for is `date + lead_days`. Zero means it still works today.")
     headline: str = Field(
         description="Card-safe reason line: urgency and timing, no condition, medicine or "
                     "service. The only one of these three a wall-mounted board may render.")
@@ -173,6 +179,7 @@ class BaselineResult(Base):
 
 
 class ActionsResponse(Base):
+    #: The do-by day this list is worked on. Every row's risk day is `date + lead_days`.
     date: Date
     capacity: dict[str, int]
     actions: list[ActionRow]
@@ -181,6 +188,11 @@ class ActionsResponse(Base):
     n_panel: int
     n_selected: int
     counts_by_tier: dict[str, int] = Field(default_factory=dict)
+    n_too_late: int = Field(
+        default=0, ge=0,
+        description="Actions for the days ahead whose do-by day was already behind this one "
+                    "when the forecast arrived, so they are not offered. Show the number; it "
+                    "is what a late forecast costs.")
     model_rung: int = Field(ge=0, le=3)
 
 

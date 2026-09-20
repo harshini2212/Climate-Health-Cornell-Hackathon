@@ -1,31 +1,49 @@
-"""Today's ranked action list, cut at the care team's real capacity (SPEC §7.4).
+"""A week's ranked action lists, cut at the care team's real capacity (SPEC §7.4).
 
     allocate(scores, cohort, capacity, group_floor=None) -> the `actions` table
     total_eha(actions) -> float
 
-Each candidate is one (veteran, action) pair on one day. It uses one unit of its capacity
-bucket (`schema.ACTION_COST_UNIT`) and one of the veteran's slots for the day: one, or three
-if the veteran is Act-now. Every day in `scores` is allocated separately, each with the full
-`capacity`.
+**An action has a day it must be done by, and it is not the day the risk lands.** If the
+surge hits Wednesday, the alternate dialysis site has to be booked Monday; by Wednesday that
+booking averts nothing. `tau.yaml` gives every action a lead time in days beside its tau, and
+the do-by day is `risk day - lead_days`. That day, not the risk day, is the one the action
+spends a unit of capacity on -- so Monday's forty calls cover Monday's own risk, Wednesday's
+bookings and Saturday's refills together, which is what makes this a schedule rather than
+seven daily lists. `date` in the `actions` table is the do-by day and `lead_days` rides
+beside it, so the risk day is `date + lead_days`.
+
+An action whose do-by day is before `as_of` -- the day the forecast arrived, the first day in
+`scores` -- is not offered at all. `compare()` returns how many there were, which is a real
+number worth saying out loud: nine actions were already too late to book when the forecast
+came in.
+
+Each candidate is one (veteran, action, risk day) triple. It uses one unit of its capacity
+bucket (`schema.ACTION_COST_UNIT`) and one of the veteran's slots **on its do-by day**: one,
+or three if the veteran is Act-now on the day the risk lands. Every do-by day is allocated
+separately, each with the full `capacity`; no two do-by days share anything, which is what
+lets `POST /actions` answer for one work day without allocating the whole week.
 
 Greedy by EHA per unit cost. Every action costs exactly one unit of its own bucket, and the
 buckets have no exchange rate -- a call is not a ride -- so EHA per unit cost is EHA, and
 the per-bucket cap does the rest. Highest EHA goes first; a candidate is skipped when its
-bucket is full or its veteran has no slot left.
+bucket is full or its veteran has no slot left that day.
 
-An Act-now veteran's actions do not add up naively: two actions that each prevent 60% of a
-heat illness prevent 84% together, not 120%. So each of their actions is valued on the risk
-left after all of their higher-valued actions (`_values`). A single-slot veteran's value is
-the plain SPEC §7.3 EHA. Either way the `eha` column is at most the harm the action truly
-averts, and `total_eha` never claims harm that is not there.
+A veteran's actions do not add up naively: two actions that each prevent 60% of a heat
+illness prevent 84% together, not 120%. So each action is valued on the risk left after all
+of that veteran's higher-valued actions for the same risk day (`_values`), whether or not
+those are chosen. That chain runs for every veteran, not just the Act-now ones, because the
+schedule can hand a single-slot veteran one action on Monday and another on Wednesday for
+the same Wednesday risk; standalone values would then claim more harm than the veteran
+carries. The `eha` column is a floor on what the action truly averts, never a ceiling, and
+`total_eha` never claims harm that is not there.
 
 More capacity never averts less harm, because every value is fixed before anything is
-chosen. Raise one bucket by one and the two runs agree until the first candidate the old run
-turned away for room. From there they differ by one swap at a time -- the new run gains that
-candidate, which may cost its veteran a later one, which frees a slot for a later one still
--- and each swap is worth no more than the one before, so the gains cover the losses.
-(Re-valuing an Act-now veteran's actions *as they are chosen* breaks this: a seeded search
-found capacity increases that lowered the total by up to 7%.)
+chosen and do-by days do not compete. Raise one bucket by one and the two runs agree until
+the first candidate the old run turned away for room. From there they differ by one swap at
+a time -- the new run gains that candidate, which may cost its veteran a later one, which
+frees a slot for a later one still -- and each swap is worth no more than the one before, so
+the gains cover the losses. (Re-valuing a veteran's actions *as they are chosen* breaks
+this: a seeded search found capacity increases that lowered the total by up to 7%.)
 
 `compare()` is `allocate()` plus baselines: what the same team, with the same capacity and the
 same candidate actions valued the same way, averts when it works the veterans in some other
@@ -53,6 +71,7 @@ import math
 import time
 from collections.abc import Mapping
 from datetime import date as Date
+from datetime import timedelta
 
 import numpy as np
 import polars as pl
@@ -126,6 +145,9 @@ TIER_URGENCY = {
     "everyday": "no action today",
 }
 
+#: The per-need fields the output rows read back out of the frame, one column per need.
+_PER_NEED = ("p_mean", "p_lo80", "p_hi80", "p_epistemic_share", "driver_1")
+
 OUT_SCHEMA = {c.name: c.dtype for c in schema.TABLES["actions"].columns} | {
     "headline": pl.Utf8,      # the card-safe line the wall board shows (see `_headline`)
     "top_need": pl.Utf8,      # the need this action does the most for
@@ -142,13 +164,15 @@ def allocate(
     date: Date | None = None,
     weights: dict[str, float] | None = None,
     tau: dict[str, dict[str, float]] | None = None,
+    lead: dict[str, int] | None = None,
+    as_of: Date | None = None,
 ) -> pl.DataFrame:
-    """The `actions` table for every day in `scores` (or only `date`), cut at `capacity`.
+    """The `actions` table for every do-by day `scores` reaches (or only `date`).
 
-    `weights` and `tau` default to severity.yaml and tau.yaml.
+    `weights`, `tau` and `lead` default to severity.yaml and tau.yaml.
     """
     return compare(scores, cohort, capacity, group_floor, date=date, weights=weights,
-                   tau=tau)[0]
+                   tau=tau, lead=lead, as_of=as_of)[0]
 
 
 def compare(
@@ -161,12 +185,23 @@ def compare(
     date: Date | None = None,
     weights: dict[str, float] | None = None,
     tau: dict[str, dict[str, float]] | None = None,
-) -> tuple[pl.DataFrame, dict[str, float]]:
-    """`allocate()`'s table, and the total EHA of each baseline in `rank_by`.
+    lead: dict[str, int] | None = None,
+    as_of: Date | None = None,
+) -> tuple[pl.DataFrame, dict[str, float], int]:
+    """`allocate()`'s table, each baseline's total EHA, and the count that arrived too late.
+
+    `date` picks one **do-by day**: the work list for that day, drawn from the risk days it
+    can still reach (`date` through `date + max lead`). It is not a filter on the risk day,
+    because the whole point is that the two differ.
+
+    `as_of` is the day the forecast arrived; actions whose do-by day falls before it are not
+    offered and are counted into the third return value. It defaults to `date`, or to the
+    first day in `scores`.
 
     `rank_by` maps a baseline's name to a numeric cohort column; that baseline works the
     veterans from the highest value of the column down (ties in veteran order, so the answer
-    does not depend on risk). The total is summed over every day allocated, like `total_eha`.
+    does not depend on risk). The total is summed over every do-by day allocated, like
+    `total_eha`.
     """
     weights = weights if weights is not None else severity.load()
     table = tau if tau is not None else tau_table.load()
@@ -176,10 +211,17 @@ def compare(
     missing = {n: c for n, c in rank_by.items() if c not in cohort.columns}
     if missing:
         raise ValueError(f"rank_by names cohort columns that do not exist: {missing}")
+
+    prevent, T = tau_table.matrix(table)
+    act_names = [*prevent, CHECK_IN]
+    lead_of = _check_lead(lead if lead is not None else tau_table.leads(), act_names)
+    horizon = int(lead_of.max(initial=0))
+
     if date is not None:
-        scores = scores.filter(pl.col("date") == date)
+        scores = scores.filter(pl.col("date").is_between(date, date + timedelta(days=horizon)))
+        as_of = date if as_of is None else as_of
     if scores.height == 0:
-        return _empty(), dict.fromkeys(rank_by, 0.0)
+        return _empty(), dict.fromkeys(rank_by, 0.0), 0
 
     wide = eha.needs_wide(scores)
     unknown = wide.join(cohort, on="veteran_id", how="anti")["veteran_id"].unique()
@@ -189,11 +231,46 @@ def compare(
     cols = ["veteran_id", *dict.fromkeys([*eha.COHORT_COLUMNS, *floor, *rank_by.values()])]
     frame = (wide.join(tiers.assign(scores, weights), on=["veteran_id", "date"])
                  .join(cohort.select(cols), on="veteran_id")
-                 .sort("date", "veteran_id"))
-    days = [_allocate_day(day, cap, floor, weights, table, rank_by)
-            for _, day in frame.group_by("date", maintain_order=True)]
-    totals = {n: sum(t[n] for _, t in days) for n in rank_by}
-    return pl.concat([a for a, _ in days]), totals
+                 .sort("date", "veteran_id")
+                 .with_row_index("_unit")
+                 .with_columns(_vet=(pl.col("veteran_id").rank("dense") - 1).cast(pl.Int64)))
+    if as_of is None:
+        as_of = frame["date"].min()
+
+    cand = _candidates(frame, T, act_names, lead_of, weights)
+    if date is not None:
+        cand = {k: v[cand["do_by"] <= date.toordinal()] for k, v in cand.items()}
+
+    slots = np.where(frame["tier"].to_numpy() == "act_now", ACT_NOW_SLOTS, 1)
+    vet = frame["_vet"].to_numpy()
+    groups = {col: frame[col].to_list() for col in floor}
+    orders = {name: frame[col].to_numpy().astype(float) for name, col in rank_by.items()}
+
+    # Do-by days that have already gone are allocated too, but only to be counted: what a
+    # team would have had to do before the forecast reached them is the honest size of
+    # "too late", not the raw number of candidates that missed their window.
+    want = date.toordinal() if date is not None else None
+    gone = as_of.toordinal()
+    chosen: list[dict[str, np.ndarray]] = []
+    totals = dict.fromkeys(rank_by, 0.0)
+    n_vets = int(vet.max()) + 1
+    n_too_late = 0
+    for day in _split_by_day(cand):
+        on = int(day["do_by"][0])
+        keep = on == want if want is not None else on >= gone
+        taken, day_totals = _allocate_do_by_day(day, cap, floor, act_names, slots, vet,
+                                                groups, orders if keep else {}, n_vets)
+        if taken is None:
+            continue
+        if keep:
+            chosen.append(taken)
+            for name, value in day_totals.items():
+                totals[name] += value
+        elif on < gone:
+            n_too_late += len(taken["unit"])
+    if not chosen:
+        return _empty(), totals, n_too_late
+    return _rows(chosen, frame, act_names, lead_of), totals, n_too_late
 
 
 def total_eha(actions: pl.DataFrame) -> float:
@@ -201,56 +278,135 @@ def total_eha(actions: pl.DataFrame) -> float:
     return float(actions["eha"].sum()) if actions.height else 0.0
 
 
-def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float],
-                  weights: dict[str, float], table: dict[str, dict[str, float]],
-                  rank_by: Mapping[str, str]) -> tuple[pl.DataFrame, dict[str, float]]:
-    n = day.height
-    vids = day["veteran_id"].to_list()
-    tier = day["tier"].to_numpy()
-    p = day.select([f"p_mean_{k}" for k in NEEDS]).to_numpy()
-    share = day.select([f"p_epistemic_share_{k}" for k in NEEDS]).to_numpy()
+# --------------------------------------------------------------------------- #
+# Valuing every candidate, once, before anything is chosen
+# --------------------------------------------------------------------------- #
+
+def _candidates(frame: pl.DataFrame, T: np.ndarray, act_names: list[str],
+                lead_of: np.ndarray, weights: dict[str, float]) -> dict[str, np.ndarray]:
+    """Every (veteran, action, risk day) worth spending a slot on, with its do-by day.
+
+    Valued a risk day at a time, because a veteran's actions are valued against each other
+    on the risk they share (`_values`). Which day the action is *done* on only decides which
+    day's capacity it competes for, and that is settled afterwards.
+    """
     w = severity.vector(weights)
+    ci = len(T)                                         # column of the check-in
+    unit, action, value, top, do_by = [], [], [], [], []
+    for (day,), rows in frame.group_by("date", maintain_order=True):
+        tier = rows["tier"].to_numpy()
+        p = rows.select([f"p_mean_{k}" for k in NEEDS]).to_numpy()
+        share = rows.select([f"p_epistemic_share_{k}" for k in NEEDS]).to_numpy()
+        open_ = rows.select([eha.ELIGIBLE[a].alias(a) for a in act_names]).to_numpy().astype(bool)
+        open_ &= (tier != "everyday")[:, None]
+        open_[:, ci] &= tier == "find_out"
 
-    prevent, T = tau_table.matrix(table)
-    actions = [*prevent, CHECK_IN]
-    ci = len(prevent)                                   # column of the check-in
-    bucket = [ACTION_COST_UNIT[a] for a in actions]
-    open_ = day.select([eha.ELIGIBLE[a].alias(a) for a in actions]).to_numpy().astype(bool)
-    open_ &= (tier != "everyday")[:, None]
-    open_[:, ci] &= tier == "find_out"
+        val, best = _values(p * w, w * eha.epistemic_var(p, share), T, open_)
+        i, a = np.nonzero(open_ & (val > EPS))
+        unit.append(rows["_unit"].to_numpy()[i])
+        action.append(a)
+        value.append(val[i, a])
+        top.append(best[i, a])
+        do_by.append(day.toordinal() - lead_of[a])
+    empty = np.empty(0, dtype=np.int64)
+    return {
+        "unit": np.concatenate(unit) if unit else empty,
+        "action": np.concatenate(action) if action else empty,
+        "value": np.concatenate(value) if value else np.empty(0, dtype=float),
+        "top": np.concatenate(top) if top else empty,
+        "do_by": np.concatenate(do_by) if do_by else empty,
+    }
 
-    slots = np.where(tier == "act_now", ACT_NOW_SLOTS, 1)
-    value, top = _values(p * w, w * eha.epistemic_var(p, share), T, open_, slots)
 
-    i_idx, a_idx = np.nonzero(open_ & (value > EPS))
-    groups = {col: day[col].to_list() for col in floor}
+def _values(risk: np.ndarray, info: np.ndarray, T: np.ndarray,
+            open_: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """EHA per (veteran, action), fixed before anything is chosen, and the need it helps most.
 
-    def pick(order_by: np.ndarray | None) -> set[tuple[int, int]]:
+    `risk` is weighted risk w*p (n x K); `info` is weighted epistemic variance (n x K), the
+    check-in's value, which sits in the last column. A veteran's prevention actions are taken
+    in descending standalone EHA and each is valued on the risk left after all of the ones
+    above it, whether or not those are chosen -- so the value never depends on capacity, and
+    no subset of a veteran's actions can sum to more than the harm they carry that day.
+
+    An action the veteran is not eligible for is worth nothing and takes nothing off the
+    risk the next one works on, which is what zeroing its row of T does.
+    """
+    a_n = len(T)
+    gain = np.einsum("nk,ak->nak", risk, T)             # per-need EHA of every action
+    gain = np.concatenate([gain, info[:, None, :]], axis=1)
+    gain[~open_] = 0.0
+
+    standalone = gain[:, :a_n].sum(axis=2)              # n x A
+    order = np.argsort(-standalone, axis=1, kind="stable")   # ties fall to the action index
+    live = np.take_along_axis(standalone, order, axis=1) > EPS
+    t_ordered = np.where(live[:, :, None], T[order], 0.0)
+    left = np.empty_like(t_ordered)
+    left[:, 0] = 1.0
+    np.cumprod(1 - t_ordered[:, :-1], axis=1, out=left[:, 1:])
+    np.put_along_axis(gain[:, :a_n], order[:, :, None],
+                      risk[:, None, :] * left * t_ordered, axis=1)
+    return gain.sum(axis=2), gain.argmax(axis=2)
+
+
+# --------------------------------------------------------------------------- #
+# One do-by day: the greedy pass, and the baselines that repeat it
+# --------------------------------------------------------------------------- #
+
+def _split_by_day(cand: dict[str, np.ndarray]):
+    """The candidates, grouped by do-by day, oldest first."""
+    order = np.argsort(cand["do_by"], kind="stable")
+    ordered = {k: v[order] for k, v in cand.items()}
+    cuts = np.flatnonzero(np.diff(ordered["do_by"])) + 1
+    for part in np.split(np.arange(len(order)), cuts):
+        if part.size:
+            yield {k: v[part] for k, v in ordered.items()}
+
+
+def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
+                        floor: dict[str, float], act_names: list[str], slots: np.ndarray,
+                        vet: np.ndarray, groups: dict[str, list], orders: dict[str, np.ndarray],
+                        n_vets: int) -> tuple[dict[str, np.ndarray] | None, dict[str, float]]:
+    """Who gets what on one work day, and what each baseline would have averted instead."""
+    unit, a_idx, value = day["unit"], day["action"], day["value"]
+    bucket = [ACTION_COST_UNIT[a] for a in act_names]
+    who = vet[unit]
+
+    # Two limits, both fixed before anything is chosen, both inside this one day.
+    # Per risk day, because the tier is a statement about that day's risk: a Self-serve
+    # Friday earns one action about Friday, whoever else the veteran is the rest of the week.
+    # Per work day, because that is how often anyone may be contacted in one morning: the
+    # most any of the risk days being worked for them today allows.
+    per_day = np.zeros(n_vets, dtype=np.int64)
+    np.maximum.at(per_day, who, slots[unit])
+
+    def pick(order_by: np.ndarray | None) -> np.ndarray:
         """One greedy pass over the candidates: highest value first, or -- for a baseline --
         veterans from the highest `order_by` down, each one's own actions best first.
         (value, veteran, action) breaks ties the same way every run."""
         if order_by is None:
-            order = np.lexsort((a_idx, i_idx, -value[i_idx, a_idx]))
+            order = np.lexsort((a_idx, who, -value))
         else:
-            order = np.lexsort((a_idx, -value[i_idx, a_idx], i_idx, -order_by[i_idx]))
-        queue = list(zip(i_idx[order].tolist(), a_idx[order].tolist(), strict=True))
+            order = np.lexsort((a_idx, -value, who, -order_by[unit]))
 
-        used = np.zeros(n, dtype=int)
+        used = np.zeros_like(per_day)
+        used_risk: dict[int, int] = {}
         remaining = dict(cap)
         quota = {(col, g, b): math.floor(f * cap[b] + 1e-9)
                  for col, f in floor.items() for g in set(groups[col]) for b in cap}
-        taken: set[tuple[int, int]] = set()
+        taken = np.zeros(len(order), dtype=bool)
 
         def run(reserved_only: bool) -> None:
-            for i, a in queue:
-                b = bucket[a]
-                if used[i] >= slots[i] or remaining[b] <= 0 or (i, a) in taken:
+            for c in order:
+                i, u, b = who[c], int(unit[c]), bucket[a_idx[c]]
+                if (taken[c] or used[i] >= per_day[i] or remaining[b] <= 0
+                        or used_risk.get(u, 0) >= slots[u]):
                     continue
-                mine = [(col, groups[col][i], b) for col in floor]
+                mine = [(col, groups[col][unit[c]], b) for col in floor]
                 if reserved_only and not any(quota[q] > 0 for q in mine):
                     continue
-                taken.add((i, a))
+                taken[c] = True
                 used[i] += 1
+                used_risk[u] = used_risk.get(u, 0) + 1
                 remaining[b] -= 1
                 for q in mine:
                     quota[q] = max(0, quota[q] - 1)
@@ -260,72 +416,69 @@ def _allocate_day(day: pl.DataFrame, cap: dict[str, int], floor: dict[str, float
         run(reserved_only=False)
         return taken
 
-    taken = pick(None)
-    totals = {name: float(sum(value[i, a] for i, a in pick(day[col].to_numpy().astype(float))))
-              for name, col in rank_by.items()}
-    if not taken:
-        return _empty(), totals
-    chosen = [(i, a, float(value[i, a]), int(top[i, a])) for i, a in sorted(taken)]
+    totals = {name: float(value[pick(col)].sum()) for name, col in orders.items()}
+    mine = pick(None)
+    if not mine.any():
+        return None, totals
+    return {k: v[mine] for k, v in day.items()}, totals
 
-    lo = day.select([f"p_lo80_{k}" for k in NEEDS]).to_numpy()
-    hi = day.select([f"p_hi80_{k}" for k in NEEDS]).to_numpy()
-    drivers = day.select([f"driver_1_{k}" for k in NEEDS]).rows()
-    service = day.select(
-        pl.when("ckd_dialysis").then(pl.lit("dialysis"))
-          .when("active_cancer_tx").then(pl.lit("infusion"))
-          .otherwise(pl.lit("opioid treatment program"))
-    ).to_series().to_list()
-    on = day["date"][0]
 
-    rows = []
-    for i, a, value_, k in chosen:
-        act, need = actions[a], NEEDS[k]
-        aid = hashlib.sha1(f"{on}|{vids[i]}|{act}".encode()).hexdigest()[:12]
-        rows.append({
-            "action_id": aid, "date": on, "veteran_id": vids[i], "action": act,
-            "tier": tier[i], "eha": value_, "rank": 0, "capacity_bucket": bucket[a],
-            "rationale": _rationale(act, need, p[i, k], lo[i, k], hi[i, k], share[i, k],
-                                    drivers[i][k], service[i]),
-            "headline": _headline(need, p[i, k], tier[i]),
+# --------------------------------------------------------------------------- #
+# The rows
+# --------------------------------------------------------------------------- #
+
+def _rows(chosen: list[dict[str, np.ndarray]], frame: pl.DataFrame, act_names: list[str],
+          lead_of: np.ndarray) -> pl.DataFrame:
+    """The chosen candidates as the `actions` table, ranked within each do-by day."""
+    picked = {k: np.concatenate([c[k] for c in chosen]) for k in chosen[0]}
+    meta = frame.select(
+        "_unit", "veteran_id", "tier",
+        *[f"{f}_{k}" for f in _PER_NEED for k in NEEDS],
+        service=pl.when("ckd_dialysis").then(pl.lit("dialysis"))
+                  .when("active_cancer_tx").then(pl.lit("infusion"))
+                  .otherwise(pl.lit("opioid treatment program")),
+    )
+    joined = pl.DataFrame({"_unit": picked["unit"].astype(np.uint32)}).join(
+        meta, on="_unit", how="left")          # left join keeps the candidate order
+
+    k_idx = picked["top"]
+    fields = {f: joined.select([f"{f}_{k}" for k in NEEDS]).to_numpy() for f in _PER_NEED[:4]}
+    drivers = joined.select([f"driver_1_{k}" for k in NEEDS]).rows()
+    vids = joined["veteran_id"].to_list()
+    tiers_ = joined["tier"].to_list()
+    services = joined["service"].to_list()
+    dates = [Date.fromordinal(int(d)) for d in picked["do_by"]]
+
+    out = []
+    for n in range(len(vids)):
+        act, need, k = act_names[picked["action"][n]], NEEDS[k_idx[n]], int(k_idx[n])
+        on, vid, tier = dates[n], vids[n], tiers_[n]
+        aid = hashlib.sha1(f"{on}|{vid}|{act}".encode()).hexdigest()[:12]
+        p = fields["p_mean"][n, k]
+        out.append({
+            "action_id": aid, "date": on, "veteran_id": vid, "action": act, "tier": tier,
+            "eha": float(picked["value"][n]), "rank": 0,
+            "lead_days": int(lead_of[picked["action"][n]]),
+            "capacity_bucket": ACTION_COST_UNIT[act],
+            "rationale": _rationale(act, need, p, fields["p_lo80"][n, k],
+                                    fields["p_hi80"][n, k],
+                                    fields["p_epistemic_share"][n, k], drivers[n][k],
+                                    services[n]),
+            "headline": _headline(need, p, tier),
             "owner": OWNER.get(act, "care_team"), "message_id": f"msg-{aid}",
-            "top_need": need, "top_driver": drivers[i][k],
+            "top_need": need, "top_driver": drivers[n][k],
         })
-    actions_df = (pl.DataFrame(rows, schema=OUT_SCHEMA)
-                    .sort(["eha", "veteran_id", "action"], descending=[True, False, False])
-                    .with_columns(rank=pl.int_range(1, pl.len() + 1, dtype=pl.Int32)))
-    return actions_df, totals
-
-
-def _values(risk: np.ndarray, info: np.ndarray, T: np.ndarray, open_: np.ndarray,
-            slots: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """EHA per (veteran, action), fixed before anything is chosen, and the need it helps most.
-
-    `risk` is weighted risk w*p (n x K); `info` is weighted epistemic variance (n x K), the
-    check-in's value, which sits in the last column. A one-slot veteran's value is the
-    standalone EHA. A multi-slot veteran's actions are taken in descending standalone EHA and
-    each is valued on the risk left after all of the ones above it, whether or not those are
-    chosen -- so the value never depends on capacity, and a veteran's chosen actions never sum
-    to more than the harm they carry.
-    """
-    gain = np.einsum("nk,ak->nak", risk, T)             # per-need EHA of every action
-    gain = np.concatenate([gain, info[:, None, :]], axis=1)
-    gain[~open_] = 0.0
-    for i in np.nonzero(slots > 1)[0]:
-        standalone = gain[i].sum(axis=1)
-        left = risk[i].copy()
-        for a in np.lexsort((np.arange(len(T)), -standalone[: len(T)])):
-            if standalone[a] <= EPS:
-                break
-            gain[i, a] = left * T[a]
-            left = left * (1 - T[a])
-    return gain.sum(axis=2), gain.argmax(axis=2)
+    return (pl.DataFrame(out, schema=OUT_SCHEMA)
+              .sort(["date", "eha", "veteran_id", "action"],
+                    descending=[False, True, False, False])
+              .with_columns(rank=pl.int_range(1, pl.len() + 1, dtype=pl.Int32).over("date")))
 
 
 def _headline(need: str, p: float, tier: str) -> str:
     """The one line a wall-mounted board may show beside a de-identified handle.
 
     Urgency and timing, and nothing a passer-by could turn back into a chart: no condition,
-    no medicine, no service, no name. "A gap in treatment, 34% chance -- act today".
+    no medicine, no service. "A gap in treatment, 34% chance -- act today".
 
     `_rationale` below is the other half of the same row and keeps all three, because the
     care-team drill-down is a private screen and cannot be acted on without them. Splitting
@@ -351,6 +504,10 @@ def _empty() -> pl.DataFrame:
     return pl.DataFrame(schema=OUT_SCHEMA)
 
 
+# --------------------------------------------------------------------------- #
+# Input checks
+# --------------------------------------------------------------------------- #
+
 def _check_capacity(capacity: dict[str, int]) -> dict[str, int]:
     unknown = sorted(set(capacity) - set(BUCKETS))
     if unknown:
@@ -360,6 +517,18 @@ def _check_capacity(capacity: dict[str, int]) -> dict[str, int]:
     if negative:
         raise ValueError(f"capacity cannot be negative: {negative}")
     return out
+
+
+def _check_lead(lead: Mapping[str, int], act_names: list[str]) -> np.ndarray:
+    """Lead days per action, in `act_names` order. Every proposable action needs one."""
+    missing = [a for a in act_names if a not in lead]
+    if missing:
+        raise ValueError(f"no lead time for {missing}; every action allocate() can propose "
+                         "needs one in tau.yaml")
+    bad = {a: lead[a] for a in act_names if not isinstance(lead[a], int) or lead[a] < 0}
+    if bad:
+        raise ValueError(f"lead days must be whole days, zero or more: {bad}")
+    return np.array([lead[a] for a in act_names], dtype=np.int64)
 
 
 def _check_floor(group_floor: dict[str, float], cohort: pl.DataFrame) -> dict[str, float]:
@@ -379,14 +548,17 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="scores + cohort -> data/actions.parquet, "
                                              "cut at DEFAULT_CAPACITY")
     ap.add_argument("--date", type=Date.fromisoformat, default=None,
-                    help="allocate one day (default: every day in scores)")
+                    help="allocate one do-by day (default: every day the window reaches)")
     args = ap.parse_args(argv)
     t0 = time.perf_counter()
-    actions = allocate(schema.read("scores"), schema.read("cohort"), DEFAULT_CAPACITY,
-                       date=args.date)
+    actions, _, too_late = compare(schema.read("scores"), schema.read("cohort"),
+                                   DEFAULT_CAPACITY, date=args.date)
     path = schema.write(actions, "actions")
-    print(f"  actions  {actions.height:,} rows over {actions['date'].n_unique()} days, "
+    print(f"  actions  {actions.height:,} rows over {actions['date'].n_unique()} do-by days, "
           f"total EHA {total_eha(actions):,.1f}, {time.perf_counter() - t0:.1f}s -> {path}")
+    if too_late:
+        print(f"           {too_late:,} actions were already too late to book when the "
+              f"forecast arrived")
     return 0
 
 

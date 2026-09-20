@@ -295,14 +295,18 @@ _SCORES = Table(
 _ACTIONS = Table(
     name="actions",
     key=("date", "veteran_id", "action"),
-    doc="Today's ranked action list, already cut at capacity.",
+    doc="A day's ranked action list, already cut at that day's capacity. `date` is the "
+        "do-by day: the day the work happens, which is the risk day minus `lead_days`.",
     columns=(
         _c("action_id", pl.Utf8),
-        _c("date", pl.Date),
+        _c("date", pl.Date, "The day this must be DONE by; risk day = date + lead_days"),
         _c("veteran_id", pl.Utf8),
         _c("action", pl.Utf8, values=tuple(ACTIONS)),
         _c("tier", pl.Utf8, values=tuple(TIERS)),
         _c("eha", pl.Float64, "Expected harm averted", bounds=(0, 1000)),
+        _c("lead_days", pl.Int32, "Days ahead of the risk this must happen to work at all; "
+                                  "from lead_days in leeward/decision/tau.yaml",
+           bounds=(0, 30)),
         _c("rank", pl.Int32, bounds=(1, 1_000_000)),
         _c("capacity_bucket", pl.Utf8, values=tuple(sorted(set(ACTION_COST_UNIT.values())))),
         _c("rationale", pl.Utf8, "One sentence a care team member can read aloud"),

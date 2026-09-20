@@ -174,7 +174,9 @@ def _card(client: TestClient, vid: str, day: date = DAY) -> api.VeteranCard:
 
 
 def test_the_card_is_the_scores_and_the_cohort_row(client: TestClient) -> None:
-    plan = _table("actions").filter(pl.col("date") == DAY)
+    # A lead_days of zero, because the card is a statement about the veteran on DAY and the
+    # plan for DAY also carries work for risk days after it, where the tier may differ.
+    plan = _table("actions").filter((pl.col("date") == DAY) & (pl.col("lead_days") == 0))
     vid = plan.filter(pl.col("tier") == "act_now")["veteran_id"][0]
     card = _card(client, vid)
     vet = _table("cohort").filter(pl.col("veteran_id") == vid).row(0, named=True)
