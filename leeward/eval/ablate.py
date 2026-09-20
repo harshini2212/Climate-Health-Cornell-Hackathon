@@ -358,28 +358,34 @@ def bar_chart(result: Result) -> go.Figure:
     dropped = result.table.filter(pl.col("dropped") != FULL).sort("d_harm_averted")
     loss = [-v for v in dropped["d_harm_averted"]]
     first, last = result.dates[0], result.dates[-1]
+    # The bar labels sit outside the bar end, so both ends of the axis need room for one --
+    # otherwise a negative bar's label lands on top of the block names in the left margin.
+    span = max((abs(v) for v in loss), default=1.0) or 1.0
     fig = go.Figure()
     fig.add_bar(
         x=loss, y=dropped["dropped"].to_list(), orientation="h",
         marker={"color": [COST if v > 0 else GAIN for v in loss], "cornerradius": 4},
-        text=[f"{v:.2f}" for v in loss], textposition="outside", textfont={"color": INK},
+        text=[f"{v:+.2f}" for v in loss], textposition="outside", cliponaxis=False,
+        textfont={"color": INK},
         customdata=list(zip(dropped["ece"], dropped["d_ece"], strict=True)),
         hovertemplate=("<b>drop %{y}</b><br>%{x:.2f} less harm averted per day<br>"
                        "ECE %{customdata[0]:.4f} (%{customdata[1]:+.4f})<extra></extra>"),
     )
     fig.update_layout(
         title={"text": "What each block of the model is worth",
-               "subtitle": {"text": (f"Harm averted per day that goes away when the block is "
-                                     f"dropped · {result.k} calls a day · held-out days "
-                                     f"{first} to {last} · rung 0, prior-only"),
+               "subtitle": {"text": (f"Harm averted per day lost when the block is dropped · "
+                                     f"{result.k} calls a day · rung 0, prior-only<br>"
+                                     f"Held-out days {first} to {last} · a negative bar is a "
+                                     f"block the care team is better off without"),
                             "font": {"color": INK_2, "size": 13}},
                "font": {"color": INK, "size": 18}, "x": 0.02, "xanchor": "left"},
-        width=760, height=110 + 54 * max(dropped.height, 1),
-        margin={"l": 240, "r": 64, "t": 96, "b": 56},
+        width=880, height=140 + 54 * max(dropped.height, 1),
+        margin={"l": 248, "r": 40, "t": 118, "b": 56},
         paper_bgcolor=SURFACE, plot_bgcolor=SURFACE,
         font={"family": 'system-ui, -apple-system, "Segoe UI", sans-serif', "color": INK_2},
         xaxis={"title": {"text": "Severity-weighted events averted per day, forgone",
                          "font": {"color": INK_2, "size": 12}},
+               "range": [-span * 1.35, span * 1.35],
                "gridcolor": GRID, "zerolinecolor": AXIS, "tickfont": {"color": MUTED}},
         yaxis={"autorange": "reversed", "showgrid": False, "linecolor": AXIS,
                "tickfont": {"color": MUTED}},
