@@ -1,4 +1,4 @@
-.PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo report \
+.PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo report ablate \
         test check status smoke clean-clone lanes
 PY  ?= .venv/bin/python
 PIP ?= .venv/bin/python -m pip
@@ -90,6 +90,12 @@ baseline-diff:      ## diff the two most recent baselines, record nothing
 
 report:             ## full eval harness incl. the fairness audit -> report/report.json
 	$(PY) -m leeward.eval.report
+
+# Separate from `report` on purpose: six models over the real cohort is about 30 seconds,
+# and `make report` is run every few edits. It caches report/ablations.json, which the next
+# `make report` picks up. Re-run it whenever the model or the decision layer moves.
+ablate:             ## what each block of the model is worth -> report/ablations.{csv,json,html}
+	$(PY) -m leeward.eval.ablate
 
 # --------------------------------------------------------------------------- #
 # Demo

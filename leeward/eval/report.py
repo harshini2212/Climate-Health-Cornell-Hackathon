@@ -13,7 +13,10 @@ What it says, and what it refuses to say:
 - Recovery at rung 0 is prior coverage rather than parameter recovery. The contract has
   nowhere to put that word, so it is carried by `model_rung: 0` with a null `rhat_max`, and
   said plainly in `report/recovery.csv`, in the chart's subtitle and on the console.
-- `ablations` is empty until `ablate.py` exists. An empty list means "not run".
+- `ablations` is read from `report/ablations.json`, which `make ablate` writes. An empty
+  list still means "not run" -- six models over the real cohort is half a minute, too slow
+  to sit inside a target that is re-run every few edits, and a stale table would be worse
+  than a missing one. Run `make ablate` after `make score`; `make report` picks it up.
 - **The fairness table goes in whole, flagged rows included.** `fairness_failed` is the
   audit's own verdict. Nothing here filters it.
 
@@ -39,6 +42,18 @@ from leeward.eval import fairness as fair
 from leeward.eval import recovery as rec
 
 REPORT = schema.ROOT / "report"
+
+
+def load_ablations(out_dir: Path = REPORT) -> list[dict]:
+    """`AblationRow`s from the last `make ablate`, or `[]` if it has not been run.
+
+    Cached rather than computed here: `ablate.run` re-scores the window once per block, and
+    `make report` is run far more often than the ablations change.
+    """
+    path = out_dir / "ablations.json"
+    if not path.exists():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))["ablations"]
 
 
 def model_rung(scores: pl.DataFrame) -> int:
@@ -75,7 +90,8 @@ class Report:
 def assemble(*, scores: pl.DataFrame, outcomes: pl.DataFrame, cohort: pl.DataFrame,
              dates: Sequence[date] | None = None, ks: Sequence[int] = dq.KS,
              n_draws: int = rec.N_DRAWS, seed: int = rec.SEED,
-             posterior: Path | None = rec.POSTERIOR) -> Report:
+             posterior: Path | None = rec.POSTERIOR,
+             ablations: Sequence[dict] | None = None) -> Report:
     """Run the whole harness over one held-out window."""
     dates = cal.holdout_dates(scores, outcomes) if dates is None else list(dates)
 
@@ -95,7 +111,7 @@ def assemble(*, scores: pl.DataFrame, outcomes: pl.DataFrame, cohort: pl.DataFra
         "recovery_coverage": rec.coverage(recovered),
         "calibration": reliability.select("need", "predicted", "observed", "n").to_dicts(),
         "ece_by_need": cal.ece(reliability),
-        "ablations": [],                     # ablate.py is not built; empty means "not run"
+        "ablations": list(load_ablations() if ablations is None else ablations),
         "decision_quality": dq.summarise(tidy).select("k", "strategy",
                                                       "harm_averted").to_dicts(),
         "fairness": audit.select(fair.REPORT_COLUMNS).to_dicts(),
@@ -132,6 +148,9 @@ def main(argv: list[str] | None = None) -> int:
     for need, value in p["ece_by_need"].items():
         print(f"  ECE {need:14s} {value:.4f}"
               f"{'' if value < cal.ECE_BAR else '   over the SPEC §11 bar'}")
+    n_ablations = len(p["ablations"])
+    print(f"  ablations {n_ablations} block(s) from report/ablations.json" if n_ablations
+          else "  ablations not run -- `make ablate` fills the card on the Model report screen")
     kind = "prior coverage" if report.recovery["source"][0] == "prior" else "recovery"
     print(f"  {kind} {p['recovery_coverage']:.1%} of {len(p['recovery'])} parameters "
           f"(bar {rec.COVERAGE_BAR:.0%})")
