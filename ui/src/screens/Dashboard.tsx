@@ -51,15 +51,26 @@ export function Dashboard({ scenario, day, onSource, onOpen, onOpenVeteran }: Pr
       const fc = await getForecast(scenario, day);
       setForecast(fc);
       const dates = fc.dates.slice(0, 7);
-      setSel(0);
+      // Open on the event, not on the quiet morning in front of it: the dashboard is
+      // about the event, and an empty high-risk tier is the wrong first impression. The
+      // strip still starts at today and says which day is selected.
+      const ds = eventDays(dates, fc.zips);
+      const first = ds.findIndex((d) => d.flood || d.heat || d.smoke);
+      setSel(first >= 0 ? first : 0);
       setWeek(new Array(dates.length).fill(null));
       setHeadroom(new Array(dates.length).fill(null));
-      const today = await postActions({ date: dates[0], capacity: DEFAULT_CAPACITY, scenario });
-      setWeek((w) => w.map((x, i) => (i === 0 ? { ...today, date: dates[0] } : x)));
+      // The selected day first, so the screen fills where the eye is.
+      const openIdx = first >= 0 ? first : 0;
+      const lead = await postActions({ date: dates[openIdx], capacity: DEFAULT_CAPACITY, scenario });
+      setWeek((w) => w.map((x, i) => (i === openIdx ? { ...lead, date: dates[openIdx] } : x)));
       setSource(lastSource());
       onSource(lastSource());
+      const rest = dates.filter((_, i) => i !== openIdx);
       await Promise.all([
-        postActionsWeek(dates.slice(1), { capacity: DEFAULT_CAPACITY, scenario }, (i, r) => setWeek((w) => w.map((x, j) => (j === i + 1 ? r : x)))),
+        postActionsWeek(rest, { capacity: DEFAULT_CAPACITY, scenario }, (_i, r) => {
+          const j = dates.indexOf(r.date);
+          setWeek((w) => w.map((x, k) => (k === j ? r : x)));
+        }),
         postActionsWeek(dates, { capacity: UNCAPPED, scenario }, (i, r) => setHeadroom((h) => h.map((x, j) => (j === i ? r : x))), 1),
       ]);
       setSource(lastSource());
@@ -126,7 +137,7 @@ export function Dashboard({ scenario, day, onSource, onOpen, onOpenVeteran }: Pr
         <div className="db-stats">
           <div className="db-s"><b><CountUp value={resp.counts_by_tier.act_now ?? 0} /></b><span>high risk {sel === 0 ? "today" : fmtDate(cur.date)}</span></div>
           <div className="db-s"><b><CountUp value={resp.counts_by_tier.find_out ?? 0} /></b><span>moderate, find out</span></div>
-          <div className="db-s"><b><CountUp value={human} /></b><span>to reach by hand</span></div>
+          <div className="db-s"><b><CountUp value={human} /></b><span>to reach by hand {sel === 0 ? "today" : "that day"}</span></div>
           <div className={`db-s${missed ? " warn" : ""}`}><b>{missed === null ? "…" : <CountUp value={missed} />}</b><span>not reached at capacity</span></div>
         </div>
       </div>

@@ -15,9 +15,10 @@ import type { VeteranFocus } from "../screens/Week";
 import { IconArrow } from "./Icons";
 
 const TIER3 = [
-  { key: "act_now", label: "High risk", cls: "t-high", note: "act today" },
-  { key: "find_out", label: "Moderate", cls: "t-mod", note: "wide interval, find out" },
-  { key: "self_serve", label: "Watch", cls: "t-watch", note: "self-serve, verified text" },
+  { key: "act_now", label: "High risk", cls: "t-high", note: "act today", empty: "No veteran crosses the Act-now line on this day." },
+  { key: "find_out", label: "Moderate", cls: "t-mod", note: "wide interval, find out",
+    empty: "Find-out needs a wide interval. At rung 0 the prior-only model has almost no epistemic spread, so this tier fills once the fitted model lands." },
+  { key: "self_serve", label: "Watch", cls: "t-watch", note: "self-serve, verified text", empty: "Nobody in this tier on this day." },
 ] as const;
 
 interface Patient {
@@ -102,7 +103,7 @@ export function PatientList({ resp, onOpen, limit = 8 }: Props) {
               <span className="sp" />
               <span className="pt-n">{fmtInt(t.rows.length)}</span>
             </header>
-            {rows.length === 0 && <div className="muted small" style={{ padding: "8px 12px" }}>Nobody in this tier on {resp.date}.</div>}
+            {rows.length === 0 && <div className="muted small" style={{ padding: "9px 13px", lineHeight: 1.5 }}>{t.empty}</div>}
             {rows.map((p, i) => {
               const card = cards[p.veteranId];
               const rf = card ? riskFactors(card) : null;
