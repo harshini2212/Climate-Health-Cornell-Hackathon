@@ -52,6 +52,10 @@ BETTER = {
     "recovery_coverage": "higher",
     "harm_averted_k40": "higher", "lift_vs_best_baseline_k40": "higher",
     "harm_per_call_k40": "higher", "lift_per_call_k40": "higher",
+    # Discrimination is the evidence ECE is not: a constant at the base rate scores ECE
+    # 0.0000 and separates nobody. AUC 0.5 is a coin toss whatever the reliability curve says.
+    "auc_heat": "higher", "auc_treatment_gap": "higher", "auc_worst_need": "higher",
+    "needs_beating_chance": "higher",
     "fairness_flagged": "lower", "fairness_max_fnr_ratio": "lower",
     "find_out_share": "higher",
     "total_seconds": "lower",
@@ -119,6 +123,11 @@ def collect(timings: dict[str, float]) -> dict:
     lee_pc = per_call.get("leeward")
     best_pc = max((v for k, v in per_call.items() if k != "leeward"), default=None)
 
+    # Discrimination, and the control that makes calibration meaningful.
+    disc = {r["need"]: r for r in report.get("discrimination", [])}
+    auc = {k: round(v["within_day_auc"], 3) for k, v in disc.items()}
+    const = report.get("constant_ece", {})
+
     tiers = dict(actions.group_by("tier").agg(pl.len().alias("n")).iter_rows())
     n_act = actions.height
 
@@ -170,6 +179,17 @@ def collect(timings: dict[str, float]) -> dict:
         "harm_per_call_baselines_k40": {k: v for k, v in per_call.items() if k != "leeward"},
         "lift_per_call_k40": round(lee_pc / best_pc, 2) if lee_pc and best_pc else None,
 
+        "within_day_auc": auc,
+        "auc_heat": auc.get("heat"),
+        "auc_treatment_gap": auc.get("treatment_gap"),
+        "auc_worst_need": min(auc.values()) if auc else None,
+        "needs_beating_chance": sum(1 for v in auc.values() if v >= 0.65) if auc else None,
+        "lift_at_1pct": {k: round(v["lift_at_1pct"], 1) for k, v in disc.items()},
+        "scaled_brier": {k: round(v["scaled_brier"], 4) for k, v in disc.items()},
+        "constant_ece": {k: round(v, 4) for k, v in const.items()},
+        "model_beats_constant_on_ece": (
+            all(const[k] > ece[k] for k in ece) if const and ece else None),
+
         "tier_mix": tiers,
         "find_out_share": round(100 * tiers.get("find_out", 0) / n_act, 3) if n_act else None,
         "act_now_share": round(100 * tiers.get("act_now", 0) / n_act, 2) if n_act else None,
@@ -206,7 +226,8 @@ def render_row(b: dict, label: str) -> str:
 | --- | --- |
 | **Harm averted, 40 calls/day** | **{b['harm_averted_k40']}** vs {base_s} — **{b['lift_vs_best_baseline_k40']}× the best baseline** |
 | **Per call actually made** | **{b['harm_per_call_k40']}** — **{b['lift_per_call_k40']}×**, spending {b['calls_spent_k40']} of {b['calls_available_k40']} available calls |
-| **Calibration (ECE, bar 0.03)** | max **{b['ece_max']}** · mean {b['ece_mean']} |
+| **Discrimination (within-day AUC)** | heat **{b['auc_heat']}** · treatment gap **{b['auc_treatment_gap']}** · worst need {b['auc_worst_need']} · {b['needs_beating_chance']} of 5 needs above 0.65 |
+| **Calibration (ECE, bar 0.03)** | max **{b['ece_max']}** · mean {b['ece_mean']} — but a constant at the base rate scores {min(b['constant_ece'].values()) if b['constant_ece'] else 'n/a'}, so this is not evidence on its own |
 | **Parameter coverage (bar 0.90)** | **{b['recovery_coverage']}** |
 | **Fairness** | {b['fairness_flagged']} flagged of {b['fairness_groups']} groups · worst FNR ratio {b['fairness_max_fnr_ratio']} |
 | **Model fit** | {fit_line} |
