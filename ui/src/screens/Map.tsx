@@ -3,8 +3,10 @@ import DeckGL from "@deck.gl/react";
 import { MapView, type PickingInfo } from "@deck.gl/core";
 import { GeoJsonLayer, IconLayer } from "@deck.gl/layers";
 import geoUrl from "../../../data/reference/nyc_modzcta.geojson?url";
+import { IconAlert } from "../components/Icons";
 import { getForecast, getScores, lastSource, type Source } from "../lib/api";
 import { FACILITY_DOWN, FACILITY_OPEN, NO_DATA, SEQUENTIAL, SEQUENTIAL_HEX, STATUS, STATUS_HEX, rampIndex, type RGBA } from "../lib/colors";
+import { scenarioMeta } from "../lib/config";
 import { NEED_LABEL, RUNG_LABEL, fmtDate } from "../lib/labels";
 import { NEEDS, type FacilityStatus, type ForecastResponse, type ScoresResponse, type ZipHazard } from "../lib/types";
 
@@ -32,7 +34,7 @@ export function Map({ scenario, onSource }: { scenario: string; onSource: (s: So
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    getForecast(scenario, 0).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
+    getForecast(scenario, scenarioMeta(scenario).day).then((f) => { setForecast(f); onSource(lastSource()); }).catch((e) => setError(String(e)));
   }, [scenario, onSource]);
 
   const date = forecast?.dates[dayIdx] ?? null;
@@ -151,12 +153,12 @@ export function Map({ scenario, onSource }: { scenario: string; onSource: (s: So
     <div className="page dash">
       {forecast?.headline && (
         <div className="insight">
-          <div className="ic ic-high">◆</div>
-          <div className="bd"><div className="t">{forecast.headline}</div><div className="d">{forecast.scenario} · {forecast.dates.length}-day window from {fmtDate(forecast.dates[0])}</div></div>
+          <div className="ic ic-medium"><IconAlert /></div>
+          <div className="bd"><div className="t">{forecast.headline}</div><div className="d">{forecast.dates.length}-day window from {fmtDate(forecast.dates[0])}</div></div>
         </div>
       )}
       <div className="row g2">
-        <div className="card mapcard">
+        <div className="card tight">
           <div className="mapcanvas">
             <DeckGL views={new MapView({ id: "map", repeat: false })} initialViewState={INITIAL_VIEW} controller={true} layers={layers} getTooltip={tooltip} style={{ position: "absolute", inset: "0" }} />
             <div className="maplegend">
@@ -169,13 +171,13 @@ export function Map({ scenario, onSource }: { scenario: string; onSource: (s: So
           </div>
         </div>
 
-        <div className="dash">
+        <div className="stack">
           <div className="card">
             <div className="ch"><h3>Need and day</h3></div>
             <select value={need} onChange={(e) => setNeed(e.target.value)} aria-label="Need" style={{ width: "100%" }}>
               {NEEDS.map((n) => <option key={n} value={n}>{NEED_LABEL[n]}</option>)}
             </select>
-            <div className="slider" style={{ marginTop: 14 }}>
+            <div className="slider" style={{ marginTop: 16 }}>
               <div className="top"><span className="muted">Day</span><span style={{ fontWeight: 600 }}>{date ? fmtDate(date) : "—"}</span></div>
               <input type="range" min={0} max={Math.max(0, (forecast?.dates.length ?? 1) - 1)} value={dayIdx} onChange={(e) => setDayIdx(Number(e.target.value))} aria-label="Forecast day" />
               <div className="ticks"><span>{forecast ? fmtDate(forecast.dates[0]) : ""}</span><span>{forecast ? fmtDate(forecast.dates[forecast.dates.length - 1]) : ""}</span></div>

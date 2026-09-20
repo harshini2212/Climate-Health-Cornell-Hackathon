@@ -144,25 +144,6 @@ def test_message_fixture_carries_every_mandatory_element() -> None:
         assert not any(bad in m["body"] for m in fx.values()), f"shortener {bad!r} in outreach"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Cross-lane conflict, owner: Rahul (api + ui). The fixtures now carry the real allocator's "
-    "rationale, and leeward.decision.allocate._rationale names the service ('alternate dialysis "
-    "site') and embeds the driver phrase by design, so the live /actions response will show the "
-    "same words on the week board. Either _rationale drops the service and driver clause "
-    "(top_driver already carries the driver), or Week.tsx stops rendering rationale on the card. "
-    "strict=True: this marker must be removed when the source is fixed."))
-def test_no_queue_card_line_names_a_diagnosis() -> None:
-    """Week.tsx shows `rationale` on the de-identified queue card and keeps `top_driver`
-    behind the reveal, because driver phrases name conditions and medicines by design."""
-    words = ("copd", "asthma", "ptsd", "dialysis", "insulin", "cancer", "depression",
-             "diabetes", "inhaler", "therapy", "methadone")
-    for row in _load("actions_candidates")["candidates"]:
-        low = row["rationale"].lower()
-        assert not any(w in low for w in words), (
-            f"rationale for {row['action_id']} names a condition: {row['rationale']!r}. "
-            "It is rendered on a wall-mounted board next to a de-identified handle.")
-
-
 def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
     """The board hangs on a wall in a shared clinical space.
 
@@ -176,6 +157,7 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
 
     for banned, why in [
         ("top_driver", "driver phrases name conditions and medicines"),
+        ("rationale", "the allocator's sentence names the service and the driver; it belongs on the card"),
         ("conditions", "the condition list belongs behind the reveal"),
         (".eha", "never show a bare expected-harm number as the reason"),
         ("medications", "the medication panel belongs behind the reveal"),
@@ -191,8 +173,20 @@ def test_week_board_shows_no_name_no_diagnosis_and_no_bare_eha() -> None:
 
 def test_handle_never_leaks_more_than_initials() -> None:
     """handleFor('James Okafor', 'SYN-000309') -> 'J.O. - 0309' and nothing more."""
-    src = (ROOT / "ui" / "src" / "screens" / "Week.tsx").read_text(encoding="utf-8")
+    src = (ROOT / "ui" / "src" / "lib" / "labels.ts").read_text(encoding="utf-8")
     fn = src.split("export function handleFor(", 1)[1].split("\n}", 1)[0]
     assert "slice(0, 2)" in fn, "the handle takes at most two initials"
     assert "[0]" in fn, "the handle takes the first letter of a name part, never the part"
     assert "slice(-4)" in fn, "the handle takes the last four of the id, never the whole id"
+
+
+def test_report_fixture_is_a_report_response() -> None:
+    """The Model report screen renders whatever /report returns; empty sections say 'not run'."""
+    rep = api.ReportResponse(**_load("report"))
+    assert rep.model_rung in (0, 1, 2, 3)
+    for row in rep.decision_quality:
+        assert row.strategy in ("leeward", "rank_by_age", "rank_by_chronic", "random")
+        assert row.k in (20, 40, 80)
+    if rep.decision_quality:
+        at = {(r.k, r.strategy): r.harm_averted for r in rep.decision_quality}
+        assert at[(40, "leeward")] > at[(40, "random")], "Leeward must beat random at 40 calls"
