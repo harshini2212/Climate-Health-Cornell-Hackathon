@@ -282,8 +282,8 @@ Makefile targets, in pipeline order:
 | `make sources` | Re-fetch the public data into `data/reference/`. Already done and committed; only needed to refresh. |
 | `make fixtures` | Fake-but-correctly-shaped parquets, so every lane can start before the real cohort exists. |
 | `make cohort` | Build the synthetic NYC cohort, plant `truth.json`, simulate 120 days of outcomes. |
-| `make fit` | Fit the NumPyro model on binomial cells and cache `posterior.nc` (about 5–10 min on 8 CPU cores). |
-| `make score` | Score the cohort against the scenario's hazards; write `scores.parquet` and `actions.parquet`. |
+| `make fit` | Fit the NumPyro model on binomial cells and cache `posterior.nc` (about 5–10 min on 8 CPU cores). Not built yet: the model is at rung 0, so the target refuses with an explanation until `leeward/model/fit.py` lands, and starts fitting the moment it does. |
+| `make score` | Score the cohort against the scenario's hazards, then allocate: `scores.parquet` and `actions.parquet`. Runs the rung-0 prior scorer until there is a posterior one. |
 | `make demo` | Boot the API and UI. Target: under 60 s from a clean clone, fully offline. |
 | `make report` | Run the full evaluation harness, including the fairness audit, into `report/report.json`. |
 | `make test` | `pytest -q`. Must pass before any merge. |
