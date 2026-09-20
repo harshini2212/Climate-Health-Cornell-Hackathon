@@ -107,12 +107,13 @@ def lag_features(name: str, first: int) -> tuple[str, ...]:
 #: Medication terms, derived from the design rather than listed, so a term that lands in a
 #: later round joins the block without anyone remembering to add it here. `mail_order` and
 #: `days_supply` are in because what they carry is a fill running out, which is medication.
-_MED_COLUMNS = ("med_", "acb_score", "mail_order_pharmacy", "days_supply_remaining")
+_MED_PREFIX = "med_"
+_MED_EXACT = frozenset({"acb_score", "mail_order_pharmacy", "days_supply_remaining"})
 
 
 def _reads_medication(term: design.Term) -> bool:
     roots = {c for e in term.exprs for c in e.meta.root_names()}
-    return any(r.startswith(_MED_COLUMNS[0]) or r in _MED_COLUMNS[1:] for r in roots)
+    return any(r.startswith(_MED_PREFIX) or r in _MED_EXACT for r in roots)
 
 
 #: term name -> the plain-language phrase, for the terms the medication block covers.
