@@ -82,6 +82,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         except store.DataUnavailable as e:
             log.warning("not loaded at startup: %s", e)
     store.weights(), store.tau(), store.leads(), store.facilities(), store.med_classes()
+    store.act_now_rules()
     yield
 
 
@@ -261,15 +262,23 @@ def scores(date: Date, need: str) -> Response:
 # GET /veteran/{id}?date=
 # --------------------------------------------------------------------------- #
 
-def why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float]) -> str:
+def why_tier(tier: str, needs: list[api.NeedScore], weights: dict[str, float],
+             tier_rule: str | None = None) -> str:
     """The tier rule in `tiers.py`, said in one sentence about this veteran's own numbers.
 
-    Every branch falls through to the plain "highest need" sentence rather than assuming its
-    own rule is the one that fired. A caller may hold a tier decided on a different frame --
-    `make_ui_fixtures.py` labels from the allocator's candidate list, and `tiers.py` has
-    hazard-triggered act-now rules the SPEC lists and the scores alone cannot show -- so a
-    branch that trusts the label crashes on `max()` of an empty sequence. It did.
+    A veteran made Act-now by one of the four hazard rules in `act_now.yaml` gets that row's
+    sentence instead. Explaining a closed dialysis station with a 5% probability would be
+    worse than saying nothing: the probability is not why anyone is being called, and a care
+    team that reads one and acts on the other stops trusting the card.
+
+    Every other branch falls through to the plain "highest need" sentence rather than
+    assuming its own rule is the one that fired. A caller may hold a tier decided on a
+    different frame -- `make_ui_fixtures.py` labels from the allocator's candidate list
+    without passing `tier_rule` -- so a branch that trusts the label crashes on `max()` of an
+    empty sequence. It did.
     """
+    if tier_rule is not None:
+        return store.act_now_rules()[tier_rule].because
     top = max(needs, key=lambda n: n.p_mean)
     if tier == "act_now":
         acting = [n for n in needs if weights[n.need] >= tiers.ACT_NOW_MIN_WEIGHT
@@ -368,7 +377,10 @@ def veteran(veteran_id: str, date: Date) -> Response:
             p_gap_lo=r.get("p_gap_lo"), p_gap_hi=r.get("p_gap_hi"),
             drivers=[d for d, _ in drivers], driver_contribs=[c for _, c in drivers]))
     weights = store.weights()
-    tier = tiers.assign(mine, weights)["tier"][0]
+    graded = tiers.assign(mine, weights, cohort=vets, hazards=store.table("hazards"),
+                          site_status=store.table("site_status"),
+                          rules=store.act_now_rules()).row(0, named=True)
+    tier, tier_rule = graded["tier"], graded["tier_rule"]
 
     hazard = (store.table("hazards")
                    .filter((pl.col("date") == date) & (pl.col("modzcta") == v["modzcta"]))
@@ -389,7 +401,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
         veteran_id=veteran_id, name_display=v["name_display"], age=v["age"],
         modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
         facility_name=fac["name"][0] if fac.height else v["facility_id"], date=date,
-        tier=tier, why_this_tier=why_tier(tier, needs, weights), needs=needs,
+        tier=tier, why_this_tier=why_tier(tier, needs, weights, tier_rule), needs=needs,
         medications=api.MedicationFlags(
             n_active_meds=v["n_active_meds"], thermoreg_score=v["med_thermoreg_score"],
             acb_score=v["acb_score"], combo_raas_diuretic=v["med_combo_raas_diuretic"],
@@ -441,7 +453,9 @@ def actions(req: api.ActionsRequest) -> Response:
         chosen, baseline, n_too_late, n_not_reached = compare(
             all_scores, cohort.with_columns(pl.Series("_random", shuffle)), capacity,
             req.group_floor, rank_by=BASELINES, date=req.date, weights=store.weights(),
-            tau=store.tau(), lead=store.leads(), headroom=True)
+            tau=store.tau(), lead=store.leads(), headroom=True,
+            hazards=store.table("hazards"), site_status=store.table("site_status"),
+            rules=store.act_now_rules())
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     store.remember(chosen)

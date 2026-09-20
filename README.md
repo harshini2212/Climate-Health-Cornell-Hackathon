@@ -63,7 +63,7 @@ pharmacist; it never changes a dose.
 
 | Tier | Trigger | Action | Who does it |
 | --- | --- | --- | --- |
-| **Act now** | High hazard, narrow interval, powered equipment or active treatment, or a site-dependent patient whose VA site is down | Care-team call, early refill, backup-power or transport plan, alternate-site booking | VA care team |
+| **Act now** | High hazard and a narrow interval, **or** any of the four hazard rules in `act_now.yaml`: site-dependent care at a closed station, a controlled substance at a closed station, a short mail-order supply on a delivery-disrupted day, powered equipment with no caregiver in an outage | Care-team call, early refill, backup-power or transport plan, alternate-site booking. Act-now veterans take the scarce slots first | VA care team |
 | **Find out** | Wide interval, missing fields | 3-minute check-in call to fill the gaps; re-score same day | Care team or volunteer partner |
 | **Self-serve** | Medium hazard | Verified text with cooling or clean-air site, refill link, 988 press 1 | Automated via VA channels |
 | **Everyday** | Low hazard | Monthly wellness plan: shaded green space, movement, VA Whole Health | Automated |
@@ -159,7 +159,8 @@ VOI[i,t]   = Σ_k  w_k · sqrt( epistemic_var[i,k,t] )        (for check-in call
 
 - **w_k** is a clinician-editable severity weight per need (a treatment gap for a chemo patient outweighs a missed wellness text).
 - **τ[a,k]** is the fraction of need *k* that action *a* prevents. These are literature priors, stated openly and adjustable in the UI.
-- Actions are chosen greedily by EHA per unit cost under the team's capacity (calls, refills, rides, bookings, evacuations). One action per veteran per day, up to three for Act-now veterans. An optional per-borough capacity floor supports the fairness audit.
+- Actions are chosen under the team's capacity (calls, refills, rides, bookings, evacuations) in **(round, tier band, EHA per unit cost)** order: nobody is offered a second action until everyone has been offered a first, Act-now veterans go first within each round, and EHA ranks within that. So no Self-serve veteran holds a scarce slot while an Act-now veteran who could have used it holds nothing. One action per veteran per day, up to three for Act-now veterans. An optional per-borough capacity floor supports the fairness audit.
+- A veteran is Act-now either on the numbers or because one of the four hazard rules in `leeward/decision/act_now.yaml` matched — a closed station for site-dependent care, a controlled substance at a closed station, a short mail-order supply on a delivery-disrupted day, powered equipment with no caregiver in an outage. Those rules are a table a clinician can edit, and each one prints its own reason onto the action.
 
 Drivers shown on a veteran's card come from posterior linear-predictor contributions, rendered as plain phrases such as "dialysis at Manhattan VA while it is closed." No SHAP.
 
