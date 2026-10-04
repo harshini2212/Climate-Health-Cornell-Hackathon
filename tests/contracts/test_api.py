@@ -32,7 +32,7 @@ from leeward.decision.allocate import allocate, total_eha
 from leeward.outreach.export import CONSENT_FOR
 from leeward.schema import ACTION_COST_UNIT, DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DAY = date(2026, 7, 16)           # landfall in the fixtures: flood warnings, station 630 closed
 
 

@@ -16,7 +16,7 @@ import pytest
 from leeward.api import schemas as api
 from leeward.schema import CHANNELS, DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "ui" / "public" / "fixtures"
 
 

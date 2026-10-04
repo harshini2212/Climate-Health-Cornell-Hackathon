@@ -15,7 +15,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "data" / "reference"
 MANIFEST = json.loads((REF / "manifest.json").read_text(encoding="utf-8"))
 

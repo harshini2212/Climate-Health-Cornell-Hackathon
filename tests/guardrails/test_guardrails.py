@@ -25,7 +25,7 @@ from leeward import schema
 from leeward.schema import DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 from tables import table
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _mod(name: str):
@@ -62,7 +62,7 @@ def test_no_test_depends_on_whether_make_fit_has_run() -> None:
     keyword_only = re.compile(r"\b(?:rep\.)?assemble\(|coefficient_draws\(")
     positional = re.compile(r"\bdiagnostics\(")
     offenders = []
-    for path in sorted((ROOT / "tests").glob("*.py")):
+    for path in sorted((ROOT / "tests").rglob("*.py")):
         src = path.read_text(encoding="utf-8")
         if "leeward.eval" not in src:
             continue
@@ -115,7 +115,7 @@ def test_no_test_reads_a_contract_table_out_of_data() -> None:
     isolates = re.compile(r"monkeypatch\.setattr\(\s*schema\s*,\s*[\"']DATA[\"']"
                           r"|mp\.setattr\(\s*schema\s*,\s*[\"']DATA[\"']")
     offenders = []
-    for path in sorted((ROOT / "tests").glob("*.py")):
+    for path in sorted((ROOT / "tests").rglob("*.py")):
         src = path.read_text(encoding="utf-8")
         if banned.search(src) and not isolates.search(src):
             offenders.append(path.name)

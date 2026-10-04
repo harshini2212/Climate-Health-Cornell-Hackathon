@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 #: `make setup` is the target that creates the environment, so it is the one recipe whose
 #: command lines cannot assume an environment exists -- it names `python -m pip`, and a uv

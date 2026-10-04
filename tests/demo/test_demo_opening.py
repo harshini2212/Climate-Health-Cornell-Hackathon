@@ -29,7 +29,7 @@ from leeward.api import main as api_main
 from leeward.api import schemas as api
 from leeward.api import store
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 #: The fixture generator's storm and heat wave, which `tests/tables.py` also builds.
 FIRST_ALERT = date(2026, 7, 15)
