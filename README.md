@@ -277,7 +277,7 @@ Makefile targets, in pipeline order:
 | `make demo` | Boot the API and UI. Target: under 60 s from a clean clone, fully offline. |
 | `make report` | Run the full evaluation harness, including the fairness audit, into `report/report.json`. |
 | `make check` | Lint and every test, in parallel. Must be green before any merge. |
-| `make perf` | The two timing budgets (slider < 300 ms, scoring < 5 s), on a quiet machine. |
+| `make perf` | The three timing budgets (slider < 300 ms, scoring < 5 s, toy model fit < 60 s), on a quiet machine. |
 
 
 ## Contributing

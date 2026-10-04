@@ -19,8 +19,8 @@ Python 3.11 (`.python-version`) and the Node version in `ui/.nvmrc`.
    `cleanup/`. One change per branch.
 2. **Write the test first.** For a bug, a failing test that reproduces it; for a feature, the
    acceptance test. If a skipping guardrail already covers your module, it is your spec.
-3. **`make check` green** before you open the PR. Run `make perf` too if you touched the
-   allocator, the scorer or the API.
+3. **`make check` green** before you open the PR. Run `make perf` too if you touched the model,
+   the allocator, the scorer or the API.
 4. **Open a PR** that says what changed, why, and how you verified it (the commands you ran
    and what they returned). Link the issue if there is one.
 5. **One review**, then squash-merge. Reviewers ask whether the change improves the codebase,

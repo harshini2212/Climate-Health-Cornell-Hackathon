@@ -132,7 +132,7 @@ Recovery, reliability curves, harm averted against three baselines, ablations, f
 
 ```bash
 make check          # lint + every test, in parallel
-make perf           # the two timing budgets (slider < 300 ms, scoring < 5 s), serially
+make perf           # the three timing budgets (slider < 300 ms, scoring < 5 s, toy fit < 60 s), serially
 make smoke          # boots the API with the network blocked, hits every route
 make clean-clone    # proves a fresh clone boots and serves offline in under 60s
 ```

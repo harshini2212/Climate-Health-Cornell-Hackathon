@@ -22,7 +22,8 @@ semantic guardrails in `tests/guardrails/test_guardrails.py`. **Red means the PR
 merge.** Run it before you claim anything is done. A green gate is necessary, not sufficient:
 every PR is also reviewed.
 
-The two wall-clock tests are marked `perf` and run with `make perf`, on a quiet machine.
+The three wall-clock tests (slider < 300 ms, scoring < 5 s, toy fit < 60 s) are marked `perf`
+and run with `make perf`, on a quiet machine.
 `make fixtures` regenerates correctly-shaped fake data for every contract table.
 
 Tests live in `tests/{unit,contracts,guardrails,demo}/`. A guardrail for a module that does
