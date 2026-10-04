@@ -521,6 +521,7 @@ def _tile(cohort: pl.DataFrame, scores: pl.DataFrame, copies: int):
             pl.concat([rename(scores, k) for k in range(copies)]))
 
 
+@pytest.mark.perf
 def test_the_slider_answers_inside_300ms_at_ten_thousand_veterans(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The panel is 10,000 veterans and the slider has to feel instant. The fixtures are, if

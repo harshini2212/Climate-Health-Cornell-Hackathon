@@ -21,11 +21,20 @@ dependencies = [
 
 [project.optional-dependencies]
 geo = ["geopandas>=1.0", "shapely>=2.0", "pyproj>=3.6"]
-dev = ["pytest>=8", "pytest-xdist>=3", "ruff>=0.5", "httpx>=0.27"]
+dev = [
+  "pytest>=8", "pytest-xdist>=3", "ruff>=0.5", "httpx>=0.27",
+  "mypy>=1.10", "pre-commit>=3.7", "detect-secrets>=1.5",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Timing tests are deselected by default: under `-n auto` they share the machine with every
+# other worker and measure the contention, not the code. `make perf` runs them alone.
+addopts = "-q -m 'not perf'"
+markers = [
+  "perf: asserts a wall-clock budget; run serially with `make perf`, not in `make check`",
+  "slow: takes more than a few seconds; still part of `make check`, skip locally with -m 'not slow'",
+]
 
 [tool.ruff]
 line-length = 100
@@ -44,6 +53,38 @@ known-first-party = ["leeward", "tables"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["B011"]        # bare asserts are the point of a test file
+
+[tool.mypy]
+# Non-strict on purpose: catch wrong types where they are declared, do not demand that
+# everything be annotated. Runs in CI and pre-commit as `mypy leeward`.
+python_version = "3.11"
+files = ["leeward"]
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = ["yaml", "plotly.*", "numpyro.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Modules with errors when mypy arrived (104 in total, 59 of them in discrimination.py,
+# mostly polars' wide scalar unions). Fixing them is not a no-behaviour-change edit, so they
+# are listed here instead. Remove a module from the list once it type-checks; do not add one.
+module = [
+  "leeward.api.main",
+  "leeward.cohort.build",
+  "leeward.cohort.medications",
+  "leeward.cohort.simulate",
+  "leeward.decision.allocate",
+  "leeward.eval.ablate",
+  "leeward.eval.decision_quality",
+  "leeward.eval.discrimination",
+  "leeward.eval.fairness",
+  "leeward.model.fit",
+  "leeward.model.hazard",
+  "leeward.model.score",
+  "leeward.schema",
+]
+ignore_errors = true
 
 [tool.setuptools.packages.find]
 include = ["leeward*"]

@@ -1,5 +1,5 @@
 .PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo demo-dev ui report ablate \
-        test check status smoke clean-clone lanes
+        test perf check smoke clean-clone
 PY  ?= .venv/bin/python
 PIP ?= .venv/bin/python -m pip
 
@@ -11,23 +11,23 @@ help:               ## show this
 # Nobody reads diffs on this project; this is the review.
 # --------------------------------------------------------------------------- #
 
-check:              ## THE GATE: lint + every test + the guardrail to-do list
+check:              ## THE GATE: lint + every test (parallel, once) + the guardrail to-do list
 	@echo "── lint ──────────────────────────────────────────────"
 	@.venv/bin/ruff check leeward scripts tests || (echo "ruff failed"; exit 1)
 	@echo "── tests ─────────────────────────────────────────────"
-	@.venv/bin/pytest -q -p no:cacheprovider
-	@echo
-	@echo "── guardrails still waiting on unbuilt modules ───────"
-	@.venv/bin/pytest -q -rs -p no:cacheprovider 2>/dev/null \
-	  | grep -E '^SKIPPED' | sed 's/SKIPPED \[[0-9]*\] /  · /' || echo "  (none — everything is built)"
+	@out=$$(mktemp); rc=$$(mktemp); \
+	  { .venv/bin/pytest -n auto -rs -p no:cacheprovider; echo $$? > $$rc; } | tee $$out; \
+	  echo; echo "── guardrails still waiting on unbuilt modules ───────"; \
+	  grep -E '^SKIPPED' $$out | sed 's/SKIPPED \[[0-9]*\] /  · /' || echo "  (none — everything is built)"; \
+	  code=$$(cat $$rc); rm -f $$out $$rc; \
+	  if [ "$$code" != 0 ]; then echo; echo "RED. Do not merge."; exit $$code; fi
 	@echo
 	@echo "GREEN. Safe to merge."
 
-status:             ## where the build actually is, without reading any code
-	@bash scripts/status.sh
-
-prompt:             ## print a prompt to paste:  make prompt N=4   (no N lists them)
-	@bash scripts/prompt.sh $(N)
+# Wall-clock budgets, kept out of `make check`: next to `-n auto` workers they measure the
+# contention, not the code. Run serially, on a quiet machine, before a demo.
+perf:               ## the timing tests (slider < 300 ms, scoring < 5 s), serially
+	@.venv/bin/pytest -m perf -rs -p no:cacheprovider
 
 test:               ## pytest only
 	@.venv/bin/pytest -q
@@ -134,19 +134,3 @@ smoke:              ## boot the API and hit every route; fails if any shape is w
 
 clean-clone:        ## prove a fresh clone boots and serves the UI offline in under 60s
 	@bash scripts/clean_clone_test.sh
-
-lanes:              ## create the six git worktrees, each with its own venv
-	@for l in api ui demo cohort model eval; do \
-	  if [ -d ../lw-$$l ]; then echo "  ../lw-$$l exists"; else \
-	    git worktree add -q ../lw-$$l -b lane/$$l && echo "  ../lw-$$l created"; fi; \
-	  if [ ! -x ../lw-$$l/.venv/bin/python ]; then \
-	    echo "    installing venv..."; \
-	    (cd ../lw-$$l && uv venv --python 3.11 .venv -q && uv pip install -q -e ".[dev]" \
-	      && .venv/bin/python scripts/make_fixtures.py >/dev/null) ; fi; \
-	done
-	@echo
-	@echo "Each lane needs its OWN venv -- an editable install resolves to wherever it"
-	@echo "was installed from, so a shared venv would test the wrong checkout silently."
-	@echo
-	@echo "Start a lane:  cd ../lw-<lane> && claude"
-	@echo "Then paste that lane's Wave 1 prompt from docs/PROMPTS.md"
