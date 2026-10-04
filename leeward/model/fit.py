@@ -74,7 +74,7 @@ ESS_BAR_STRICT = 400
 #:
 #: The flag stays for rung 2, whose extra terms may change that. Note that the one probe run
 #: here gave dense only 150 warmup samples to estimate a 90x90 covariance, which is far too
-#: few to be a fair test -- so "dense is worse" is not something this lane measured.
+#: few to be a fair test -- so "dense is worse" is not something measured here.
 DENSE_MASS = False
 MAX_TREE_DEPTH = 10         # NumPyro's default, named here because it is a cost ceiling
 
@@ -440,7 +440,7 @@ def toy_window(dates: list[date], hazards: pl.DataFrame, sites: pl.DataFrame,
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--rung", type=int, default=hazard.RUNG,
-                    help="1 is what this lane tested; 2 adds the interactions (SPEC 6.0)")
+                    help="1 is what the tests cover; 2 adds the interactions (SPEC 6.0)")
     ap.add_argument("--toy", action="store_true",
                     help=f"{TOY_VETERANS} veterans x the {TOY_DAYS} days that exercise the "
                          f"most hazard terms")
@@ -474,8 +474,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if args.rung != hazard.RUNG:
-        print(f"! rung {args.rung} is not covered by this lane's tests; SPEC 6.0 makes it "
-              f"the next task. Everything it needs is hazard.LADDER[{args.rung}].")
+        print(f"! rung {args.rung} is not covered by the tests; SPEC 6.0 makes it "
+              f"the next rung. Everything it needs is hazard.LADDER[{args.rung}].")
 
     cohort, hazards = schema.read("cohort"), schema.read("hazards")
     sites, outcomes = schema.read("site_status"), schema.read("outcomes")

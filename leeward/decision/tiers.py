@@ -55,7 +55,7 @@ def _worth_asking(heavy: list[str], has_gap_columns: bool) -> pl.Expr:
     """Would filling this record's gap change which side of a line the veteran is on?
 
     False everywhere when the scores predate `p_gap_lo`/`p_gap_hi` -- an older parquet or a
-    lane's own fixture -- so this never invents a tier out of a missing column.
+    hand-made fixture -- so this never invents a tier out of a missing column.
     """
     if not has_gap_columns:
         return pl.lit(False)

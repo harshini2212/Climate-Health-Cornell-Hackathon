@@ -29,7 +29,7 @@ into the full model's bins would report the shift rather than the miscalibration
 The scoring loop below is `model/score_prior.py`'s, with a mask on `B`. It is a deliberate
 copy rather than a call, because `score()` draws its own coefficients and there is nowhere to
 hand it different ones; `tests/test_ablate.py` pins the copy by scoring an empty ablation and
-asserting the frame is identical to `score_prior.score()`'s. If the model lane changes the
+asserting the frame is identical to `score_prior.score()`'s. If someone changes the
 scorer, that test goes red rather than this table quietly comparing two different models.
 """
 

@@ -8,8 +8,8 @@ This is the demo's floor, and it stays reachable by name at every rung above it:
 The machinery moved to `score.py` when rung 1 landed, because the two differ in exactly one
 thing -- where the coefficient draws come from -- and two copies of a matrix multiply are
 two chances to score the demo from one set of numbers and the report from another. This
-module is now the prior-only entry point: `score.py --prior`, spelled the way the rung-0
-task and `docs/PROMPTS.md` spell it.
+module is now the prior-only entry point: `score.py --prior` under the rung-0 name
+(`python -m leeward.model.score_prior`).
 """
 
 from __future__ import annotations

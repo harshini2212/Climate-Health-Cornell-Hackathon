@@ -12,8 +12,8 @@ failure that rule exists to prevent.
 Two things are here rather than somewhere more obvious, and both are worth knowing:
 
 * `data_root` is declared but **not yet read**. The data root is `schema.DATA`, and
-  `leeward/schema.py` is the cohort lane's contract file; pointing it here is a one-line change
-  for its owner. Until then, setting `LEEWARD_DATA_ROOT` changes nothing.
+  `leeward/schema.py` is a frozen contract file, so pointing it here is a separate one-line
+  change. Until then, setting `LEEWARD_DATA_ROOT` changes nothing.
 * `otp_stations` is a fact about facilities, not about a scenario: the cohort is built once
   and shared by every scenario, so it cannot live in one scenario's YAML.
 """

@@ -20,8 +20,8 @@ What is honest about the parameters the models carry but the data cannot yet hon
 
 * `scenario` -- one hazards table is cached and it does not record which scenario built it, so
   the API serves it as `SCENARIO` and refuses any other name rather than mislabel it.
-* `prior_scale` -- only the fitted prior (1.0) is cached; 0.5 and 2.0 need posteriors that no
-  lane writes yet, so they are refused rather than silently answered with the 1.0 numbers.
+* `prior_scale` -- only the fitted prior (1.0) is cached; 0.5 and 2.0 need posteriors that
+  nothing writes yet, so they are refused rather than silently answered with the 1.0 numbers.
 """
 
 from __future__ import annotations
@@ -472,8 +472,8 @@ def actions(req: api.ActionsRequest) -> Response:
 def message(action_id: str) -> api.Message:
     """The outreach text for an action, from `leeward.outreach.messages.render`.
 
-    That module is built in another lane and imported here on demand, so this route answers
-    503 until it lands and nothing else in the API waits for it. Either id form works: the
+    That module is imported here on demand, so if it fails to import this route answers 503
+    and nothing else in the API depends on it. Either id form works: the
     `action_id` or the `message_id` (`msg-<action_id>`) that `POST /actions` also returns.
     """
     try:

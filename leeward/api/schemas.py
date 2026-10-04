@@ -1,4 +1,4 @@
-"""API request and response models. The contract between the `api` lane and the `ui` lane.
+"""API request and response models. The contract between the API and the UI.
 
 The UI is built against these before any real scores exist, so the shapes here are frozen
 the moment they are pushed. Adding an optional field is fine; renaming or removing one is

@@ -1,8 +1,7 @@
 """The frozen data contracts.
 
-Every lane reads and writes these tables. Nothing else in the build is allowed to
-invent a column name. If a lane needs a new column, the owner of this file adds it
-here first and pushes; the lane then uses it.
+Every module reads and writes these tables. Nothing else in the build is allowed to
+invent a column name. A new column is added here first, and only then used.
 
 Why this file is strict: nobody is reading the diffs. `validate()` is the only thing
 standing between a plausible-looking agent change and a demo that shows wrong numbers,
@@ -107,7 +106,7 @@ class Table:
     key: tuple[str, ...]
     columns: tuple[Column, ...]
     doc: str = ""
-    #: Columns a lane may add without touching this file (drivers, debug, joins).
+    #: Columns a writer may add without touching this file (drivers, debug, joins).
     allow_extra: bool = True
 
     @property

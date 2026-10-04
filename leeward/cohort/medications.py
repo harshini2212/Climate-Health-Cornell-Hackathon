@@ -41,9 +41,8 @@ medication list a synthetic veteran carries.
 
     **Known gap:** the draw ignores the veteran's own diagnosis list, so a cold-chain
     medication does not imply the diabetes flag. The sample has six diabetics -- too few to
-    condition on without inventing the structure. This closes when the Synthea swap lands
-    (docs/BUILD_PLAN.md, T+2:30), where one patient brings diagnoses and prescriptions
-    together.
+    condition on without inventing the structure. This closes if the cohort moves to full
+    Synthea patients, where one patient brings diagnoses and prescriptions together.
 """
 
 from __future__ import annotations
