@@ -49,7 +49,7 @@ import zlib
 import numpy as np
 import polars as pl
 
-from leeward import schema
+from leeward import schema, settings
 from leeward.cohort import medications, missingness
 from leeward.schema import REFERENCE
 
@@ -91,9 +91,6 @@ PTSD_PAST_YEAR = {"post911": 0.15, "gulf": 0.14, "vietnam": 0.05, "peacetime": 0
 #: this slightly overstates dialysis alone (the paper does not split it), and it is not
 #: age-adjusted to this panel. It is the level `ckd_dialysis` is drawn at.
 VA_ESRD_PER_100K = 604
-
-#: Sites that can dispense methadone for an opioid treatment program (docs/SPEC.md §5.2).
-OTP_STATIONS = ("630", "630A4")
 
 #: Census asks Hispanic origin and race as two questions, so B03002 is a joint table and the
 #: two cohort columns are one draw from it. Each cell -> (ethnicity, race, the B03002 columns
@@ -371,7 +368,7 @@ def assign_facility(people: pl.DataFrame, dialysis: np.ndarray, otp: np.ndarray)
 
     same_borough = people["borough"].to_numpy()[:, None] == care["borough"].to_numpy()[None, :]
     site_dependent = np.broadcast_to(care["site_dependent_services"].to_numpy(), dist.shape)
-    otp_site = np.broadcast_to(np.isin(station, OTP_STATIONS), dist.shape)
+    otp_site = np.broadcast_to(np.isin(station, settings.get().otp_stations), dist.shape)
 
     out = nearest(same_borough)
     out = np.where(dialysis, nearest(site_dependent), out)

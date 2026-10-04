@@ -10,6 +10,7 @@ dependencies = [
   "numpy>=1.26",
   "requests>=2.32",
   "pydantic>=2.7",
+  "pydantic-settings>=2.3",
   "fastapi>=0.111",
   "uvicorn[standard]>=0.30",
   "pyyaml>=6",
@@ -23,7 +24,7 @@ dependencies = [
 geo = ["geopandas>=1.0", "shapely>=2.0", "pyproj>=3.6"]
 dev = [
   "pytest>=8", "pytest-xdist>=3", "ruff>=0.5", "httpx>=0.27",
-  "mypy>=1.10", "pre-commit>=3.7", "detect-secrets>=1.5",
+  "mypy>=1.10", "pre-commit>=3.7", "detect-secrets>=1.5", "import-linter>=2.0",
 ]
 
 [tool.pytest.ini_options]
@@ -44,7 +45,7 @@ target-version = "py311"
 # Deliberately narrow. `make check` is the gate and nobody is reading diffs, so lint
 # must catch real bugs (undefined names, unused imports, mutable defaults) and stay
 # quiet about style. A gate that cries wolf gets ignored, and then so does the review.
-select = ["F", "E", "W", "I", "B", "UP"]
+select = ["F", "E", "W", "I", "B", "UP", "TID251"]
 ignore = ["E501", "B008"]   # line length is advisory; B008 fights FastAPI's Depends()
 
 [tool.ruff.lint.isort]
@@ -52,7 +53,18 @@ ignore = ["E501", "B008"]   # line length is advisory; B008 fights FastAPI's Dep
 known-first-party = ["leeward", "tables"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["B011"]        # bare asserts are the point of a test file
+"tests/*" = ["B011", "TID251"]  # bare asserts are the point of a test file
+# The synthetic world and the harness that grades against it may read each other; the
+# make-time scripts may read both. Production code may not (see [tool.importlinter]).
+"leeward/cohort/*" = ["TID251"]
+"leeward/eval/*" = ["TID251"]
+"scripts/*" = ["TID251"]
+
+# The direct-import half of the first [tool.importlinter] contract, so `make check` (which
+# runs ruff, not lint-imports) enforces it too. lint-imports in CI also catches indirect ones.
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"leeward.cohort".msg = "production code never imports the synthetic cohort; observation fields are in leeward.model.observation"
+"leeward.eval".msg = "production code never imports the eval harness"
 
 [tool.mypy]
 # Non-strict on purpose: catch wrong types where they are declared, do not demand that
@@ -92,3 +104,26 @@ include = ["leeward*"]
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
+
+# `lint-imports` (CI). Production is everything in `leeward` except the synthetic cohort and
+# the eval harness that grades against it.
+[tool.importlinter]
+root_package = "leeward"
+
+[[tool.importlinter.contracts]]
+name = "Production never imports the synthetic cohort or the eval harness"
+type = "forbidden"
+source_modules = [
+  "leeward.api", "leeward.contracts", "leeward.decision", "leeward.demo", "leeward.ingest",
+  "leeward.model", "leeward.outreach", "leeward.schema", "leeward.settings",
+]
+forbidden_modules = ["leeward.cohort", "leeward.eval"]
+
+[[tool.importlinter.contracts]]
+name = "Only the API imports the API; shared types live in leeward.contracts"
+type = "forbidden"
+source_modules = [
+  "leeward.cohort", "leeward.contracts", "leeward.decision", "leeward.demo", "leeward.eval",
+  "leeward.ingest", "leeward.model", "leeward.outreach", "leeward.schema", "leeward.settings",
+]
+forbidden_modules = ["leeward.api"]

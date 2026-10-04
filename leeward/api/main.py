@@ -42,7 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from leeward import demo, schema
+from leeward import demo, schema, settings
 from leeward.api import schemas as api
 from leeward.api import store
 from leeward.decision import tiers
@@ -52,9 +52,8 @@ from leeward.schema import DEFAULT_CAPACITY, NEEDS, TIERS
 
 log = logging.getLogger("uvicorn.error")
 
-#: The one scenario the cached hazards table serves. `make hazards` builds it from
-#: scenarios/sandy_then_heat.yaml, the demo's main scenario.
-SCENARIO = "sandy_then_heat"
+#: The one scenario the cached hazards table serves (`settings.Settings.scenario`).
+SCENARIO = settings.get().scenario
 PRIOR_SCALE = 1.0
 FORECAST_DAYS = 7
 
@@ -92,7 +91,7 @@ app = FastAPI(
                 "Every route reads cached tables; nothing runs inference in a request.")
 
 # The UI proxies /api in dev; this covers a build pointed straight at :8000 (VITE_API_URL).
-app.add_middleware(CORSMiddleware, allow_origin_regex=r"^http://(localhost|127\.0\.0\.1)(:\d+)?$",
+app.add_middleware(CORSMiddleware, allow_origin_regex=settings.get().cors_origin_regex,
                    allow_methods=["GET", "POST"], allow_headers=["content-type"])
 
 

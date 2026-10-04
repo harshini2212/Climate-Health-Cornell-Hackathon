@@ -41,6 +41,9 @@ jobs:
       - name: Types
         run: mypy leeward
 
+      - name: Import layering
+        run: lint-imports
+
       - name: Fixtures
         run: python scripts/make_fixtures.py
 
