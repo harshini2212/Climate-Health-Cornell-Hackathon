@@ -113,7 +113,8 @@ def test_the_built_ui_is_served_at_the_root(client: TestClient) -> None:
     page = client.get("/")
     assert page.status_code == 200 and page.headers["content-type"].startswith("text/html")
     assert 'id="root"' in page.text
-    refs = re.findall(r'(?:src|href)="(/assets/[^"]+)"', page.text)
+    # Vite's base is relative ("./assets/..."), which resolves to /assets/... from the root.
+    refs = re.findall(r'(?:src|href)="\.?(/assets/[^"]+)"', page.text)
     assert any(r.endswith(".js") for r in refs), "index.html loads no script"
     for ref in refs:
         got = client.get(ref)
