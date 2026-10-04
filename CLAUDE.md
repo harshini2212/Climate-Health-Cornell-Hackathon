@@ -46,16 +46,10 @@ mail-order status, days of supply remaining, and every daily outcome — carries
   `scores.parquet`, `actions.parquet`, `outcome_log.parquet`: columns in `leeward/schema.py`.
 - `data/posterior.nc`: ArviZ InferenceData; var names match `leeward/model/priors.py`.
 - API bodies/responses: pydantic models in `leeward/api/schemas.py`.
-  Models another layer also builds (`Message`, `ReportResponse` and its rows) live in
-  `leeward/contracts/` and are re-exported from `api/schemas.py` unchanged.
 - `leeward/model/design.py` is shared by the simulator and the model. Do not fork it.
 - Write tables with `schema.write(df, "<table>")`, never `df.write_parquet(...)`. It validates
   first, and that validation is most of what stands between a plausible bug and the demo.
 - **`modzcta` is the geography key everywhere.** Not `zip`, not `zcta`, not NTA.
-- **Layering:** production code never imports `leeward.cohort` or `leeward.eval`, and only
-  `leeward.api` imports `leeward.api`. `lint-imports` (CI) enforces both; `make check` only
-  catches direct cohort/eval imports (ruff TID251). Deploy-time defaults (scenario, CORS,
-  OTP stations) are in `leeward/settings.py`.
 
 Contract-file ownership: `leeward/schema.py` and `model/design.py` belong to the `cohort`
 lane; `api/schemas.py` belongs to the `api` lane. Do not edit a contract file you do not own —
