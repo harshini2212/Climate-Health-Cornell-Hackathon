@@ -26,7 +26,7 @@ check:              ## THE GATE: lint + every test (parallel, once) + the guardr
 
 # Wall-clock budgets, kept out of `make check`: next to `-n auto` workers they measure the
 # contention, not the code. Run serially, on a quiet machine, before a demo.
-perf:               ## the timing tests (slider < 300 ms, scoring < 5 s), serially
+perf:               ## the timing tests (slider < 300 ms, scoring < 5 s, toy fit < 60 s), serially
 	@.venv/bin/pytest -m perf -rs -p no:cacheprovider
 
 test:               ## pytest only

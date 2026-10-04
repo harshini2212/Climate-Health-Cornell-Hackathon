@@ -89,6 +89,7 @@ def draws(posterior_path) -> hazard.Posterior:
 # The acceptance test from the prompt
 # --------------------------------------------------------------------------- #
 
+@pytest.mark.perf
 def test_two_hundred_veterans_by_thirty_days_fits_inside_the_budget(fitted) -> None:
     assert fitted.cells.n_rows == VETERANS * DAYS
     assert fitted.seconds < BUDGET_S, (
