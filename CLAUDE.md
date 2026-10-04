@@ -1,27 +1,34 @@
 # Leeward — veteran care continuity under climate events
 
 ## What this is
-Bayesian daily-hazard model + capacity-aware decision layer for VA care teams, for the
-Health in Climate AI Hackathon NYC 2026. Synthetic people, real places. Never write code
-that could ingest real PHI.
+A Bayesian daily-hazard model plus a capacity-aware decision layer that tells VA care teams
+which veterans to reach before a climate event, when, and with what action. It began as a
+hackathon project (Health in Climate AI Hackathon NYC 2026, second place) and is now being
+built toward a VA pilot. Synthetic people, real places.
+
+**No PHI and no real veteran data**, in the repo or in any code path, until
+`docs/security/phi-design.md` exists and the team has approved it. That rule changes only by a
+deliberate, reviewed PR, never as a side effect of another task.
 
 Read before coding, in this order:
 1. `data/README.md` — what data already exists and where every rate comes from
-2. `docs/SPEC.md` — the section for your lane
-3. `docs/BUILD_PLAN.md` — who owns what, and what is being cut
-4. `docs/PROMPTS.md` — the task you were probably handed came from here
+2. `docs/SPEC.md` — contracts, the model, the decision layer
+3. `docs/ROADMAP.md` — what is being built next, and why
+4. `CONTRIBUTING.md` — branches, PRs and the gate
 
 ## The gate
-`make check` is the review. Nobody on this project reads diffs, so it has to be: lint, every
-test, and the semantic guardrails in `tests/test_guardrails.py`. **Green means you may merge;
-red means you may not.** Run it before you claim anything is done.
+`make check` runs lint and every test once, in parallel (`pytest -n auto`), including the
+semantic guardrails in `tests/guardrails/test_guardrails.py`. **Red means the PR does not
+merge.** Run it before you claim anything is done. A green gate is necessary, not sufficient:
+every PR is also reviewed.
 
-`make status` shows where the build is without opening a file. `make fixtures` regenerates
-correctly-shaped fake data for every contract table.
+The two wall-clock tests are marked `perf` and run with `make perf`, on a quiet machine.
+`make fixtures` regenerates correctly-shaped fake data for every contract table.
 
-A guardrail for a module that does not exist yet skips with a message naming what it will
-enforce, and starts enforcing the moment that module lands. Before you build a module, read
-the skipping guardrail for it — **it is your specification.**
+Tests live in `tests/{unit,contracts,guardrails,demo}/`. A guardrail for a module that does
+not exist yet skips with a message naming what it will enforce, and starts enforcing the
+moment that module lands. Before you build a module, read the skipping guardrail for it — **it
+is your specification.**
 
 ## The data is already fetched
 `data/reference/` holds 22 joined, verified public tables (~4 MB, committed), built by
@@ -41,52 +48,46 @@ What is legitimately synthetic — housing floor, burn-pit years, PTSD severity,
 mail-order status, days of supply remaining, and every daily outcome — carries a
 `_synthetic` flag.
 
-## Contracts (frozen; change only by editing docs/SPEC.md §3 and telling the other person)
+## Contracts
+A contract changes only in a PR that edits `docs/SPEC.md` §3 in the same change and says so in
+its description.
+
 - `data/cohort.parquet`, `hazards.parquet`, `site_status.parquet`, `outcomes.parquet`,
   `scores.parquet`, `actions.parquet`, `outcome_log.parquet`: columns in `leeward/schema.py`.
 - `data/posterior.nc`: ArviZ InferenceData; var names match `leeward/model/priors.py`.
-- API bodies/responses: pydantic models in `leeward/api/schemas.py`.
+- API bodies/responses: pydantic models in `leeward/api/schemas.py`. Models another layer also
+  builds (`Message`, `ReportResponse` and its rows) live in `leeward/contracts/` and are
+  re-exported from `api/schemas.py` unchanged.
 - `leeward/model/design.py` is shared by the simulator and the model. Do not fork it.
 - Write tables with `schema.write(df, "<table>")`, never `df.write_parquet(...)`. It validates
-  first, and that validation is most of what stands between a plausible bug and the demo.
-- **`modzcta` is the geography key everywhere.** Not `zip`, not `zcta`, not NTA.
-
-Contract-file ownership: `leeward/schema.py` and `model/design.py` belong to the `cohort`
-lane; `api/schemas.py` belongs to the `api` lane. Do not edit a contract file you do not own —
-ask the owner and they will push within five minutes.
+  first.
+- **`modzcta` is the geography key everywhere.** Not `zip`, not `zcta`, not NTA. (Multi-region
+  support will replace it with `region_id` + `geo_id`; see `docs/ROADMAP.md`. Until that PR
+  lands, `modzcta` it is.)
+- **Layering:** production code never imports `leeward.cohort` or `leeward.eval`, and only
+  `leeward.api` imports `leeward.api`. `lint-imports` (CI) enforces both; `make check` only
+  catches direct cohort/eval imports (ruff TID251). Deploy-time defaults (scenario, CORS, OTP
+  stations) are in `leeward/settings.py` (`LEEWARD_*` env, no `.env`).
 
 ## Stack
-Python 3.11, NumPyro + JAX (CPU), polars, FastAPI, React + Vite + deck.gl.
-Makefile: `fixtures | data | cohort | fit | score | demo | report | test`.
-Never run inference inside a request.
+Python 3.11, NumPyro + JAX (CPU), polars, FastAPI, React + Vite + deck.gl. Dependencies are
+locked in `uv.lock`. Never run inference inside a request.
 
 ## Rules
 - **No API keys.** A clean clone with no `.env` must produce a working demo. `make demo` must
   not touch the network at all; it reads `data/reference/` and cached parquets.
 - Every real number shown anywhere is in `docs/sources.md` with a URL. Synthetic numbers say so.
-- Build the model as a ladder (SPEC §6.0). Rung 0 is prior-only and is built first. Say which
-  rung actually fitted, and its r-hat.
+- Build the model as a ladder (SPEC §6.0). Say which rung actually fitted, and its r-hat.
 - Drivers come from posterior contributions; no SHAP.
 - Fairness audit runs in `make report`; a failing audit is displayed, never suppressed.
 - **Leeward never changes a medication.** Medication actions flag a veteran for the VA
-  clinical pharmacist, who decides. `pharmacist_slot` is a scarce capacity unit because it
-  is a real person's afternoon. Say this out loud in the demo.
+  clinical pharmacist, who decides. `pharmacist_slot` is a scarce capacity unit because it is
+  a real person's afternoon.
 - Every outreach message includes: VA channel tag, 4-word verification phrase,
   "The VA will never ask you to pay, wire money, or share bank details",
   VSAFE 833-388-7233, and "Veterans Crisis Line: dial 988, press 1".
-- `pytest -q` passes before any merge; `make demo` boots in < 60 s from a clean clone.
-- One task per prompt; write the acceptance test first; ask before touching a contract file.
-- Seed everything. The same click must produce the same number in rehearsal and on stage.
-- Finish a task like this: `make check` green → commit → push → two lines in
-  `status/<lane>.md` → **stop**. Do not roll on to the next task.
-
-## Lanes
-Two builders, six git worktrees, one `main`.
-
-| Owner | Lanes |
-| --- | --- |
-| Rahul — runs the live demo | `api`, `ui`, `demo` |
-| Partner — owns the numbers | `cohort`, `model`, `eval` |
-
-Branch per lane (`lane/api`, `lane/ui`, …). Merge to `main` through a green `pytest -q` every
-60–90 minutes, never by hand-copying files.
+- Outreach is drafted by Leeward and sent by a person. No code path sends a message to a
+  veteran on its own.
+- Seed everything. The same click must produce the same number every time.
+- For a bug, write the failing test first, then fix it.
+- `make demo` boots in < 60 s from a clean clone.

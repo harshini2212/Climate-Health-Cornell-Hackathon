@@ -10,10 +10,10 @@ Everything here works with the wifi off. If a step needs the network, it says so
 git clone git@github.com:harshini2212/Climate-Health-Cornell-Hackathon.git
 cd Climate-Health-Cornell-Hackathon
 make setup          # venv + deps + editable install
-make check          # THE GATE: lint + 1,019 tests. Must be green.
+make check          # the gate: lint + every test, in parallel. Must be green.
 ```
 
-`data/reference/` (21 public tables) and `ui/dist` (the built bundle) are committed, so a
+`data/reference/` (22 public tables) and `ui/dist` (the built bundle) are committed, so a
 clean clone can boot without fetching or building anything.
 
 ---
@@ -122,7 +122,7 @@ chips, the medication panel, one "why this tier" line.
 > violet wax*. The VA will never ask you to pay. VSAFE. 988 press 1. A scammer cannot
 > reproduce that."
 
-### Model report — if a judge asks how you know
+### Model report — when someone asks how you know
 
 Recovery, reliability curves, harm averted against three baselines, ablations, fairness.
 
@@ -131,10 +131,10 @@ Recovery, reliability curves, harm averted against three baselines, ablations, f
 ## 5. Testing it yourself
 
 ```bash
-make check          # lint + 1,019 tests
+make check          # lint + every test, in parallel
+make perf           # the two timing budgets (slider < 300 ms, scoring < 5 s), serially
 make smoke          # boots the API with the network blocked, hits every route
 make clean-clone    # proves a fresh clone boots and serves offline in under 60s
-make status         # module map, table row counts, model rung, gate state
 ```
 
 Every route by hand, with the API up on 8000:
