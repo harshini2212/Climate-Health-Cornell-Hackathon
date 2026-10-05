@@ -52,7 +52,7 @@ jobs:
 
       # The `perf` timing tests, run on their own and serially, so parallel workers cannot
       # skew them. Their budgets were set on a laptop and a shared runner's speed varies run to
-      # run (the toy fit took 81 s here against a 60 s budget with no code change), so a miss is
+      # run (the toy fit took ~80 s here against the laptop's 60 s with no code change, so CI now gets 120 s), so a miss is
       # reported, not merge-blocking. The nightly schedule keeps a timing record on main.
       - name: Perf
         continue-on-error: true
