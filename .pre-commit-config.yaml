@@ -30,3 +30,12 @@ repos:
         language: system
         pass_filenames: false
         files: ^leeward/.*\.py$
+      # The committed ui/dist must match the sources it was built from (scripts/ui_dist.py).
+      # Most of main's red runs in September were a ui/src edit without `make ui`; this
+      # catches it at commit time. Fix by running `make ui` and committing ui/dist.
+      - id: ui-dist-fresh
+        name: ui/dist matches ui/src (run `make ui` if not)
+        entry: python3 scripts/ui_dist.py check
+        language: system
+        pass_filenames: false
+        files: ^ui/

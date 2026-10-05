@@ -1,7 +1,8 @@
 name: check
 
-# The merge gate. Nobody on this project reads diffs, so this is the review.
-# A branch that is red here does not go to main.
+# The merge gate: the mechanical half of review (every PR also gets a human review).
+# A branch that is red here does not go to main. The `check` and `ui` jobs are the
+# required status checks under main's branch protection.
 
 on:
   push:
@@ -10,6 +11,11 @@ on:
     branches: [main]
   schedule:
     - cron: "0 7 * * *"
+
+# A newer push to the same branch or PR cancels the run it supersedes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   check:
