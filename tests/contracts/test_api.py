@@ -32,7 +32,7 @@ from leeward.decision.allocate import allocate, total_eha
 from leeward.outreach.export import CONSENT_FOR
 from leeward.schema import ACTION_COST_UNIT, DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DAY = date(2026, 7, 16)           # landfall in the fixtures: flood warnings, station 630 closed
 
 
@@ -521,6 +521,7 @@ def _tile(cohort: pl.DataFrame, scores: pl.DataFrame, copies: int):
             pl.concat([rename(scores, k) for k in range(copies)]))
 
 
+@pytest.mark.perf
 def test_the_slider_answers_inside_300ms_at_ten_thousand_veterans(
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The panel is 10,000 veterans and the slider has to feel instant. The fixtures are, if

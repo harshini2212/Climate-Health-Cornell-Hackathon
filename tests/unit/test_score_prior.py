@@ -63,6 +63,7 @@ def test_epistemic_share_is_a_share(scored: pl.DataFrame) -> None:
     assert s.min() >= 0 and s.max() <= 1
 
 
+@pytest.mark.perf
 def test_ten_thousand_veterans_by_seven_days_in_under_five_seconds() -> None:
     base = table("cohort")
     big = (base.sample(10_000, with_replacement=True, seed=0)

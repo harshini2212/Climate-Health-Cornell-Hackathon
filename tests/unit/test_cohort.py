@@ -194,7 +194,7 @@ def test_the_sandy_dialysis_story_is_more_than_a_handful_of_people(cohort: pl.Da
 
 def test_the_va_esrd_rate_is_cited_with_its_url() -> None:
     """CLAUDE.md: every real number shown anywhere is in docs/sources.md with a URL."""
-    text = (Path(__file__).resolve().parents[1] / "docs" / "sources.md").read_text("utf-8")
+    text = (Path(__file__).resolve().parents[2] / "docs" / "sources.md").read_text("utf-8")
     assert build.VA_ESRD_PER_100K == VA_ESRD_PER_100K
     assert f"{VA_ESRD_PER_100K} vs. 187 per 100,000" in text, (
         "the paper's sentence giving the VA ESRD rate is not quoted in docs/sources.md")

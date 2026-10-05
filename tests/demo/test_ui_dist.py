@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 _spec = importlib.util.spec_from_file_location("ui_dist", ROOT / "scripts" / "ui_dist.py")
 ui_dist = importlib.util.module_from_spec(_spec)

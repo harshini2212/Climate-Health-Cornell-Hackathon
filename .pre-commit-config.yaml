@@ -1,0 +1,41 @@
+# Fast local copies of what `make check` and CI enforce, so a bad commit fails on the
+# laptop instead of in CI. Install once per clone: `.venv/bin/pre-commit install`.
+# `make check` stays the gate; these hooks are a convenience in front of it.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check
+        files: ^(leeward|scripts|tests)/
+      # Formats the files a commit touches, nothing else. 65 of 74 files predate the
+      # formatter, so this adopts it file by file instead of in one repo-wide diff; CI
+      # does not check formatting until the stragglers are done.
+      - id: ruff-format
+        files: ^(leeward|scripts|tests)/
+
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: ^(uv\.lock|ui/package-lock\.json|ui/dist/|data/reference/)
+
+  # mypy runs from the project venv, not an isolated hook env, so it sees polars, numpy and
+  # pydantic the same way CI does. Config lives in pyproject.toml [tool.mypy].
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (leeward/)
+        entry: .venv/bin/mypy leeward
+        language: system
+        pass_filenames: false
+        files: ^leeward/.*\.py$
+      # The committed ui/dist must match the sources it was built from (scripts/ui_dist.py).
+      # Most of main's red runs in September were a ui/src edit without `make ui`; this
+      # catches it at commit time. Fix by running `make ui` and committing ui/dist.
+      - id: ui-dist-fresh
+        name: ui/dist matches ui/src (run `make ui` if not)
+        entry: python3 scripts/ui_dist.py check
+        language: system
+        pass_filenames: false
+        files: ^ui/

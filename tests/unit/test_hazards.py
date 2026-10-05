@@ -22,7 +22,7 @@ import pytest
 from leeward import schema
 from leeward.ingest import hazards
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SCENARIOS = ROOT / "scenarios"
 SCENARIO_NAMES = ["sandy_then_heat", "ida_flash_flood", "smoke_2023"]
 

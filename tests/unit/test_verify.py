@@ -17,7 +17,7 @@ import pytest
 
 from leeward.outreach import verify
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DAY = date(2026, 7, 16)
 
 

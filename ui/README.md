@@ -68,7 +68,7 @@ reserved for hazards and closures and always carry a word.
 The week board hangs in a shared clinical space, so it shows a handle (`D.C. · 9639`),
 the action, the owner and the tier, and nothing else. Names, conditions, driver phrases
 and the allocator's rationale sentence appear only on the veteran card, behind a click.
-`tests/test_ui_fixtures.py` scans `Week.tsx` for the fields it must not render.
+`tests/contracts/test_ui_fixtures.py` scans `Week.tsx` for the fields it must not render.
 
 ## Where the numbers come from
 
@@ -78,7 +78,7 @@ so going back to a screen never re-runs an allocation. The week loads today's li
 then the other six days two at a time, because the API allocates one day at a time and a
 10,000-veteran day takes about half a second.
 
-The fixtures are typed against `leeward/api/schemas.py`, and `tests/test_ui_fixtures.py`
+The fixtures are typed against `leeward/api/schemas.py`, and `tests/contracts/test_ui_fixtures.py`
 parses every one of them through the pydantic models. Regenerate from the real pipeline:
 
 ```bash
