@@ -29,29 +29,16 @@ fields actually move a score rather than being told.
 
 from __future__ import annotations
 
-import zlib
-
-import numpy as np
 import polars as pl
+
+# The observation contract lives with the scorer that reads it; this module only produces
+# the gaps. Re-exported so `missingness.HIDDEN_FIELDS` and friends keep working here.
+from leeward.model.observation import HIDDEN_FIELDS, observed_name, stream
+
+__all__ = ["HIDDEN_FRACTION", "HIDDEN_FIELDS", "apply", "observed_name", "stream"]
 
 #: Share of each field hidden, per `docs/SPEC.md` §5.5.
 HIDDEN_FRACTION = 0.20
-
-#: The augmented fields a VA record does not reliably carry. Each is hidden independently.
-HIDDEN_FIELDS = ("home_ac", "floor", "deployment_era")
-
-
-def stream(seed: int, name: str) -> np.random.Generator:
-    """An independent random stream per field, keyed by name.
-
-    Same idiom as `build.py` and `medications.py`: hiding a fourth field later draws from a
-    new stream, so it cannot reshuffle which veterans are missing their floor.
-    """
-    return np.random.default_rng([seed, zlib.crc32(name.encode())])
-
-
-def observed_name(field: str) -> str:
-    return f"{field}_observed"
 
 
 def apply(people: pl.DataFrame, seed: int = 0, *,

@@ -33,7 +33,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from leeward.api.schemas import Message
+from leeward.contracts import Message
 from leeward.outreach import verify
 from leeward.schema import ACTIONS, CAREGIVER, TIERS
 

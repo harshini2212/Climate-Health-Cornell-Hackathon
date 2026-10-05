@@ -18,8 +18,8 @@ actions, their effect on one need combines as 1 - Π(1 - τ) -- identical to the
 single action, and it cannot claim more than all of an event was prevented.
 
 `w_k` and `τ[a,k]` come from the decision layer, so the allocator is scored on the same
-numbers it optimises. That layer (`leeward.decision`, api lane) is the only dependency this
-module has on unbuilt code, and it is imported lazily: everything else here runs today.
+numbers it optimises. That layer (`leeward.decision`) is imported lazily, so everything else here runs
+without it.
 
     python -m leeward.eval.decision_quality     # -> report/decision_quality.{csv,html}
 """
@@ -193,7 +193,7 @@ def evaluate(scores: pl.DataFrame, cohort: pl.DataFrame, outcomes: pl.DataFrame,
              w: Weights, tau: Tau, ks: Sequence[int] = KS,
              dates: Sequence[date] | None = None, seed: int = RANDOM_SEED) -> pl.DataFrame:
     """Harm averted per day x K x strategy, tidy. Dates default to the held-out window."""
-    from leeward.decision.allocate import allocate  # the one piece of the api lane we need
+    from leeward.decision.allocate import allocate  # the one piece of the decision layer we need
 
     _check_weights(w, tau)
     dates = holdout_dates(scores, outcomes) if dates is None else list(dates)

@@ -44,8 +44,7 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
-from leeward.cohort import missingness
-from leeward.model import design, hazard, priors
+from leeward.model import design, hazard, observation, priors
 from leeward.schema import NEEDS
 
 N_DRAWS = 400               # SPEC 6.4: thin the posterior to 400 draws
@@ -164,8 +163,8 @@ def _unknowns(cohort: pl.DataFrame) -> list[_Unknown]:
     says why that distinction is not cosmetic here.
     """
     out = []
-    for field in missingness.HIDDEN_FIELDS:
-        obs = missingness.observed_name(field)
+    for field in observation.HIDDEN_FIELDS:
+        obs = observation.observed_name(field)
         if obs not in cohort.columns or not _design_reads(field):
             continue
         hidden = cohort[obs].is_null().to_numpy()
@@ -186,8 +185,8 @@ def _seen(cohort: pl.DataFrame) -> pl.DataFrame:
     the design cannot reach them, because the name it reads now holds the observed copy.
     """
     exprs = []
-    for field in missingness.HIDDEN_FIELDS:
-        obs = missingness.observed_name(field)
+    for field in observation.HIDDEN_FIELDS:
+        obs = observation.observed_name(field)
         if obs not in cohort.columns:
             continue
         seen = cohort[obs].drop_nulls()
@@ -203,7 +202,7 @@ def _draw_unknowns(unknowns: list[_Unknown], n_draws: int, seed: int) -> list[np
     so a veteran whose value is on file contributes no delta at all."""
     picks = []
     for u in unknowns:
-        rng = missingness.stream(seed, f"marginalise_{u.field}")
+        rng = observation.stream(seed, f"marginalise_{u.field}")
         pick = np.zeros((u.hidden.size, n_draws), dtype=np.int8)
         # Each veteran draws from their own conditional distribution, so this is an inverse
         # CDF per row rather than one `rng.choice(p=...)` over a shared vector.

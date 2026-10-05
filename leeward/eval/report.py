@@ -1,7 +1,7 @@
 """The eval harness, assembled into `report/report.json`. SPEC §11.
 
 `GET /report` serves this file as-is and the Model report screen draws it, so everything
-here is shaped by `ReportResponse` in `leeward/api/schemas.py` -- a key that contract has no
+here is shaped by `ReportResponse` in `leeward/contracts/report.py` -- a key that contract has no
 room for would 500 the route rather than appear on the screen.
 
 What it says, and what it refuses to say:
@@ -41,7 +41,7 @@ from pathlib import Path
 import polars as pl
 
 from leeward import schema
-from leeward.api.schemas import ReportResponse
+from leeward.contracts import ReportResponse
 from leeward.eval import calibration as cal
 from leeward.eval import decision_quality as dq
 from leeward.eval import discrimination as disc
