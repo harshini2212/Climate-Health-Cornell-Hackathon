@@ -1,0 +1,75 @@
+# The four hazard-triggered Act-now rules (SPEC §7.5).
+#
+# A veteran who matches any row here is Act-now whatever their p_mean says, because each row
+# encodes a mechanism the model has not seen: a closed station, an excluded drug class, a
+# stopped mail route, an outage in a home with nobody in it. These are close to
+# deterministic, which is the point -- they are the rows a care team can act on with no
+# argument.
+#
+# Read one row as a sentence. The three condition cells are ANDed:
+#
+#     veteran   a fact about the person, from data/cohort.parquet
+#     station   a fact about their VA station that day, from site_status.parquet
+#     zip       a fact about their MODZCTA that day, from hazards.parquet
+#
+# A cell that is left out asks nothing. Inside one cell, join terms with `and` or `or` --
+# one or the other, never both, so no row can depend on precedence you cannot see. A bare
+# name is a yes/no column; otherwise write `column op value` with op one of == != < <= > >=.
+# rules.load() checks every name against leeward/schema.py and every operator against the
+# column's type, so a typo fails loudly here instead of quietly never firing again.
+#
+# Clinician-editable, like severity.yaml and tau.yaml beside it. Change a threshold and the
+# next allocate() call uses it; no code change, no redeploy. `because` is printed to the care
+# team verbatim in the action's rationale, so it is a sentence, not a note to a developer.
+# Rows are tried in the order written, and the first one that matches is the one reported.
+
+site_dependent_at_a_closed_station:
+  veteran: ckd_dialysis or active_cancer_tx or on_methadone_otp
+  station: site_down
+  because: >-
+    Act now: their station is closed and their care is site-dependent — dialysis, infusion
+    and opioid treatment cannot wait for it to reopen. Station 630 sits in evacuation zone 1
+    and its opioid treatment program closed for five months after Sandy, when about 100
+    veterans needed emergency guest-dosing.
+  source: docs/sources.md — Griffin et al. 2018; Lukowsky et al. 2019; VHA facility registry
+          × NYC hurricane evacuation zones
+
+controlled_substance_at_a_closed_station:
+  veteran: med_controlled or on_methadone_otp
+  station: site_down
+  because: >-
+    Act now: their station is closed and they are on a controlled substance. Under the VA
+    Pharmacy Disaster Relief Plan, once VA activates the Emergency Pharmacy Program every
+    other veteran here can take a VA prescription to a participating retail pharmacy for at
+    least a 10-day supply — but the program excludes controlled substances, so the fallback
+    that covers the rest of this list does not exist for them and VA must fill it itself.
+  source: docs/sources.md — VA Pharmacy Disaster Relief Plan (Fayetteville) and the national
+          VHA Emergency Pharmacy Program, which states the controlled-substance exclusion
+
+mail_order_supply_short_on_a_disrupted_day:
+  # 7 days is the forecast window (leeward.demo.WINDOW_DAYS): a veteran whose supply outlasts
+  # the forecast is not in a supply event, and mailing everyone is what this rule replaces.
+  veteran: mail_order_pharmacy and days_supply_remaining <= 7
+  zip: mail_delivery_disrupted
+  because: >-
+    Act now: mail delivery to this ZIP is disrupted and their supply runs out inside the
+    forecast window. About 80% of VA outpatient prescriptions arrive by mail, so a flooded
+    ZIP is a medication-supply event, not only a travel one.
+  source: docs/sources.md — VA PBM, VA Mail Order Pharmacy (the ~80% share); VA News, Aug 2024
+          (almost 84%); Dallas CMOP Privacy Impact Assessment, Oct 2024 (over 120M a year)
+
+unattended_powered_equipment_in_an_outage:
+  # 0.2 matches leeward.demo.OUTAGE_ALERT_FRAC: Con Ed losing a fifth of a ZIP is an event
+  # even with no warning out.
+  veteran: caregiver == none and powered_equipment != none
+  zip: outage_frac >= 0.2
+  because: >-
+    Act now: they depend on powered equipment, there is no caregiver in the home, and an
+    outage is forecast for this ZIP. This is the emPOWER case — the equipment stops and
+    nobody there can act on it.
+  # emPOWER counts who depends on the equipment; it sets no multiplier for caregiver absence.
+  # The second half of this rule rests on the outage and heat literature instead.
+  source: docs/sources.md — HHS emPOWER, five-borough ZIPs (36,146 electricity-dependent
+          Medicare beneficiaries living independently in NYC; 3,165 receiving oxygen
+          services) for the equipment; Casey et al., Curr Environ Health Rep 2020, and
+          Semenza et al., NEJM 1996 (living alone, odds ratio 2.3) for the missing caregiver

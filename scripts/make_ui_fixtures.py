@@ -127,7 +127,9 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
 
     r = np.random.default_rng(seed)
     cap = dict(DEFAULT_CAPACITY, call=100)
-    acts = allocate(scores, cohort, cap, date=day)
+    # The hazard frames switch on the four Act-now rules, which /actions applies too.
+    acts = allocate(scores, cohort, cap, date=day, hazards=schema.read("hazards"),
+                    site_status=schema.read("site_status"))
     today = scores.filter(pl.col("date") == day)
     top = (today.sort("p_mean", descending=True)
                 .group_by("veteran_id", maintain_order=True)
