@@ -25,7 +25,7 @@
   "ui/src/design/leeward.css": "eff810567290a6ac2f2d5bad2167891bcdf61cbb9494b74fda05f66a31da5f48",
   "ui/src/design/storm.css": "7feaeac382452d4bf3d156affd6e46c72a9d931d1f45b2b04dcc8bb89c57bfde",
   "ui/src/design/template.css": "28bc2514e1733460a8cdc53df9aaec69b0c1620cb13bc9707c6c487e77cd569e",
-  "ui/src/lib/api.ts": "45b40d173b6e5319380f5caa43b3608aeb948dcdbc718f3a450bf3318a40f8c8",
+  "ui/src/lib/api.ts": "531f505b99cb75eed37254c5592cb876b5a7a4411f5ab8bd5462c81ea0eabc6f",
   "ui/src/lib/ask.ts": "c8fca4b95cae1c931b76f21fa7471deecf340d71589d0baebc86ca2cc0dd8209",
   "ui/src/lib/colors.ts": "a43a9cdc65d5083a8b454fd9b65a5f9adab6687a35dfcab80509758b80ab655e",
   "ui/src/lib/config.ts": "f9695bbdfa7ef48ed20514c6ce13ffecb61e01b680a3f3ce9824bded13e4c48a",

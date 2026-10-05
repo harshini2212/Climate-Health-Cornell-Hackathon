@@ -56,7 +56,7 @@ SYNTHEA_PREVALENCE = {
     "acb_score": 0.117,             # >= 3, the clinical threshold
     "med_renal_triple": 0.013,
 }
-TOLERANCE = 0.10  # percentage points, per docs/PROMPTS.md
+TOLERANCE = 0.10  # percentage points: the acceptance tolerance for the measured prevalences
 
 
 def _row(*rxcuis: str) -> dict:
@@ -206,7 +206,7 @@ def test_the_profile_table_is_one_row_per_synthea_bundle() -> None:
 
 
 def test_prevalence_matches_what_was_measured_on_the_synthea_sample() -> None:
-    """The acceptance numbers in docs/PROMPTS.md, each within 10 percentage points.
+    """The prevalences measured on the Synthea sample, each within 10 percentage points.
 
     Denominator: the 77 bundles with at least one active medication. A patient on no
     medication is not evidence about medication risk.

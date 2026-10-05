@@ -1,4 +1,4 @@
-"""Acceptance tests for the hazard assembler (lane `demo`).
+"""Acceptance tests for the hazard assembler.
 
 Written before the module. What they pin down:
 

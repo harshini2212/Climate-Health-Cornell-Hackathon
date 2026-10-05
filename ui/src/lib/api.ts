@@ -185,8 +185,8 @@ export function postActions(req: ActionsRequest): Promise<ActionsResponse> {
 }
 
 /**
- * The week, a day at a time. ActionsRequest is single-day and the api lane owns that
- * shape, so a week is seven requests; the API serves them one at a time, so they go out
+ * The week, a day at a time. ActionsRequest is single-day (see leeward/api/schemas.py),
+ * so a week is seven requests; the API serves them one at a time, so they go out
  * two at a time and `onDay` lets the board fill as each lands rather than all at once.
  */
 export async function postActionsWeek(

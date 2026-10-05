@@ -1,4 +1,4 @@
-"""test_hazard_toy.py -- rung 1's acceptance test (docs/PROMPTS.md §8), written first.
+"""test_hazard_toy.py -- rung 1's acceptance test, written first.
 
 > Fit first on a 200-veteran, 30-day toy cohort; it must complete in under 60 seconds with
 > zero post-warmup divergences.
@@ -8,7 +8,7 @@ The toy cohort is `tests/tables.py`'s fixture panel, and the outcomes are simula
 test of the machinery: when the world is the model, the model has to find the world. What
 happens when the world is bigger than the model -- the real `data/truth.json`, whose
 interactions rung 1 has no column for -- is a bias, it is large, and it is measured in
-`report/recovery.csv` by the eval lane rather than asserted away here.
+`report/recovery.csv` by the evaluation harness rather than asserted away here.
 """
 
 from __future__ import annotations
@@ -316,7 +316,7 @@ def test_the_heat_curve_decays_the_way_the_world_did(draws) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# data/posterior.nc -- the contract the eval lane and the scorer read
+# data/posterior.nc -- the contract the evaluation harness and the scorer read
 # --------------------------------------------------------------------------- #
 
 def test_every_design_term_is_in_the_file(draws) -> None:
@@ -415,7 +415,7 @@ def test_a_prior_scale_cannot_be_asked_of_a_posterior(posterior_path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Cross-lane
+# Cross-module
 # --------------------------------------------------------------------------- #
 
 def test_the_holdout_is_the_one_the_evaluator_uses() -> None:

@@ -1,8 +1,8 @@
 """Guardrails: the project's non-negotiables, enforced by machine.
 
-Nobody is reading the diffs, so these tests are the review. They are deliberately
-*semantic* -- they check that the numbers mean the right thing, not merely that the code
-ran. An agent producing plausible-but-wrong work fails here.
+These tests are the mechanical half of review. They are deliberately *semantic* -- they
+check that the numbers mean the right thing, not merely that the code ran. Plausible but
+wrong work fails here.
 
 Each guardrail for a module that does not exist yet **skips with a message naming what it
 will enforce**, and starts enforcing automatically the moment that module lands. So the
@@ -29,7 +29,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _mod(name: str):
-    """Import a lane's module, or skip with a message saying what this will check."""
+    """Import a module, or skip with a message saying what this will check once it exists."""
     try:
         return importlib.import_module(name)
     except ModuleNotFoundError:
@@ -399,13 +399,13 @@ def test_seeds_are_fixed_everywhere_that_randomises() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Cross-lane interfaces.
+# Cross-module interfaces.
 #
-# Lanes are built in parallel by agents that never see each other's code, so the
-# failure mode is not a bad function -- it is two correct functions that disagree
-# about a name. That surfaces at merge, which is the worst time. These tests pin
-# the public surface each lane promises the others, so drift fails in the lane
-# that caused it rather than in whoever merges last.
+# Modules are often changed in parallel branches, so the failure mode is not a bad
+# function -- it is two correct functions that disagree about a name. That surfaces at
+# merge, which is the worst time. These tests pin the public surface each module
+# promises the others, so drift fails in the branch that caused it rather than in
+# whoever merges last.
 # --------------------------------------------------------------------------- #
 
 DECISION_INTERFACE = {
@@ -423,7 +423,7 @@ def test_decision_layer_public_interface(module: str, expected: list) -> None:
     for name, returns in expected:
         fn = getattr(mod, name, None)
         assert callable(fn), (
-            f"{module}.{name}() is missing. Other lanes import it; renaming it breaks them "
+            f"{module}.{name}() is missing. Other modules import it; renaming it breaks them "
             f"at merge time. If the interface must change, change it here first.")
         if returns is dict:
             got = fn()

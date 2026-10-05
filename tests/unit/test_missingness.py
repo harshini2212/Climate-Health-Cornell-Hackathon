@@ -324,7 +324,7 @@ def test_the_gap_rule_does_not_take_veterans_from_act_now(
 
 def test_tiers_still_work_on_scores_that_predate_the_gap_columns(
         cohort: pl.DataFrame, frames) -> None:
-    """A lane's own fixture, or a parquet written before this landed, must still tier."""
+    """A hand-built fixture, or a parquet written before this landed, must still tier."""
     hazards, sites = frames
     days = sorted(hazards["date"].unique().to_list())[:3]
     scores = score_prior.score(cohort, hazards, sites, dates=days, n_draws=DRAWS, seed=SEED)

@@ -1,6 +1,6 @@
 """The contract file must be internally consistent, and `empty()` must satisfy `validate()`.
 
-If this breaks, every lane is building against a contract that cannot be satisfied.
+If this breaks, every module is building against a contract that cannot be satisfied.
 """
 
 from __future__ import annotations

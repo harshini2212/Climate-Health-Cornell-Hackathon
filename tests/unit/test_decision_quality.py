@@ -3,7 +3,7 @@
 Harm averted is `Σ w_k · τ[a,k] · y_true[i,k,t]` over the veterans a strategy selects. The
 arithmetic, the three baselines and the outputs are checked here against hand-built frames.
 The one test that needs the real allocator skips -- only on the import of
-`leeward.decision.allocate` -- until the api lane lands it, and then it has to show Leeward
+`leeward.decision.allocate` -- until that module exists, and then it has to show Leeward
 beating random on a fixture where the answer is not in doubt.
 """
 
