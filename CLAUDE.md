@@ -17,10 +17,10 @@ Read before coding, in this order:
 4. `CONTRIBUTING.md` — branches, PRs and the gate
 
 ## The gate
-`make check` runs lint and every test once, in parallel (`pytest -n auto`), including the
-semantic guardrails in `tests/guardrails/test_guardrails.py`. **Red means the PR does not
-merge.** Run it before you claim anything is done. A green gate is necessary, not sufficient:
-every PR is also reviewed.
+`make check` runs exactly what CI runs: lint, mypy, import layering, and every test once in
+parallel (`pytest -n auto`), including the semantic guardrails in
+`tests/guardrails/test_guardrails.py`. **Red means the PR does not merge.** Run it before you
+claim anything is done. A green gate is necessary, not sufficient: every PR is also reviewed.
 
 The three wall-clock tests (slider < 300 ms, scoring < 5 s, toy fit < 60 s) are marked `perf`
 and run with `make perf`, on a quiet machine.
@@ -66,9 +66,9 @@ its description.
   support will replace it with `region_id` + `geo_id`; see `docs/ROADMAP.md`. Until that PR
   lands, `modzcta` it is.)
 - **Layering:** production code never imports `leeward.cohort` or `leeward.eval`, and only
-  `leeward.api` imports `leeward.api`. `lint-imports` (CI) enforces both; `make check` only
-  catches direct cohort/eval imports (ruff TID251). Deploy-time defaults (scenario, CORS, OTP
-  stations) are in `leeward/settings.py` (`LEEWARD_*` env, no `.env`).
+  `leeward.api` imports `leeward.api`. `lint-imports` enforces both, in `make check` and CI.
+  Deploy-time defaults (scenario, CORS, OTP stations) are in `leeward/settings.py`
+  (`LEEWARD_*` env, no `.env`).
 
 ## Stack
 Python 3.11, NumPyro + JAX (CPU), polars, FastAPI, React + Vite + deck.gl. Dependencies are
