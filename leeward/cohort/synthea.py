@@ -41,9 +41,9 @@ Definitions, all at the reference date. Synthea's CSV exporter keeps 10 years of
                                      antineoplastic. Synthea never closes its cancer care plan
 
 **Weighting** (approved 2026-10-05). Synthea's veteran modules do not reproduce the published
-rates: PTSD in ~1% of the record against VA's 5-15% past-year, substance use disorder in
-~27% against NSDUH's 15-18%, and no ZIP-level depression gradient at all. So the draw is
-tilted, per veteran, toward a cited rate for each of those three flags (`draw(targets=...)`):
+rates: PTSD in 1.6% of records against VA's 5-15% past-year, substance use disorder in
+26.8% against NSDUH's 15-18%, and no ZIP-level gradient for depression or diabetes. So the draw is
+tilted, per veteran, toward a cited rate for each of those flags and for diabetes (`draw(targets=...)`):
 profile j is chosen with probability proportional to exp(sum_k theta_k x_jk) inside the
 veteran's own sex x age-band pool, with theta solved so every targeted flag hits that
 veteran's target. Profiles stay whole -- the tilt only changes *which* real patient a
@@ -93,6 +93,9 @@ POPULATION = 8_000
 #: Exactly the arguments the committed profiles were generated with, after `java -jar JAR`
 #: (argv tokens). The fetcher adds only output settings: `--exporter.baseDirectory` and
 #: `--exporter.csv.included_files`.
+#: `-r` fixes the date ages are computed at and `-e` stops the simulation there, so a re-run on
+#: any later day yields the same records. Prescriptions still open at the end date stay open
+#: in the export (no STOP) -- which is why the medication rules below are needed.
 RUN_ARGS = (
     "-s", "0", "-cs", "0", "-r", "20260101", "-e", "20260101", "-p", str(POPULATION),
     "-a", "18-100", "--generate.veteran_population_override=true",
@@ -111,6 +114,8 @@ CONDITION_CODES: dict[str, frozenset[str]] = {
     "ptsd": frozenset({"47505003"}),
     # veteran_mdd.json: single episode, and the recurrent disorder
     "depression": frozenset({"36923009", "370143000"}),
+    # metabolic_syndrome_disease.json: type 2 diabetes. Prediabetes is not diabetes.
+    "diabetes": frozenset({"44054006"}),
     # homelessness.json
     "homeless": frozenset({"32911000"}),
     # veteran_substance_abuse_treatment.json (alcoholism, opioid abuse) and the opioid and
@@ -124,6 +129,17 @@ CONDITION_CODES: dict[str, frozenset[str]] = {
 }
 #: Flags that count a condition whatever its STOP date, inside the exported history.
 EVER = frozenset({"ptsd", "suicide_risk"})
+
+#: Medication rules: what Synthea leaves on the list that a pharmacist would not.
+#: Synthea's metabolic module treats *prediabetes* with insulin 70/30 and never stops it --
+#: half of all open glucose-lowering prescriptions in the run. No guideline treats
+#: prediabetes with insulin, so insulin whose reason is prediabetes is dropped.
+PREDIABETES, INSULIN_CLASS = "714628002", "HS501"
+#: Synthea's opioid prescriptions that end run a median 28 days, but thousands never close
+#: (some open since 2014). An opioid counts as current only if started within ACUTE_DAYS of
+#: the reference date: CDC's 2022 guideline calls pain under 1 month acute and 1-3 months
+#: subacute (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9639433/).
+ACUTE_CLASSES, ACUTE_DAYS = frozenset({"CN101"}), 90
 
 #: A cancer is being treated when one of these procedures fell in the last CANCER_TX_DAYS...
 #: Every chemotherapy and radiotherapy procedure the v4.0.0 cancer modules emit (SNOMED;
@@ -211,7 +227,9 @@ def profiles_from_csv(csv_dir: Path, ref: date = REFERENCE_DATE,
         flags.append(src.filter(pl.col("CODE").is_in(list(codes)))
                         .select(pl.col("PATIENT").unique()).with_columns(pl.lit(True).alias(field)))
 
-    meds = _open_at(_read(csv_dir, "medications", ["START", "STOP", "PATIENT", "CODE"]), ref)
+    meds = _current_meds(_open_at(_read(csv_dir, "medications",
+                                        ["START", "STOP", "PATIENT", "CODE", "REASONCODE"]),
+                                  ref), ref)
     rx = meds.group_by("PATIENT").agg(pl.col("CODE").unique().sort().alias("rxcuis"))
 
     malignant = (open_conds.filter(_malignant(pl.col("DESCRIPTION"), pl.col("CODE")))
@@ -235,6 +253,19 @@ def profiles_from_csv(csv_dir: Path, ref: date = REFERENCE_DATE,
                             pl.col("rxcuis").fill_null(pl.lit([], dtype=pl.List(pl.Utf8))))
               .rename({"PATIENT": "profile_id"}))
     return out.select(list(PROFILE_SCHEMA)).cast(PROFILE_SCHEMA).sort("profile_id")  # type: ignore[arg-type]
+
+
+def _current_meds(meds: pl.DataFrame, ref: date) -> pl.DataFrame:
+    """Open prescriptions minus Synthea's two artifacts (see PREDIABETES and ACUTE_CLASSES)."""
+    from leeward.cohort.medications import classes_for
+
+    codes = meds["CODE"].unique().to_list()
+    insulin = [c for c in codes if INSULIN_CLASS in classes_for([c])]
+    acute = [c for c in codes if ACUTE_CLASSES & set(classes_for([c]))]
+    start = pl.col("START").str.slice(0, 10).str.to_date()
+    return meds.filter(
+        ~(pl.col("CODE").is_in(insulin) & (pl.col("REASONCODE") == PREDIABETES).fill_null(False))
+        & ~(pl.col("CODE").is_in(acute) & (start <= ref - timedelta(days=ACUTE_DAYS))))
 
 
 def _years(birth: date, ref: date) -> int:

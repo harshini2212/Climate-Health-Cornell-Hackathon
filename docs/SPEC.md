@@ -178,7 +178,8 @@ salted with its id.
 | facility_id | str | rehome | nearest of {NY_MANHATTAN, NY_BROOKLYN, NY_BRONX, NY_ST_ALBANS, CBOC_*} |
 | lives_alone | bool | synthea SDoH | |
 | conditions | list[str] | synthea | SNOMED codes |
-| copd, asthma, chf, diabetes, ckd_dialysis | bool | derived | PLACES per ZIP (dialysis: VA ESRD × emPOWER shape) |
+| copd, asthma, chf, ckd_dialysis | bool | derived | PLACES per ZIP (dialysis: VA ESRD × emPOWER shape) |
+| diabetes | bool | synthea | **Track A:** type 2 diabetes from the same Synthea veteran, tilted to PLACES `diabetes_crudeprev` per ZIP, so insulin always arrives with its diagnosis |
 | ptsd, depression, active_cancer_tx | bool | synthea | **Track A:** from one whole Synthea v4.0.0 veteran (`synthea_veteran_profiles.parquet`), drawn within sex × ACS age band and tilted to cited rates (§5.3): ptsd to VA NCPTSD by era, depression to PLACES per ZIP. active_cancer_tx is untilted: open malignancy + chemo/radiation in the last 365 days |
 | suicide_risk | bool | synthea | **New (Track A).** "At increased risk for suicide" or "suicidal thoughts" finding in the record's 10-year history (`veteran_ptsd`, `veteran_self_harm`). The run has no suicide attempt by a living patient, so attempts are not a flag |
 | substance_use_disorder | bool | synthea | **New (Track A).** Open alcohol, opioid or drug-use disorder (`veteran_substance_abuse_*`) |
@@ -397,18 +398,21 @@ psychiatric medication independent of the diagnosis list) closes for these condi
 
 **Weighting.** Synthea's own rates are off (PTSD in 1.6% of records, substance use disorder
 in 26.8%) and carry no ZIP gradient, so the pick is tilted — whole profiles only — so that
-`ptsd` lands on VA NCPTSD past-year by era, `depression` on PLACES per ZIP, and
-`substance_use_disorder` on NSDUH 2022–24 by era. A sex × band pool with fewer than
+`ptsd` lands on VA NCPTSD past-year by era, `depression` and `diabetes` on PLACES per ZIP,
+and `substance_use_disorder` on NSDUH 2022–24 by era. Two Synthea medication artifacts are
+removed when the profiles are distilled: insulin prescribed for prediabetes, and opioids
+started more than 90 days before the reference date (CDC 2022's acute + subacute window). A sex × band pool with fewer than
 `MIN_CARRIERS` carriers of a targeted flag borrows that flag's carriers from the nearest
 bands (men 65–74 have none). `active_cancer_tx`, `suicide_risk` and `homeless` keep Synthea's
-rates. **What it costs:** depression keeps its PLACES gradient (per-ZIP r 0.42 before and
+rates, have no cited target, and so carry a `_synthetic` flag. **What it costs:** depression keeps its PLACES gradient (per-ZIP r 0.42 before and
 after); `active_cancer_tx` loses it (r 0.51 → 0.14), because PLACES measures ever-diagnosed
 cancer and this flag is now in-treatment only.
 
-**Acceptance:** `tests/unit/test_synthea_veterans.py` holds the three tilted flags to within 3
+**Acceptance:** `tests/unit/test_synthea_veterans.py` holds the four tilted flags to within 3
 binomial standard errors of their cited rates, and the other three to within 3 SE of the
 Synthea source rate reweighted to the cohort's own sex × band mix; it asserts that every
-veteran's (flags, medication list) is one real profile's.
+veteran's (flags, medication list) is one real profile's, that nobody is on insulin without
+diabetes, and that opioid use sits at or below GAO's ~10% quarterly VA dispensing rate.
 
 **Still genuinely synthetic** — no public source exists, so these keep parametric priors and a
 `_synthetic` flag:
@@ -422,7 +426,7 @@ veteran's (flags, medication list) is one real profile's.
 | floor | basement 0.06, ground 0.25, upper 0.69 citywide; basement up-weighted ×2 where `stormwater_flooded_frac` is high |
 | on_methadone_otp | 0.01 overall |
 | caregiver type, given present | coresident / remote / va_pcafc split 0.55 / 0.35 / 0.10; `lives_alone=True` forces remote |
-| med_rxcuis (the *assignment*) | the active list of the veteran's own Synthea profile (Track A, above). Every list is a real one; which veteran carries it is not. `diabetes`, `copd`, `asthma` and `chf` still come from PLACES, so a cold-chain medication does not yet imply `diabetes`. |
+| med_rxcuis (the *assignment*) | the active list of the veteran's own Synthea profile (Track A, above). Every list is a real one; which veteran carries it is not. `diabetes` now comes from the same profile; `copd`, `asthma` and `chf` still come from PLACES. |
 | mail_order_pharmacy | Bernoulli(0.80), from VA's published ~80 percent CMOP share. Synthea's FHIR export has no `dispenseRequest`, so this cannot be read. |
 | days_supply_remaining | 90-day fill if mail order else 30-day; phase drawn uniform, so on any given day the cohort is spread across its refill cycle |
 

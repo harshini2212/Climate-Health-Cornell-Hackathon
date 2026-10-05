@@ -10,17 +10,17 @@ from `data/reference/`, never typed in:
     where, age band, sex         acs_veterans_by_zcta       P(geo_id, sex, band) ∝ veterans
     mobility, low assets,        places_zcta_nyc            CDC PLACES crude prevalence,
       transport, no caregiver,                              per ZIP (see PLACES_RATES)
-      COPD, asthma, diabetes,
-      CHF, low income
+      COPD, asthma, CHF,
+      low income
     powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP; dialysis is
                                                             rescaled to the VA's own ESRD rate
     race, ethnicity             acs_race_by_zcta           ACS B03002, one joint draw per ZIP
     evac zone, stormwater, HVI   evac_zone_by_modzcta, stormwater_by_modzcta, hvi_by_zcta
     facility                     va_facilities_nyc_hazard   nearest care site (see below)
-    PTSD, depression, cancer     synthea_veteran_profiles   one whole Synthea veteran per
-      treatment, suicide risk,                               person, from their own sex and
-      substance use, homeless,                              ACS age band (cohort/synthea.py)
-      active medications
+    PTSD, depression, diabetes,  synthea_veteran_profiles   one whole Synthea veteran per
+      cancer treatment, suicide                             person, from their own sex and
+      risk, substance use,                                  ACS age band (cohort/synthea.py)
+      homeless, active meds
 
 What no public source publishes per person or per ZIP is drawn from the named constants in
 the ASSUMPTIONS block, and every column those feed carries a `_synthetic` flag.
@@ -73,7 +73,6 @@ PLACES_RATES = {
     "no_caregiver": "emotionspt_crudeprev",  # lacks social and emotional support
     "copd": "copd_crudeprev",
     "asthma": "casthma_crudeprev",
-    "diabetes": "diabetes_crudeprev",
     # PLACES publishes coronary heart disease, not heart failure. CHD is the nearest
     # measured per-ZIP cardiac rate, so CHF is proxied by it. Say so if asked.
     "chf": "chd_crudeprev",
@@ -87,8 +86,10 @@ PLACES_RATES = {
 # and know nothing about ZIPs; these are the published numbers the panel is held to instead.
 # --------------------------------------------------------------------------- #
 
-#: Depression: CDC PLACES per-ZIP crude prevalence, the same source and gradient as before.
-SYNTHEA_PLACES_TARGETS = {"depression": "depression_crudeprev"}
+#: Depression and diabetes: CDC PLACES per-ZIP crude prevalence, the same sources and
+#: gradients as before. Diabetes moved here so insulin always arrives with its diagnosis.
+SYNTHEA_PLACES_TARGETS = {"depression": "depression_crudeprev",
+                          "diabetes": "diabetes_crudeprev"}
 
 #: Past-year PTSD by service era. VA National Center for PTSD, "How Common Is PTSD in
 #: Veterans?", https://www.ptsd.va.gov/understand/common/common_veterans.asp :
@@ -432,6 +433,7 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
     profile = synthea.draw(sex, age, seed, targets={
         "ptsd": np.vectorize(PTSD_PAST_YEAR.get)(era),
         "depression": col("rate_depression"),
+        "diabetes": col("rate_diabetes"),
         "substance_use_disorder": np.vectorize(SUD_PAST_YEAR.get)(era),
     })
     record = {f: profile[f].to_numpy() for f in synthea.FLAGS}
@@ -482,7 +484,7 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
 
     # Chronic load and 12-month utilisation.
     named = sum(x.astype(int) for x in (
-        places["copd"], places["asthma"], places["chf"], places["diabetes"], dialysis,
+        places["copd"], places["asthma"], places["chf"], record["diabetes"], dialysis,
         record["active_cancer_tx"], ptsd, record["depression"]))
     other = _stream(seed, "other_chronic").poisson(
         np.where(older, OTHER_CHRONIC["65_plus"], OTHER_CHRONIC["under_65"]))
@@ -517,7 +519,7 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
         "copd": places["copd"],
         "asthma": places["asthma"],
         "chf": places["chf"],
-        "diabetes": places["diabetes"],
+        "diabetes": record["diabetes"],
         "ckd_dialysis": dialysis,
         "active_cancer_tx": record["active_cancer_tx"],
         "ptsd": ptsd,

@@ -374,6 +374,18 @@ manifest hashes to change.
   `substance_use_disorder` is tilted to (`SUD_PAST_YEAR`); the panel has no combat-zone flag,
   so gulf and post-9/11 service stands in for combat-zone service, which is an assumption.
   Synthea's own rate in the profiles is 26.8%.
+- **Synthea medication artifacts, and the rules that remove them** (`cohort/synthea.py`).
+  Synthea treats *prediabetes* with insulin 70/30 and never stops it (1,072 of the run's 2,102
+  open glucose-lowering prescriptions); insulin whose reason is prediabetes is dropped, and
+  `diabetes` now comes from the same patient, so insulin always arrives with its diagnosis.
+  Synthea's ended opioid prescriptions run a median 28 days, but 951 open ones started before
+  2025; an opioid (CN101) counts only if started within **90 days**, CDC's acute-plus-subacute
+  window — *CDC Clinical Practice Guideline for Prescribing Opioids for Pain, 2022*,
+  https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9639433/ (acute < 1 month, subacute 1–3
+  months; read 5 October 2026). Checked against GAO, *VA Health Care: Progress Made Towards
+  Improving Opioid Safety*, GAO-18-380 — https://www.gao.gov/products/gao-18-380 — where the
+  share of VA patients dispensed an opioid fell from ~17% to **~10%** per quarter (FY2013 Q4 →
+  FY2018 Q1). The panel sits at 4.6%, below that, as a point-in-time share should.
 
 ---
 

@@ -23,11 +23,11 @@ N = 10_000
 
 #: Track A's condition columns. Each is one Synthea module (or module family).
 FIELDS = ("ptsd", "depression", "active_cancer_tx", "suicide_risk",
-          "substance_use_disorder", "homeless")
+          "substance_use_disorder", "homeless", "diabetes")
 NEW_COLUMNS = ("suicide_risk", "substance_use_disorder", "homeless")
 
 #: Flags the draw is tilted to a cited rate (build.py, "Track A"). The rest take Synthea's own.
-WEIGHTED = ("ptsd", "depression", "substance_use_disorder")
+WEIGHTED = ("ptsd", "depression", "substance_use_disorder", "diabetes")
 UNWEIGHTED = tuple(f for f in FIELDS if f not in WEIGHTED)
 
 #: The stated tolerance: the cohort's rate must sit within this many binomial standard
@@ -135,12 +135,26 @@ def _write_csvs(tmp: Path) -> Path:
         "CODE": ["999", "999"],
     }).write_csv(tmp / "procedures.csv")
     pl.DataFrame({
-        "START": ["2020-01-01", "2010-01-01"],
-        "STOP": [None, "2011-01-01"],
-        "PATIENT": ["alive", "alive"],
-        "CODE": ["312938", "310385"],
+        # sertraline (open), fluoxetine (ended), insulin 70/30 for *prediabetes* (open),
+        # hydrocodone started 2014 and never closed, oxycodone started 30 days ago.
+        "START": ["2020-01-01", "2010-01-01", "2019-01-01", "2014-03-01", "2025-12-02"],
+        "STOP": [None, "2011-01-01", None, None, None],
+        "PATIENT": ["alive"] * 5,
+        "CODE": ["312938", "310385", INSULIN_70_30, HYDROCODONE, OXYCODONE],
+        "REASONCODE": [None, None, synthea.PREDIABETES, "47505003", None],
     }).write_csv(tmp / "medications.csv")
     return tmp
+
+
+#: Real RxNorm codes from the run: Humulin 70/30, hydrocodone/APAP 10/300, oxycodone 5 mg.
+INSULIN_70_30, HYDROCODONE, OXYCODONE = "106892", "856980", "1049621"
+METFORMIN_1000 = "861004"   # metformin hydrochloride 1000 MG oral tablet
+
+
+def test_the_fixture_codes_are_the_classes_the_rules_are_about() -> None:
+    assert "HS501" in medications.classes_for([INSULIN_70_30])
+    assert "CN101" in medications.classes_for([HYDROCODONE])
+    assert "CN101" in medications.classes_for([OXYCODONE])
 
 
 def test_the_distiller_keeps_active_conditions_and_meds_and_drops_the_dead(tmp_path: Path) -> None:
@@ -158,7 +172,9 @@ def test_the_distiller_keeps_active_conditions_and_meds_and_drops_the_dead(tmp_p
     assert row["suicide_risk"] is True, "a suicide-risk finding in the record counts"
     assert row["substance_use_disorder"] is True
     assert row["active_cancer_tx"] is False, "an open cancer with no treatment in 365 days"
-    assert row["rxcuis"] == ["312938"], "only medications still active at the reference date"
+    assert set(row["rxcuis"]) == {"312938", OXYCODONE}, (
+        "active at the reference date, minus insulin for prediabetes and opioids started "
+        "more than ACUTE_DAYS ago")
 
 
 # --------------------------------------------------------------------------- #
@@ -199,9 +215,9 @@ def test_unweighted_prevalence_matches_the_synthea_source_within_three_standard_
 
 def _cited_target(cohort: pl.DataFrame, field: str) -> np.ndarray:
     """Each veteran's cited rate, read straight from the sources -- not from build.py's frame."""
-    if field == "depression":
+    if field in ("depression", "diabetes"):
         places = pl.read_parquet(REF / "places_zcta_nyc.parquet").select(
-            pl.col("zcta").alias("geo_id"), (pl.col("depression_crudeprev") / 100).alias("t"))
+            pl.col("zcta").alias("geo_id"), (pl.col(f"{field}_crudeprev") / 100).alias("t"))
         return cohort.select("geo_id").join(places, on="geo_id", how="left")["t"].to_numpy()
     table = {"ptsd": build.PTSD_PAST_YEAR, "substance_use_disorder": build.SUD_PAST_YEAR}[field]
     return np.vectorize(table.get)(cohort["deployment_era"].to_numpy())
@@ -277,6 +293,32 @@ def test_a_psychiatric_diagnosis_brings_its_medication_with_it(cohort: pl.DataFr
     assert with_dx is not None and without is not None
     assert with_dx > 2 * without, (
         f"antidepressant use {with_dx:.1%} with PTSD/depression vs {without:.1%} without")
+
+
+def test_no_veteran_is_on_insulin_without_diabetes(cohort: pl.DataFrame) -> None:
+    """Synthea treats prediabetes with insulin 70/30 and never stops it; that put 26% of the
+    panel on a cold-chain drug. Insulin for prediabetes is dropped, and diabetes now comes
+    from the same patient, so an insulin list always carries its diagnosis."""
+    insulin = cohort["va_drug_classes"].list.contains("HS501")
+    assert not (insulin & ~cohort["diabetes"]).any()
+    assert insulin.mean() < cohort["diabetes"].mean()
+
+
+def test_opioid_use_is_near_the_vas_published_dispensing_rate(cohort: pl.DataFrame) -> None:
+    """GAO-18-380: ~10% of VA patients were dispensed an opioid in a quarter (FY2018 Q1).
+    Synthea leaves opioid prescriptions open for years, which put 25% of the panel on one.
+    With the 90-day rule (CDC 2022: acute < 1 month, subacute 1-3) the panel must sit at
+    or below the published quarterly rate."""
+    share = cohort["va_drug_classes"].list.contains("CN101").mean()
+    assert share is not None and share <= 0.10, f"{share:.1%} of veterans on an opioid"
+
+
+def test_metformin_is_not_cold_chain() -> None:
+    """HS500 is the parent class of every glucose-lowering drug; flagging it cold-chain made
+    metformin tablets spoil in an outage."""
+    assert medications.classes_for([METFORMIN_1000]) == ["HS500"]
+    assert not medications.flags_for([METFORMIN_1000])["med_cold_chain"]
+    assert medications.flags_for([INSULIN_70_30])["med_cold_chain"], "insulin still is"
 
 
 def test_a_homeless_veteran_has_no_home_to_cool(cohort: pl.DataFrame) -> None:

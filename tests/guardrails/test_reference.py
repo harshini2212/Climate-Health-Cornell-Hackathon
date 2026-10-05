@@ -34,7 +34,7 @@ ZIP_LEVEL = {
 def test_manifest_entry_is_intact(name: str) -> None:
     entry = MANIFEST[name]
     path = REF / entry["file"]
-    if entry["file"].endswith(".zip"):  # raw download, not committed
+    if entry["file"].endswith((".zip", "/")):  # raw download or run output, not committed
         pytest.skip(f"{entry['file']} lives in data/raw and is not committed")
     assert path.exists(), f"{path} is in the manifest but missing from the repo"
     assert path.stat().st_size == entry["bytes"], f"{path.name} size changed since fetch"

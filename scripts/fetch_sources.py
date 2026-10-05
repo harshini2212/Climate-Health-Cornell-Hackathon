@@ -709,15 +709,15 @@ def fetch_synthea_veterans():
                    cwd=jar.parent, check=True)
     n = sum(1 for _ in (out / "csv" / "patients.csv").open()) - 1
     return {"file": "synthea_veterans/csv/", "url": synthea.JAR_URL, "rows": n, "cols": 0,
-            "sha256": digest[:16], "bytes": jar.stat().st_size,
+            "sha256": digest, "bytes": jar.stat().st_size,   # full: it pins the generator
             "note": f"{n} patients (living and dead) from Synthea {synthea.SYNTHEA_VERSION}",
             "fetched_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
 
 
 @source("synthea_veteran_profiles", "derived: data/raw/synthea_veterans/csv/",
         "One row per living adult in the Synthea veteran run: sex, age, the Track A flags "
-        "(ptsd, depression, active_cancer_tx, suicide_risk, substance_use_disorder, "
-        "homeless) and active RxNorm codes. The cohort draws whole profiles from it, so a "
+        "(ptsd, depression, diabetes, active_cancer_tx, suicide_risk, "
+        "substance_use_disorder, homeless) and active RxNorm codes. The cohort draws whole profiles from it, so a "
         "veteran's diagnoses and prescriptions belong to one patient.", heavy=True)
 def fetch_synthea_veteran_profiles():
     from leeward.cohort.synthea import profiles_from_csv

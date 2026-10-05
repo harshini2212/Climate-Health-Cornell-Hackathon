@@ -127,9 +127,11 @@ the cohort draws one whole profile from `synthea_veteran_profiles.parquet` per v
 within their sex and ACS age band, so a PTSD or depression diagnosis arrives with the
 medications that patient was actually prescribed. Synthea's own rates are off for three of
 the flags (PTSD ~1% of records, substance use ~27%, no ZIP gradient for depression), so the
-pick is tilted toward cited rates — VA NCPTSD by era, NSDUH, and PLACES per ZIP — without
-ever splitting a profile (`cohort/synthea.py`, "Weighting"). `diabetes`, `copd`, `asthma` and
-`chf` still come from PLACES, so a cold-chain medication does not yet imply `diabetes`.
+pick is tilted toward cited rates — VA NCPTSD by era, NSDUH, and PLACES per ZIP for
+depression and diabetes — without ever splitting a profile (`cohort/synthea.py`,
+"Weighting"). Insulin for prediabetes and opioids started more than 90 days earlier are
+Synthea artifacts and are dropped when the profiles are distilled. `copd`, `asthma` and
+`chf` still come from PLACES.
 
 ### Care sites and hazard to those sites
 

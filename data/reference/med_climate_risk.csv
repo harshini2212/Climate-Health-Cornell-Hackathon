@@ -41,7 +41,7 @@ RE105,"BRONCHODILATORS,ANTICHOLINERGIC",anticholinergic,heat,0.4,1,0,0,0,ACB_sca
 MS101,"SALICYLATES,ANTIRHEUMATIC",renal_injury_with_dehydration,heat,0.6,0,0,0,0,CDC_heat_meds
 MS102,"NONSALICYLATE NSAIs,ANTIRHEUMATIC",renal_injury_with_dehydration,heat,0.7,0,0,0,0,CDC_heat_meds
 HS501,"INSULIN",requires_refrigeration,outage,1.0,0,0,1,1,CDC_heat_meds
-HS500,"BLOOD GLUCOSE REGULATION AGENTS",some_require_refrigeration,outage,0.5,0,0,1,0,CDC_heat_meds
+HS500,"BLOOD GLUCOSE REGULATION AGENTS",some_require_refrigeration,outage,0.5,0,0,0,0,CDC_heat_meds
 BL110,"ANTICOAGULANTS",narrow_ti_requires_monitoring,access_loss,0.6,0,0,0,1,CDC_heat_meds
 HS851,"THYROID SUPPLEMENTS",narrow_ti,access_loss,0.3,0,0,0,1,CDC_heat_meds
 HS050,"ADRENAL CORTICOSTERIODS",cannot_stop_abruptly,access_loss,0.7,0,0,0,0,CDC_heat_meds
