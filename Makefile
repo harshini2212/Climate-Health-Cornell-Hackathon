@@ -11,9 +11,12 @@ help:               ## show this
 # Nobody reads diffs on this project; this is the review.
 # --------------------------------------------------------------------------- #
 
-check:              ## THE GATE: lint + every test (parallel, once) + the guardrail to-do list
+check:              ## THE GATE, same as CI: lint, types, import layering, every test (parallel, once)
 	@echo "── lint ──────────────────────────────────────────────"
 	@.venv/bin/ruff check leeward scripts tests || (echo "ruff failed"; exit 1)
+	@echo "── types and layering ────────────────────────────────"
+	@.venv/bin/mypy leeward || (echo "mypy failed"; exit 1)
+	@.venv/bin/lint-imports || (echo "import layering broken"; exit 1)
 	@echo "── tests ─────────────────────────────────────────────"
 	@out=$$(mktemp); rc=$$(mktemp); \
 	  { .venv/bin/pytest -n auto -rs -p no:cacheprovider; echo $$? > $$rc; } | tee $$out; \

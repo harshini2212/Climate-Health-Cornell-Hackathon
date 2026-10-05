@@ -1,6 +1,6 @@
 # Leeward — Care that gets ahead of the weather
 
-**Veteran care continuity under climate events.** Health in Climate AI Hackathon, NYC 2026.
+**Veteran care continuity under climate events.** Second place, Health in Climate AI Hackathon NYC 2026; now being built toward a VA pilot.
 
 Leeward turns a climate forecast into a ranked action list for VA care teams: **who** to call, **when**, and **why**, given how many calls the team can actually make that day. It predicts daily risk for each veteran, estimates what each outreach action would change, and allocates scarce staff time where it averts the most harm.
 
@@ -20,7 +20,7 @@ Every veteran already has a care team. Leeward tells that team which 40 of its 1
 - [Demo storyline](#demo-storyline)
 - [Repository layout](#repository-layout)
 - [Getting started](#getting-started)
-- [Team workflow](#team-workflow)
+- [Contributing](#contributing)
 - [Limits and what we will not claim](#limits-and-what-we-will-not-claim)
 - [Documents](#documents)
 - [Sources](#sources)
@@ -228,30 +228,20 @@ Screens, in order:
 
 ```
 leeward/
-  CLAUDE.md                     # project brief, contracts, rules for every coding session
-  Makefile                      # data | cohort | fit | score | demo | report | test
-  pyproject.toml
-  docs/
-    SPEC.md                     # full build spec: contracts, acceptance tests, per-track prompts
-    Leeward_Proposal.pdf        # the proposal
-    sources.md                  # every cited number with a URL
-    slides/
-  data/
-    raw/                        # gitignored, fetched by `make data`, snapshotted for offline demo
-    cohort.parquet  truth.json  outcomes.parquet  posterior.nc
-    scores.parquet  actions.parquet  outcome_log.parquet
-  scenarios/                    # sandy_then_heat.yaml  ida_flash_flood.yaml  smoke_2023.yaml
-  leeward/
-    schema.py                   # pydantic + polars schemas: the frozen contracts
-    ingest/                     # nws, airnow, floodnet, empower, hvi, stormwater, evac_zones, acs, facilities
-    cohort/                     # fhir_reader, rehome, augment, simulate, missingness
-    model/                      # priors, design, hazard (NumPyro), fit, score, decompose
-    decision/                   # severity, tau, eha, allocate, tiers, value_of_info
-    outreach/                   # messages, verify, export, outcome_log
-    api/                        # FastAPI: /forecast /scores /veteran /actions /message /log /report /export
-    eval/                       # recovery, calibration, ppc, sbc, holdout, ablate, fairness, decision_quality
-  ui/                           # React + Vite + deck.gl: Forecast, Map, CareTeam, VeteranCard, Message, Report
-  tests/
+  ingest/      hazards.py: scenario YAML + reference tables -> hazards, site status
+  cohort/      synthetic cohort generator, medications, missingness, outcome simulator
+  model/       priors, shared design matrix, NumPyro hazard model, fit, score
+  decision/    severity and tau (YAML), expected harm averted, tiers, capacity allocation
+  outreach/    verified messages, verification, partner export
+  api/         FastAPI app and request/response schemas
+  eval/        calibration, discrimination, recovery, ablations, fairness, decision quality
+  schema.py    the table contracts; every write validates through it
+data/          reference/ (22 public tables, committed), truth.json, generated parquets
+scenarios/     sandy_then_heat, ida_flash_flood, smoke_2023
+scripts/       fetch_sources.py, fixtures, baselines, smoke and clean-clone checks
+ui/            React + Vite + deck.gl
+tests/         unit/, contracts/, guardrails/, demo/
+docs/          SPEC.md, ROADMAP.md, DEMO.md, sources.md, proposal.md, BASELINES.md
 ```
 
 The full contracts (every parquet column, every API route) are in [docs/SPEC.md](docs/SPEC.md) §3 and §9.
@@ -263,12 +253,12 @@ The full contracts (every parquet column, every API route) are in [docs/SPEC.md]
 ```bash
 git clone https://github.com/harshini2212/Climate-Health-Cornell-Hackathon.git
 cd Climate-Health-Cornell-Hackathon
-make setup      # venv + deps
-make test
+make setup      # venv + locked deps
+make check      # lint + every test
 make demo       # must boot offline, with no .env and no API key
 ```
 
-**The public data is already in the repo.** `data/reference/` holds 21 joined and verified
+**The public data is already in the repo.** `data/reference/` holds 22 joined and verified
 tables (~4 MB, committed): NYC MODZCTA polygons, the Heat Vulnerability Index, hurricane
 evacuation zones, stormwater flood extent, CDC PLACES and SVI, FEMA National Risk Index, HHS
 emPOWER, ACS veteran counts, the VHA facility registry, FloodNet events, and real EPA AirNow
@@ -280,53 +270,22 @@ Makefile targets, in pipeline order:
 | Target | What it does |
 | --- | --- |
 | `make sources` | Re-fetch the public data into `data/reference/`. Already done and committed; only needed to refresh. |
-| `make fixtures` | Fake-but-correctly-shaped parquets, so every lane can start before the real cohort exists. |
+| `make fixtures` | Fake-but-correctly-shaped parquets for every contract table, for tests and offline work. |
 | `make cohort` | Build the synthetic NYC cohort, plant `truth.json`, simulate 120 days of outcomes. |
-| `make fit` | Fit the NumPyro model on binomial cells and cache `posterior.nc` (about 5–10 min on 8 CPU cores). Not built yet: the model is at rung 0, so the target refuses with an explanation until `leeward/model/fit.py` lands, and starts fitting the moment it does. |
-| `make score` | Score the cohort against the scenario's hazards, then allocate: `scores.parquet` and `actions.parquet`. Runs the rung-0 prior scorer until there is a posterior one. |
+| `make fit` | Fit the rung-1 NumPyro model on binomial cells and cache `posterior.nc` (about 37 min on a laptop; r-hat 1.008, zero divergences on the last full fit). |
+| `make score` | Score the cohort against the scenario's hazards, then allocate: `scores.parquet` and `actions.parquet`. Uses the fitted posterior when one is cached, otherwise the rung-0 prior scorer. |
 | `make demo` | Boot the API and UI. Target: under 60 s from a clean clone, fully offline. |
 | `make report` | Run the full evaluation harness, including the fairness audit, into `report/report.json`. |
-| `make test` | `pytest -q`. Must pass before any merge. |
+| `make check` | Lint and every test, in parallel. Must be green before any merge. |
+| `make perf` | The three timing budgets (slider < 300 ms, scoring < 5 s, toy model fit < 60 s), on a quiet machine. |
 
-> The codebase is being built during the hackathon (19–20 September 2026). Until the Makefile lands, the spec in `docs/SPEC.md` is the source of truth for what each target must do and how it is accepted.
 
-## Team workflow
+## Contributing
 
-Two builders, six Claude Code terminals, six git worktrees, one `main`. The full plan —
-contract freeze, checkpoints, cut list, per-lane prompts — is in
-[`docs/BUILD_PLAN.md`](docs/BUILD_PLAN.md).
-
-| Owner | Lanes | Ships |
-| --- | --- | --- |
-| **Rahul** — runs the live demo | `api`, `ui`, `demo` | A demo that never breaks |
-| **Partner** — owns the numbers | `cohort`, `model`, `eval` | Numbers that survive "how do you know?" |
-
-Two rules make two people work like four:
-
-1. **Spine before substance.** By T+2h there is a running end-to-end demo with fake numbers.
-   Every hour after that replaces one fake with one real thing. You are never in a state
-   where there is nothing to show.
-2. **Contracts before parallelism.** The first 45 minutes produce `schema.py`,
-   `api/schemas.py` and a fixture generator. After that no lane blocks another, and nobody
-   edits a contract file they do not own.
-
-The model is built as a **ladder** — prior-only, then pooled NUTS, then interactions and
-SiteDown, then ICAR and the latent dose — each rung writing the same posterior contract. Rung
-0 is built first and is the demo's floor, not a fallback.
-
-Rules everyone follows (see [CLAUDE.md](CLAUDE.md)):
-
-- Branch per lane. Merge to `main` through a green `pytest -q`, every 60–90 minutes.
-- One task per prompt. Write the acceptance test first. Ask before touching a contract file.
-- Never invent a neighbourhood rate that already exists in `data/reference/`.
-- Every real number shown anywhere is in `docs/sources.md` with a URL. Synthetic numbers say so.
-- A failing fairness audit is displayed, never suppressed.
-
-**Cut in this order:** SBC → ICAR + latent dose → prior slider → partner export →
-outcome-log write-back → Ida scenario → deck.gl (fall back to Plotly) → rung-2 interactions.
-
-**Never cut:** Walter's card, the capacity slider, the calibration plot, the SiteDown term,
-the verified-message screen.
+See [CONTRIBUTING.md](CONTRIBUTING.md): branch from `main`, write the test first, `make check`
+green, one review, squash-merge. The model is built as a **ladder**: prior-only, then pooled
+NUTS, then interactions and SiteDown, then the spatial prior and latent dose, each rung writing
+the same posterior contract.
 
 ## Limits and what we will not claim
 
@@ -338,21 +297,19 @@ the verified-message screen.
 - Intervention effects τ are literature priors, adjustable in the UI, not measured here.
 - The tool proposes. Clinicians approve every high-tier action. Nothing changes a medication, decides eligibility, or contacts a veteran outside VA-approved channels.
 
-### Next steps after the hackathon
+### What comes next
 
-1. Validate priors on de-identified VA data with a VA research partner under IRB, replacing planted truth with real outcomes.
-2. Pilot for one summer with one NYC VA medical center care team. Success metric: harm averted at fixed staff time, measured against the prior summer.
-3. Connect the Everyday tier to VA Whole Health and NYC Parks shade data so the same model serves veterans on ordinary days.
-4. Publish the cohort generator and evaluation harness as open source so other teams can benchmark against a shared synthetic NYC cohort.
+The plan from here, real-data validation, a second region and a VA pilot, is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Documents
 
 - [docs/proposal.md](docs/proposal.md) — the full proposal: problem, cohort, model, validation plan, action catalog, demo script, pitch script, risks.
-- [docs/BUILD_PLAN.md](docs/BUILD_PLAN.md) — the two-person one-day plan: lanes, contract freeze, checkpoints, cut list, model ladder, demo-engineering checklist, per-lane prompts.
-- [docs/SPEC.md](docs/SPEC.md) — the build spec: architecture, data contracts, per-module acceptance tests, Claude Code prompts.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — what is being built next, and why.
+- [docs/DEMO.md](docs/DEMO.md) — running and demoing Leeward.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — how work lands.
+- [docs/SPEC.md](docs/SPEC.md) — the technical spec: architecture, data contracts, per-module acceptance tests.
 - [data/README.md](data/README.md) — the data catalog, and where every cohort rate comes from.
 - [docs/sources.md](docs/sources.md) — every cited number with a URL, plus the endpoints that moved.
-- [CLAUDE.md](CLAUDE.md) — the project brief every coding session reads first.
 
 ## Sources
 

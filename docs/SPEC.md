@@ -1,22 +1,20 @@
-# Leeward — Build Spec and Claude Code Plan
+# Leeward — Technical Specification
 
 *Companion to [proposal.md](proposal.md) · 19 Sep 2026 · v3*
 
-> **Scheduling lives in [`docs/BUILD_PLAN.md`](BUILD_PLAN.md) now.** This file kept a 26-hour, four-track schedule that does not survive contact with a two-person team. §12 has been replaced with a pointer. Everything else here — contracts, acceptance tests, per-module prompts — still holds.
 
 > **Ingest is done.** §4 was four hours of work; it is now a `data/reference/` directory committed to the repo. See [`data/README.md`](../data/README.md).
 
-This file is written to be dropped into the repo as `docs/SPEC.md` and pointed to from `CLAUDE.md`. Every section states a contract, an acceptance test, and the Claude Code prompt that builds it.
+Every section states a contract and the acceptance test that holds it.
 
 ---
 
 ## 0. Ground rules
 
 - **Synthetic only.** No code path may ingest PHI. Every simulated column has a sibling `<col>_synthetic = True`.
-- **Contracts are frozen after hour 2.** `cohort.parquet`, `scores.parquet`, `posterior.nc`, and the API schemas. Changing one requires editing this file and pinging all tracks.
+- **Contracts change only through this file.** `cohort.parquet`, `scores.parquet`, `posterior.nc`, and the API schemas. A PR that changes one edits §3 in the same change.
 - **Nothing runs inference in a request.** `make fit` produces a cached posterior; the API scores from cache.
 - **Every real number in the UI or slides is in `docs/sources.md` with a URL.**
-- **Cut list is respected in order** (`docs/BUILD_PLAN.md` §6). Walter's card, the capacity slider, the calibration plot, the SiteDown term and the verified-message screen are never cut.
 - **Geography key is `modzcta`**, not `zip` — NYC's 178 Modified ZCTAs. Everything joins on it.
 - **No API keys.** A clean clone with no `.env` must produce a working demo. Three upstream APIs now want keys; `docs/sources.md` §3 lists the keyless replacements the build uses.
 
@@ -68,7 +66,7 @@ leeward/
     slides/                     # 8 slides
   scripts/
     fetch_sources.py            # DONE: vendors every public source into data/reference/
-    make_fixtures.py            # fake-but-correctly-shaped parquets; unblocks all lanes
+    make_fixtures.py            # fake-but-correctly-shaped parquets for every contract table
     clean_clone_test.sh
   data/
     README.md                   # the data catalog: what each file is, and the augment priors
@@ -270,19 +268,10 @@ cleanly across the five ZIP-level tables. `make demo` must pass with the network
 `hazards.parquet` (modzcta × day) and `site_status.parquet` (facility × day) by combining the
 reference tables with a scenario YAML. That is one module, not nine.
 
-> **Claude Code prompt:**
-> Read `data/README.md` and `docs/SPEC.md` §3.2. Implement `leeward/ingest/hazards.py`:
-> given a scenario YAML and the tables in `data/reference/`, emit `data/hazards.parquet`
-> (one row per modzcta × day, 120 days) and `data/site_status.parquet` (facility × day).
-> Heat, smoke, flood, surge and outage come from the scenario; `evac_zone_min`,
-> `stormwater_flooded_frac` and `hvi` are static per-ZIP joins. For the smoke scenario, read
-> real PM2.5 from `airnow_pm25_nyc_smoke2023.parquet` by nearest monitor rather than
-> simulating it. Write the test first: every modzcta appears on every day, no nulls, and on
-> the scenario's smoke days the citywide mean PM2.5 exceeds 90 µg/m³.
 
 ---
 
-## 5. Cohort generator — lane `cohort`
+## 5. Cohort generator
 
 ### 5.1 fhir_reader.py
 Reads Synthea FHIR R4 bundles (the VA release ships CSV and FHIR; use FHIR so the same reader points at a real FHIR base later). Extract Patient, Condition, MedicationRequest, Device, Encounter, Observation (SDoH). Flag `--fhir-base URL --token` for a live server (stretch).
@@ -437,12 +426,10 @@ events:
 
 **Acceptance:** `make cohort` writes cohort, outcomes and truth; `test_cohort.py` checks group rates (including caregiver and income bands) within ±20 percent of targets and that outcome base rates per need are 0.2–2 percent per day off-event.
 
-**Claude Code prompt (Track A, simulate):**
-> Implement `leeward/cohort/simulate.py` using `leeward/model/design.py` to build the linear predictor from `truth.json` and `hazards.parquet`, then draw Bernoulli outcomes for 120 days. Add a test that, with all hazards zeroed, the mean daily rate per need is within 30 percent of `sigmoid(alpha_k)`, and that on `site_down` days the treatment-gap rate for dialysis patients at that facility at least triples.
 
 ---
 
-## 6. Model — lanes `model` and `eval`
+## 6. Model
 
 ### 6.0 The ladder — build this way, not all at once
 
@@ -463,7 +450,7 @@ failed to fit is worse than a simpler one that did.
 ### 6.1 design.py — shared by simulator and model
 Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)` and `lag stacks`: one row per veteran-day, columns in `design.FEATURES` order.
 
-**The binomial cells moved to `hazard.cells()`** (rung 1, September 2026) and `design.py` was left alone, because the simulator shares it and the cohort lane owns it. Two changes to what this section originally specified, both in the safer direction:
+**The binomial cells moved to `hazard.cells()`** (rung 1, September 2026) and `design.py` was left alone, because the simulator shares it. Two changes to what this section originally specified, both in the safer direction:
 
 - The grouping key is **the exact design row**, not `(zip, stratum, date)`. The likelihood depends on a veteran-day only through its row of `X`, so identical rows are one cell whatever ZIP or day they came from — which is *exactly* equal to the Bernoulli likelihood rather than approximately, and `tests/test_hazard_toy.py` asserts that against the panel. Measured over the 120-day panel: 1,200,000 veteran-days → **135,743 cells, 8.8×** (and the same 8.8× on the 6M Bernoulli terms — a cell still carries one binomial term per need, not one in total).
 - Grouping is on the **active** columns for the rung, so at rung 1 two veterans who differ only in a medication interaction are one cell.
@@ -532,12 +519,10 @@ Driver contributions = each term's posterior-mean contribution to the linear pre
 
 **Acceptance:** `test_hazard_toy.py` fits 200 veterans × 30 days in < 60 s with zero divergences after warmup; `make fit` writes `posterior.nc` with r-hat < 1.05 on all parameters.
 
-**Claude Code prompt (Track B, first task):**
-> Read docs/SPEC.md §6. Implement `leeward/model/hazard.py` and `fit.py` for the binomial-cell likelihood with alpha, ICAR phi, health betas, one interaction block, and the 4-lag heat curve. Skip the latent dose for now (leave a TODO and a flag). Fit on a 200-veteran toy cohort from `tests/fixtures/`. Report r-hat and divergences. Ask me before changing `design.py`.
 
 ---
 
-## 7. Decision layer — lane `api`
+## 7. Decision layer
 
 ### 7.1 severity.py — w_k (clinician-editable YAML)
 `breathing 3, heat 4, mental 4, treatment_gap 5, access_loss 3`
@@ -578,12 +563,10 @@ The second Find-out rule is not a loosening of the first; it reads a different c
 
 **Acceptance:** `test_allocate.py` hand-checkable 5-veteran case; capacity never exceeded; raising capacity never lowers total EHA.
 
-**Claude Code prompt (Track C):**
-> Implement `leeward/decision/allocate.py`: greedy selection maximizing summed EHA per cost unit under `capacity: dict[str,int]`, at most one action per veteran unless tier == "act_now" (max 3). Add `group_floor` support. Write a 5-veteran test where the optimum is obvious, and a property test that increasing any capacity never decreases total EHA.
 
 ---
 
-## 8. Outreach — lane `api`
+## 8. Outreach
 
 - `messages.py`: templates per tier and hazard. Every message contains: channel tag (`VEText` / `MHV` / `care_team_phone`), a 4-word verification phrase from `verify.py` (deterministic per veteran-day from a seed; word list of 512 common words), the line *"The VA will never ask you to pay, wire money, or share bank details,"* `VSAFE 833-388-7233`, and `Veterans Crisis Line: dial 988, press 1`. Flood messages add the evacuation center with step-free access and a "pack list" (meds, equipment, chargers, IDs). Caregiver-addressed messages name the veteran, state the plan in second person to the caregiver, and never include diagnoses. Low-assets messages state what is free (HEAP, cooling centers, emergency refill voucher, VA transport) and never suggest a paid option.
 - `export.py`: partner sheet CSV with `consent_partner_check, consent_ride, consent_housing` flags; rows without consent are excluded, never redacted.
@@ -593,7 +576,7 @@ The second Find-out rule is not a loosening of the first; it reads a different c
 
 ---
 
-## 9. API — lane `api`
+## 9. API
 
 | route | returns |
 | --- | --- |
@@ -606,7 +589,6 @@ The second Find-out rule is not a loosening of the first; it reads a different c
 | `GET /report` | eval JSON for the Model report screen |
 | `GET /export?date=` | partner sheet CSV |
 
-Stub with fake data by hour 2 so Track D can build against it.
 
 ### 9.1 What the routes do beyond the table
 
@@ -627,7 +609,7 @@ Stub with fake data by hour 2 so Track D can build against it.
 
 ---
 
-## 10. UI — lane `ui`
+## 10. UI
 
 Screens, in demo order: Forecast → Map → Care team list → Veteran card → Message → Model report.
 
@@ -639,12 +621,10 @@ Screens, in demo order: Forecast → Map → Care team list → Veteran card →
 
 **Acceptance:** `make demo` boots API + UI in < 60 s from a clean clone; every screen renders with the stub API; slider round-trip < 300 ms.
 
-**Claude Code prompt (Track D):**
-> Build `ui/src/screens/CareTeam.tsx`: fetch `POST /actions` with `{date, capacity}`, render a ranked table (rank, name, tier badge, top driver, EHA), a `CapacitySlider` (10–100) that re-fetches on release, and a harm-averted counter that animates between values. Use the stub API. No external UI kit beyond what is in package.json.
 
 ---
 
-## 11. Evaluation harness — lane `eval`
+## 11. Evaluation harness
 
 | script | output | pass bar |
 | --- | --- | --- |
@@ -680,50 +660,10 @@ than the cohort; under a 40-call budget the allocator follows through on the fir
 2.17×) but lands at parity on the other two (0.97× and 1.05×). `flag_is_reachable()` says which
 regime a report is in, and every rendering of the table repeats it.
 
-**Claude Code prompt (Track B, eval):**
-> Implement `leeward/eval/decision_quality.py`: for each day in 91–120 and K in {20,40,80}, select actions with `allocate.py` and with three baselines (rank by age, rank by n_chronic, random with seed), then compute harm averted = Σ w_k · τ[a,k] · y_true[i,k,t] over selected veterans. Output a tidy CSV and a Plotly bar chart. Add a test on a tiny fixture where Leeward must beat random.
 
 ---
 
-## 12. Schedule and cut list → [`docs/BUILD_PLAN.md`](BUILD_PLAN.md)
-
-The four-track, 26-hour table that lived here assumed four builders. The real team is two
-people running six Claude Code terminals in six git worktrees over one day.
-
-[`docs/BUILD_PLAN.md`](BUILD_PLAN.md) carries: the 45-minute contract freeze that unblocks
-all six lanes, who owns which contract file, the merge protocol, hour-by-hour checkpoints,
-the re-ordered cut list, the model ladder, the demo-engineering checklist, and a first-message
-Claude Code prompt per lane.
-
-The cut list, repeated here because it is the part people forget under pressure:
-
-**Cut in this order:** SBC → rung 3 (ICAR + latent dose) → prior slider → partner export →
-outcome-log write-back → Ida scenario → deck.gl (fall back to Plotly) → rung 2 interactions.
-
-**Never cut:** Walter's card · the capacity slider · the calibration plot · the SiteDown term ·
-the verified-message screen.
-
----
-
-## 13. CLAUDE.md
-
-`CLAUDE.md` at the repo root is the live copy and is the one to edit. It is no longer
-duplicated here, because two copies of a project brief drift apart within hours.
-
----
-
-## 14. Working with Claude Code, per session
-
-1. Open with: `Read CLAUDE.md, then data/README.md, then docs/SPEC.md §<section>. Run make test. Summarize what exists and what is missing for my next task.` The `data/README.md` read matters — it is what stops an agent inventing a rate that is already in the repo.
-2. One task per prompt. State the acceptance test in the prompt. Prefer "add a test, then make it pass."
-3. For anything touching `schema.py`, `design.py`, or `api/schemas.py`: `Propose a plan and the diff to docs/SPEC.md first; do not edit until I say go.`
-4. Every 2 hours: `Run make test and make demo; report anything red; do not fix unrelated failures.`
-5. Sunday 09:00: `Do a clean-clone test in /tmp: git clone, make demo with the network blocked. Report time to boot.`
-6. Last hour: `Freeze. Only fix crashes. Produce docs/sources.md from every URL in the repo and confirm each number in ui/ appears there.`
-
----
-
-## 15. Definition of done
+## 12. Definition of done (first version)
 
 - `make demo` from a clean clone boots in < 60 s and runs offline, with no `.env` and no API key.
 - The model rung actually fitted is written down, with r-hat.
