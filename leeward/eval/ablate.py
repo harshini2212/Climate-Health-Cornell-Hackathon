@@ -260,6 +260,7 @@ def score_ablated(cohort: pl.DataFrame, hazards: pl.DataFrame, site_status: pl.D
         return schema.empty("scores")
     df = pl.concat(parts)
     return df.select(
+        cohort["region_id"].gather(df["_i"]),
         cohort["veteran_id"].gather(df["_i"]),
         "date",
         _decode("_k", NEEDS).alias("need"),

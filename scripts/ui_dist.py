@@ -48,9 +48,9 @@ def _files(root: Path, rel_dir: str) -> list[Path]:
 def inputs(root: Path = ROOT) -> dict[str, str]:
     """{repo-relative path: sha256} for every file the bundle is built from.
 
-    That includes files *outside* ui/ that the source imports by relative path -- today
-    `data/reference/nyc_modzcta.geojson`, which Map.tsx bundles as an asset. Found by reading
-    the imports rather than listing them, so a new one cannot be forgotten.
+    That includes files *outside* ui/ that the source imports by relative path (none today:
+    the map base comes from `GET /region`, or from ui/public/fixtures/ in a static build).
+    Found by reading the imports rather than listing them, so a new one cannot be forgotten.
     """
     found = [p for d in INPUT_DIRS for p in _files(root, d)]
     found += [root / f for f in INPUT_FILES if (root / f).is_file()]

@@ -110,7 +110,7 @@ def test_the_public_fixtures_the_bundle_copies_are_inputs_too(tree: Path) -> Non
 
 
 def test_a_file_outside_ui_that_the_source_imports_is_an_input(tree: Path) -> None:
-    """Map.tsx bundles data/reference/nyc_modzcta.geojson; regenerating it makes dist stale."""
+    """A file outside ui/ that the source imports is an input; regenerating it makes dist stale."""
     (tree / "data/reference/map.geojson").write_text('{"type": "changed"}')
     assert any("data/reference/map.geojson" in p for p in ui_dist.problems(tree))
 

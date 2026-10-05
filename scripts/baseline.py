@@ -32,6 +32,8 @@ from pathlib import Path
 
 import polars as pl
 
+from leeward import schema
+
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "report" / "baselines"
 DOC = ROOT / "docs" / "BASELINES.md"
@@ -89,10 +91,12 @@ def run_pipeline() -> dict[str, float]:
 
 
 def collect(timings: dict[str, float]) -> dict:
-    cohort = pl.read_parquet(ROOT / "data/cohort.parquet")
-    scores = pl.read_parquet(ROOT / "data/scores.parquet")
-    actions = pl.read_parquet(ROOT / "data/actions.parquet")
-    outcomes = pl.read_parquet(ROOT / "data/outcomes.parquet")
+    # Through schema.upgrade, so a row recorded from pre-region files reads the same way.
+    def read(name: str) -> pl.DataFrame:
+        return schema.upgrade(pl.read_parquet(ROOT / f"data/{name}.parquet"), name)
+
+    cohort, scores, actions, outcomes = (read(t) for t in
+                                         ("cohort", "scores", "actions", "outcomes"))
     report = json.loads((ROOT / "report/report.json").read_text())
 
     ece = report.get("ece_by_need", {})
@@ -156,7 +160,7 @@ def collect(timings: dict[str, float]) -> dict:
         "divergences": report.get("divergences"),
 
         "n_veterans": cohort.height,
-        "n_zips": int(cohort["modzcta"].n_unique()),
+        "n_zips": int(cohort["geo_id"].n_unique()),
         "n_score_rows": scores.height,
         "n_actions": n_act,
         "medication": med,

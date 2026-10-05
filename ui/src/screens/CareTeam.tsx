@@ -155,7 +155,7 @@ export function CareTeam({ scenario, date, onSource, onOpenVeteran }: Props) {
                 return (
                   <tr key={a.action_id} className="click" onClick={() => onOpenVeteran({ veteranId: a.veteran_id, actionId: a.action_id, date: resp.date })}>
                     <td className="n">{a.rank}</td>
-                    <td>{a.name_display}<span className="sub">{a.borough} · {a.modzcta}</span></td>
+                    <td>{a.name_display}<span className="sub">{a.borough} · {a.geo_id}</span></td>
                     <td><span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span>{when && <span className="sub">{when}</span>}</td>
                     <td className="wrap" title={a.rationale}>{ACTION_LABEL[a.action] ?? a.action}{need && <span className="sub">{need}</span>}</td>
                     <td>{risk ? <RiskBar r={risk} /> : <span className="muted">—</span>}</td>

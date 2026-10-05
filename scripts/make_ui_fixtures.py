@@ -22,6 +22,11 @@ Outputs, all under ui/public/fixtures/ and committed (they are small):
                               report`, which is gitignored, so the model report screen
                               still has recovery, reliability and the fairness audit in a
                               clean clone
+    region.json               RegionInfo: the cohort's region, the same answer as
+                              `GET /region`, with geojson_url pointing at the copy below
+    <region_id>.geojson       that region's map base, copied byte for byte from its
+                              reference directory, because a static build has no API
+                              to serve `region/geojson`
 
 Every object is validated through the pydantic models before it is written, so the UI
 is typed against the contract and not against whatever this script happened to emit.
@@ -32,6 +37,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -42,6 +48,7 @@ from leeward import demo, schema
 from leeward.api import schemas as api
 from leeward.api.main import why_tier
 from leeward.decision import severity
+from leeward.geo import region as regions
 from leeward.schema import DEFAULT_CAPACITY
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +57,21 @@ OUT = ROOT / "ui" / "public" / "fixtures"
 #: Severity weights w_k, the same defaults decision/severity.py will carry.
 SEVERITY = {"breathing": 3.0, "heat": 4.0, "mental": 4.0, "treatment_gap": 5.0, "access_loss": 3.0}
 
+
+
+def _region() -> regions.Region:
+    """The region the cohort lives in. One region per fixture set, as one per API."""
+    found = schema.read("cohort")["region_id"].unique().sort().to_list()
+    if len(found) != 1:
+        raise SystemExit(f"cohort spans regions {found}; UI fixtures describe one region")
+    return regions.get(found[0])
+
+
+def build_region(r: regions.Region) -> dict:
+    """`GET /region`, for a build with no API. The map base sits beside it in fixtures/."""
+    shutil.copyfile(r.geojson, OUT / f"{r.id}.geojson")
+    return api.RegionInfo.model_validate(
+        {**r.summary(), "geojson_url": f"{r.id}.geojson"}).model_dump(mode="json")
 
 
 def _dump(obj, path: Path) -> None:
@@ -64,7 +86,7 @@ def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
     # ribbon can put it on the day it starts rather than over the whole window.
     site = (schema.read("site_status").filter(pl.col("date").is_in(dates))
                   .sort("facility_id", "date"))
-    fac = pl.read_parquet(schema.REFERENCE / "va_facilities_nyc_hazard.parquet")
+    fac = _region().ref("facilities")
     site = site.join(fac.select("station_no", "name", "lat", "lon"),
                      left_on="facility_id", right_on="station_no", how="left")
     zip_fields = [f for f in api.ZipHazard.model_fields]
@@ -98,16 +120,16 @@ def build_forecast(dates: list, day_index: int) -> api.ForecastResponse:
 def build_scores(cohort: pl.DataFrame, scores: pl.DataFrame, dates: list) -> dict:
     rung = int(scores["model_rung"][0])
     joined = (scores.filter(pl.col("date").is_in(dates))
-                    .join(cohort.select("veteran_id", "modzcta"), on="veteran_id"))
-    agg = (joined.group_by("date", "need", "modzcta")
+                    .join(cohort.select("veteran_id", "geo_id"), on="veteran_id"))
+    agg = (joined.group_by("date", "need", "geo_id")
                  .agg(pl.col("p_mean").sum().alias("expected_count"),
                       pl.col("p_lo80").sum().alias("lo80"),
                       pl.col("p_hi80").sum().alias("hi80"),
                       pl.len().alias("n_panel"))
-                 .sort("date", "need", "modzcta"))
+                 .sort("date", "need", "geo_id"))
     out: dict[str, dict[str, dict]] = {}
     for (d, need), grp in agg.group_by("date", "need", maintain_order=True):
-        rows = [api.ZipScore(modzcta=r["modzcta"], need=need,
+        rows = [api.ZipScore(geo_id=r["geo_id"], need=need,
                              expected_count=round(r["expected_count"], 3),
                              lo80=round(r["lo80"], 3), hi80=round(r["hi80"], 3),
                              n_panel=r["n_panel"]) for r in grp.to_dicts()]
@@ -134,7 +156,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
     top = (today.sort("p_mean", descending=True)
                 .group_by("veteran_id", maintain_order=True)
                 .agg(pl.col("driver_1").first().alias("top_driver")))
-    joined = (acts.join(cohort.select("veteran_id", "name_display", "modzcta", "borough",
+    joined = (acts.join(cohort.select("veteran_id", "name_display", "geo_id", "borough",
                                       "age", "n_chronic"), on="veteran_id", how="left")
                   .join(top, on="veteran_id", how="left")
                   .sort("rank"))
@@ -149,7 +171,7 @@ def build_candidates(cohort: pl.DataFrame, scores: pl.DataFrame, day, seed: int)
                 continue
         rows.append({
             "action_id": v["action_id"], "rank": int(v["rank"]), "veteran_id": v["veteran_id"],
-            "name_display": v["name_display"], "modzcta": v["modzcta"], "borough": v["borough"],
+            "name_display": v["name_display"], "geo_id": v["geo_id"], "borough": v["borough"],
             "action": v["action"], "tier": v["tier"], "eha": round(float(v["eha"]), 4),
             "capacity_bucket": v["capacity_bucket"], "owner": v["owner"],
             "lead_days": int(v["lead_days"]),
@@ -226,7 +248,7 @@ def _phrase(action_id: str) -> str:
 def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[dict],
                    day) -> dict:
     """One VeteranCard per veteran in the candidate list, for the click-through."""
-    fac = (pl.read_parquet(schema.REFERENCE / "va_facilities_nyc_hazard.parquet")
+    fac = (_region().ref("facilities")
              .select("station_no", "name").rename({"name": "facility_name"}))
     wanted = sorted({c["veteran_id"] for c in candidates})
     co = (cohort.filter(pl.col("veteran_id").is_in(wanted))
@@ -274,7 +296,7 @@ def build_veterans(cohort: pl.DataFrame, scores: pl.DataFrame, candidates: list[
             notes.append(f"{v['days_supply_remaining']} days of supply left and it comes by mail")
         card = api.VeteranCard(
             veteran_id=vid, name_display=v["name_display"], age=int(v["age"]),
-            modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
+            geo_id=v["geo_id"], borough=v["borough"], facility_id=v["facility_id"],
             facility_name=v["facility_name"] or f"Station {v['facility_id']}", date=day,
             tier=tier,
             why_this_tier=why_tier(tier, needs, severity.load()),
@@ -428,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
     _dump(build_messages(cohort, cands["candidates"]), OUT / "messages.json")
     report = build_report(scores)
     _dump(report, OUT / "report.json")
+    _dump(build_region(_region()), OUT / "region.json")
     if report["decision_quality"] and not (ROOT / "report" / "report.json").exists():
         # The API serves report/report.json; give it the same partial report so the live
         # screen and the offline screen agree. `make report` overwrites this.

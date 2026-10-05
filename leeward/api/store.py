@@ -24,6 +24,7 @@ import polars as pl
 from leeward import schema
 from leeward.decision import rules, severity
 from leeward.decision import tau as tau_table
+from leeward.geo import region as regions
 
 T = TypeVar("T")
 
@@ -71,10 +72,20 @@ def table(name: str) -> pl.DataFrame:
         "pipeline is `make cohort score`.")
 
 
+def region() -> regions.Region:
+    """The region the served cohort lives in. The API serves one region at a time."""
+    found = table("cohort")["region_id"].unique().sort().to_list()
+    if len(found) != 1:
+        raise DataUnavailable(f"data/cohort.parquet spans regions {found}; the API serves one "
+                              "region at a time, so build each region's tables separately.")
+    return regions.get(found[0])
+
+
 def facilities() -> pl.DataFrame:
-    """The 14 NYC VA facilities: station_no, name, lat, lon."""
-    path = schema.REFERENCE / "va_facilities_nyc_hazard.parquet"
-    return _cached(path, lambda: pl.read_parquet(path, columns=["station_no", "name", "lat", "lon"]),
+    """The served region's VA facilities (NYC: the 14 stations): station_no, name, lat, lon."""
+    r = region()
+    path = r.path("facilities")
+    return _cached(path, lambda: r.ref("facilities", columns=["station_no", "name", "lat", "lon"]),
                    f"{path.name} is missing from data/reference/; it is committed, so `git checkout` it.")
 
 

@@ -28,6 +28,7 @@ import polars as pl
 from leeward import schema
 from leeward.cohort import missingness
 from leeward.decision import tau
+from leeward.geo import region as regions
 from leeward.schema import (
     ACTION_COST_UNIT,
     CAREGIVER,
@@ -37,7 +38,6 @@ from leeward.schema import (
     INCOME_BANDS,
     NEEDS,
     POWERED_EQUIPMENT,
-    REFERENCE,
     TIERS,
 )
 
@@ -74,46 +74,35 @@ def _rng(seed: int) -> np.random.Generator:
     return np.random.default_rng(seed)
 
 
-def _ref(name: str) -> pl.DataFrame:
-    path = REFERENCE / f"{name}.parquet"
-    if not path.exists():
-        raise SystemExit(f"missing {path}. Run: python scripts/fetch_sources.py")
-    return pl.read_parquet(path)
+#: The fixtures are NYC's: the real map, from minute one.
+NYC = regions.get("nyc")
 
 
 def _geography() -> tuple[list[str], dict[str, str], pl.DataFrame, pl.DataFrame]:
     """Real NYC ZIPs with their real borough, hazard exposure and facilities."""
-    mz = _ref("nyc_modzcta")
-    evac = _ref("evac_zone_by_modzcta")
-    storm = _ref("stormwater_by_modzcta")
-    hvi = _ref("hvi_by_zcta").with_columns(pl.col("zcta").alias("modzcta"))
-    fac = _ref("va_facilities_nyc_hazard")
+    for name in ("units", "evac_zones", "stormwater", "hvi", "facilities"):
+        if not NYC.path(name).exists():
+            raise SystemExit(f"missing {NYC.path(name)}. Run: python scripts/fetch_sources.py")
+    mz = NYC.ref(NYC.unit_table)
+    evac = NYC.ref("evac_zones")
+    storm = NYC.ref("stormwater").select("geo_id", "stormwater_flooded_frac")
+    hvi = NYC.ref("hvi")
+    fac = NYC.ref("facilities")
 
-    # MODZCTA carries no borough column; derive it from the nearest facility's borough is
-    # wrong, so use the ZIP prefix ranges NYC actually uses.
-    def boro(z: str) -> str:
-        n = int(z)
-        if 10001 <= n <= 10282:
-            return "Manhattan"
-        if 10301 <= n <= 10314:
-            return "Staten Island"
-        if 10451 <= n <= 10475:
-            return "Bronx"
-        if 11201 <= n <= 11256:
-            return "Brooklyn"
-        return "Queens"
-
-    zips = (mz.select("modzcta")
-              .join(evac.select("modzcta", "evac_zone_min"), on="modzcta", how="left")
-              .join(storm, on="modzcta", how="left")
-              .join(hvi.select("modzcta", "hvi"), on="modzcta", how="left")
+    # MODZCTA carries no borough column; deriving it from the nearest facility's borough is
+    # wrong, so the region assigns it by the ZIP prefix ranges NYC actually uses.
+    zips = (mz.select("geo_id")
+              .join(evac.select("geo_id", "evac_zone_min"), on="geo_id", how="left")
+              .join(storm, on="geo_id", how="left")
+              .join(hvi.select("geo_id", "hvi"), on="geo_id", how="left")
               .with_columns([
-                  pl.col("modzcta").map_elements(boro, return_dtype=pl.Utf8).alias("borough"),
+                  pl.col("geo_id").map_elements(NYC.subregion_of, return_dtype=pl.Utf8)
+                    .alias("borough"),
                   pl.col("evac_zone_min").fill_null(0).cast(pl.Int32).alias("evac_zone"),
                   pl.col("stormwater_flooded_frac").fill_null(0.0),
                   pl.col("hvi").fill_null(3).cast(pl.Int32),
               ]).drop("evac_zone_min"))
-    return zips["modzcta"].to_list(), dict(zip(zips["modzcta"], zips["borough"], strict=False)), zips, fac
+    return zips["geo_id"].to_list(), dict(zip(zips["geo_id"], zips["borough"], strict=False)), zips, fac
 
 
 def make_cohort(n: int, seed: int, zips: pl.DataFrame, fac: pl.DataFrame) -> pl.DataFrame:
@@ -148,7 +137,8 @@ def make_cohort(n: int, seed: int, zips: pl.DataFrame, fac: pl.DataFrame) -> pl.
         "sex": pick(["M", "F"], [0.88, 0.12]),
         "race": pick(["White", "Black", "Asian", "Other"], [0.55, 0.27, 0.08, 0.10]),
         "ethnicity": pick(["Hispanic", "Non-Hispanic"], [0.26, 0.74]),
-        "modzcta": z["modzcta"],
+        "region_id": [NYC.id] * n,
+        "geo_id": z["geo_id"],
         "borough": z["borough"],
         "facility_id": [stations[i] for i in r.integers(len(stations), size=n)],
         "copd": copd,
@@ -221,7 +211,8 @@ def make_hazards(zips: pl.DataFrame, days: list[date], seed: int) -> pl.DataFram
         in_surge = surge & (ez > 0) & (ez <= 2)
         outage = np.where(in_surge, r.uniform(0.4, 0.9, n_z), r.uniform(0, 0.03, n_z))
         rows.append(pl.DataFrame({
-            "modzcta": zips["modzcta"],
+            "region_id": [NYC.id] * n_z,
+            "geo_id": zips["geo_id"],
             "date": [d] * n_z,
             "heat_index_max_f": np.round(temp, 1),
             "hot_day": temp >= 82,
@@ -282,6 +273,7 @@ def make_scores(cohort: pl.DataFrame, days: list[date], seed: int) -> pl.DataFra
 
     di = r.integers(0, len(DRIVER_PHRASES), (total, 3))
     return pl.DataFrame({
+        "region_id": [NYC.id] * total,
         "veteran_id": vids,
         "date": pl.Series("date", dates, dtype=pl.Date),
         "need": needs,
@@ -366,6 +358,7 @@ def make_actions(cohort: pl.DataFrame, scores: pl.DataFrame, day: date, seed: in
               else "automated" if a == "verified_text" else "care_team" for a in acts]
     return pl.DataFrame({
         "action_id": aid,
+        "region_id": [NYC.id] * n,
         "date": pl.Series("date", [day] * n, dtype=pl.Date),
         "veteran_id": vets,
         "action": acts,

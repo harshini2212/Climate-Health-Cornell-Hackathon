@@ -249,8 +249,8 @@ def test_same_inputs_same_report(cohort, temps, daily) -> None:
 
 def test_spatial_check_ranks_districts_when_given_ehdp_rates(cohort, temps) -> None:
     obs = _observed(np.ones(temps.height), temps)
-    zips = sorted(cohort["modzcta"].unique().to_list())
-    geo = pl.DataFrame({"modzcta": zips, "cd": [str(101 + i % 6) for i in range(len(zips))]})
+    zips = sorted(cohort["geo_id"].unique().to_list())
+    geo = pl.DataFrame({"geo_id": zips, "cd": [str(101 + i % 6) for i in range(len(zips))]})
     rates = pl.DataFrame({
         "indicator_id": bt.SPATIAL_INDICATOR, "outcome": "heat_ed_visits",
         "measure": "Estimated annual rate", "geo_type": "CD",
@@ -267,7 +267,7 @@ def test_spatial_check_ranks_districts_when_given_ehdp_rates(cohort, temps) -> N
 
 def test_spatial_check_refuses_rates_from_anywhere_but_ehdp(cohort, temps) -> None:
     obs = _observed(np.ones(temps.height), temps)
-    geo = pl.DataFrame({"modzcta": cohort["modzcta"].unique(), "cd": "101"})
+    geo = pl.DataFrame({"geo_id": cohort["geo_id"].unique(), "cd": "101"})
     rates = pl.DataFrame({"indicator_id": [2443], "outcome": ["heat_ed_visits"],
                           "measure": ["Estimated annual rate"], "geo_type": ["CD"],
                           "geo_id": ["101"], "geo_name": ["x"], "time_period": ["2018-22"],

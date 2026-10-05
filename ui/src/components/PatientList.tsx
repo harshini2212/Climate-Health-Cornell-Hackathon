@@ -29,7 +29,7 @@ interface Patient {
   veteranId: string;
   name: string;
   borough: string;
-  modzcta: string;
+  geo_id: string;
   tier: string;
   actions: ActionRow[];
   eha: number;
@@ -38,7 +38,7 @@ interface Patient {
 function groupPatients(resp: ActionsResponse): Patient[] {
   const by = new Map<string, Patient>();
   for (const a of resp.actions) {
-    const p = by.get(a.veteran_id) ?? { veteranId: a.veteran_id, name: a.name_display, borough: a.borough, modzcta: a.modzcta, tier: a.tier, actions: [], eha: 0 };
+    const p = by.get(a.veteran_id) ?? { veteranId: a.veteran_id, name: a.name_display, borough: a.borough, geo_id: a.geo_id, tier: a.tier, actions: [], eha: 0 };
     p.actions.push(a);
     p.eha += a.eha;
     if (a.tier === "act_now") p.tier = "act_now";
@@ -115,7 +115,7 @@ export function PatientList({ resp, onOpen, limit = 8 }: Props) {
               return (
                 <div key={p.veteranId} className={`prow${hover === p.veteranId ? " hov" : ""}`} onMouseEnter={() => setHover(p.veteranId)} onMouseLeave={() => setHover(null)} onClick={() => onOpen({ veteranId: p.veteranId, actionId: p.actions[0].action_id, date: resp.date })} role="button" tabIndex={0}>
                   <span className="pr-rank">{i + 1}</span>
-                  <span className="pr-name"><b>{handleFor(p.name, p.veteranId)}</b><span>{p.borough} · {p.modzcta}{top ? ` · ${NEED_SHORT[top.need]} ${pct(top.p_mean)}` : ""}</span></span>
+                  <span className="pr-name"><b>{handleFor(p.name, p.veteranId)}</b><span>{p.borough} · {p.geo_id}{top ? ` · ${NEED_SHORT[top.need]} ${pct(top.p_mean)}` : ""}</span></span>
                   <span className="pr-glance">
                     <span className={`gl${rf && rf.length >= 4 ? " hot" : ""}`} title="Risk factors flagged by the model"><b>{rf ? rf.length : "…"}</b> risk factor{rf && rf.length === 1 ? "" : "s"}</span>
                     <span className="gl" title="Suggested actions"><b>{p.actions.length}</b> action{p.actions.length === 1 ? "" : "s"}</span>

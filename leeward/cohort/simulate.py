@@ -51,8 +51,9 @@ import numpy as np
 import polars as pl
 
 from leeward import schema
+from leeward.geo import region as regions
 from leeward.model import design
-from leeward.schema import NEEDS, REFERENCE
+from leeward.schema import NEEDS
 
 TRUTH_PATH = schema.DATA / "truth.json"
 SEED = 0
@@ -114,20 +115,27 @@ def _day_stream(seed: int, day: np.datetime64) -> np.random.Generator:
 def latent_offset(cohort: pl.DataFrame, truth: Truth, seed: int = SEED) -> np.ndarray:
     """(n_veterans, K) of what the model cannot see: this ZIP, plus this person.
 
-    ZIP effects are keyed to the canonical 178 MODZCTAs, so a ZIP keeps its effect whether
-    the whole cohort or one borough of it is simulated. Frailty is per cohort row.
+    ZIP effects are keyed to (region_id, geo_id) over every unit the region has -- NYC's
+    canonical 178 MODZCTAs -- so a ZIP keeps its effect whether the whole cohort or one
+    borough of it is simulated, and two regions that happen to share a code never share an
+    effect. Frailty is per cohort row.
     """
-    zips = sorted(pl.read_parquet(REFERENCE / "nyc_modzcta.parquet")["modzcta"].to_list())
-    phi = truth.sigma_zip * _stream(seed, "zip_effect").standard_normal((len(zips), _K))
-    index = {z: i for i, z in enumerate(zips)}
+    phi_of: dict[tuple[str, str], np.ndarray] = {}
+    for rid in sorted(set(cohort["region_id"].to_list())):
+        zips = sorted(regions.get(rid).geo_ids)
+        # NYC keeps the stream it always had, so its world is the one already simulated.
+        name = "zip_effect" if rid == regions.DEFAULT else f"zip_effect:{rid}"
+        phi = truth.sigma_zip * _stream(seed, name).standard_normal((len(zips), _K))
+        phi_of.update({(rid, z): phi[i] for i, z in enumerate(zips)})
 
-    unknown = sorted(set(cohort["modzcta"].to_list()) - index.keys())
+    keys = list(zip(cohort["region_id"].to_list(), cohort["geo_id"].to_list(), strict=True))
+    unknown = sorted(set(keys) - phi_of.keys())
     if unknown:
-        raise ValueError(f"cohort lives in ZIPs that are not NYC MODZCTAs: {unknown[:5]}")
+        raise ValueError(f"cohort lives in units its region does not have: {unknown[:5]}")
 
-    rows = np.array([index[z] for z in cohort["modzcta"].to_list()])
+    effect = np.array([phi_of[k] for k in keys]).reshape(cohort.height, _K)
     frailty = truth.sigma_frailty * _stream(seed, "frailty").standard_normal(cohort.height)
-    return phi[rows] + frailty[:, None]
+    return effect + frailty[:, None]
 
 
 # --------------------------------------------------------------------------- #

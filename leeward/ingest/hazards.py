@@ -1,4 +1,5 @@
-"""Assemble hazards.parquet and site_status.parquet from a scenario YAML plus data/reference.
+"""Assemble hazards.parquet and site_status.parquet from a scenario YAML plus a region's
+reference tables.
 
     python -m leeward.ingest.hazards --scenario scenarios/sandy_then_heat.yaml
 
@@ -8,6 +9,7 @@ seeded from the scenario, so the same YAML always produces the same bytes.
 Scenario YAML
 -------------
     name: sandy_then_heat
+    region: nyc                   # regions/<id>.yaml; optional, nyc if left out
     start_date: 2026-06-01        # day 0
     days: 120
     baseline:                     # the ordinary summer that the events sit on top of
@@ -21,8 +23,9 @@ Scenario YAML
       ...
 
 Every event has `day` (0-indexed), an optional `duration_days` (default 1), and an optional
-ZIP selector: any of `zones` (evac_zone_min in the list), `boroughs`, `modzctas`,
-`stormwater_min_frac`. Selector terms are ANDed; no selector means every ZIP.
+ZIP selector: any of `zones` (evac_zone_min in the list), `boroughs` (the region's
+subregions), `geo_ids` (`modzctas` is still read, as its old name), `stormwater_min_frac`.
+Selector terms are ANDed; no selector means every ZIP.
 
 Event types:
     flood_watch              flood_watch=True on selected ZIPs
@@ -51,6 +54,8 @@ import polars as pl
 import yaml
 
 from leeward import schema
+from leeward.geo import region as regions
+from leeward.geo.region import Region
 
 HOT_DAY_F = 82.0            # NYC Health 2026 heat mortality report: "non-extreme hot days"
 SMOKE_ALERT_UGM3 = 55.5     # PM2.5 24-hr concentration at which AQI crosses 150, "unhealthy"
@@ -62,47 +67,29 @@ PEAK_DOY = 205              # 24 July, NYC's climatological heat-index peak
 # Reference tables
 # --------------------------------------------------------------------------- #
 
-def _ref(name: str) -> pl.DataFrame:
-    path = schema.REFERENCE / f"{name}.parquet"
-    if not path.exists():
-        raise FileNotFoundError(f"{path} missing; run scripts/fetch_sources.py")
-    return pl.read_parquet(path)
-
-
-def _borough(modzcta: str) -> str:
-    """NYC ZIP prefix ranges. MODZCTA carries no borough column."""
-    n = int(modzcta)
-    if 10001 <= n <= 10282:
-        return "Manhattan"
-    if 10301 <= n <= 10314:
-        return "Staten Island"
-    if 10451 <= n <= 10475:
-        return "Bronx"
-    if 11201 <= n <= 11256:
-        return "Brooklyn"
-    return "Queens"
-
-
-def zip_frame() -> pl.DataFrame:
-    """The 178 MODZCTAs with their static hazard exposure, sorted by code."""
-    mz = _ref("nyc_modzcta").select("modzcta", "lon", "lat")
-    evac = _ref("evac_zone_by_modzcta").select("modzcta", "evac_zone_min")
-    storm = _ref("stormwater_by_modzcta")
-    hvi = _ref("hvi_by_zcta").rename({"zcta": "modzcta"})
-    return (mz.join(evac, on="modzcta", how="left")
-              .join(storm, on="modzcta", how="left")
-              .join(hvi, on="modzcta", how="left")
+def zip_frame(r: Region | None = None) -> pl.DataFrame:
+    """Every unit of the region (NYC: the 178 MODZCTAs) with its static hazard exposure,
+    sorted by code. The subregion comes from the region's code ranges."""
+    r = r or regions.get()
+    mz = r.ref(r.unit_table).select("geo_id", "lon", "lat")
+    evac = r.ref("evac_zones").select("geo_id", "evac_zone_min")
+    storm = r.ref("stormwater").select("geo_id", "stormwater_flooded_frac")
+    hvi = r.ref("hvi").select("geo_id", "hvi")
+    return (mz.join(evac, on="geo_id", how="left")
+              .join(storm, on="geo_id", how="left")
+              .join(hvi, on="geo_id", how="left")
               .with_columns(
-                  pl.col("modzcta").map_elements(_borough, return_dtype=pl.Utf8).alias("borough"),
+                  pl.col("geo_id").map_elements(r.subregion_of, return_dtype=pl.Utf8)
+                    .alias("borough"),
                   pl.col("evac_zone_min").fill_null(0).cast(pl.Int32),
                   pl.col("stormwater_flooded_frac").fill_null(0.0).cast(pl.Float64),
                   pl.col("hvi").fill_null(3).cast(pl.Int32),
               )
-              .sort("modzcta"))
+              .sort("geo_id"))
 
 
-def facility_frame() -> pl.DataFrame:
-    return (_ref("va_facilities_nyc_hazard")
+def facility_frame(r: Region | None = None) -> pl.DataFrame:
+    return ((r or regions.get()).ref("facilities")
             .select("station_no", "name", "lat", "lon", "evac_zone", "site_dependent_services")
             .with_columns(pl.col("evac_zone").fill_null(0).cast(pl.Int32))
             .sort("station_no"))
@@ -123,10 +110,16 @@ DEFAULT_BASELINE: dict[str, Any] = {
 
 def load_scenario(path: str | Path) -> dict[str, Any]:
     with open(path, encoding="utf-8") as fh:
-        scen = yaml.safe_load(fh)
+        return normalise(yaml.safe_load(fh), path)
+
+
+def normalise(scen: dict[str, Any], path: str | Path = "<scenario>") -> dict[str, Any]:
+    """A scenario mapping with its defaults filled and its shape checked."""
+    scen = dict(scen)
     for key in ("name", "start_date", "days"):
         if key not in scen:
             raise ValueError(f"{path}: scenario needs '{key}'")
+    scen["region"] = str(scen.get("region") or regions.DEFAULT)
     start = scen["start_date"]
     scen["start_date"] = start if isinstance(start, date) else date.fromisoformat(str(start))
     scen["days"] = int(scen["days"])
@@ -145,8 +138,9 @@ def select_zips(zips: pl.DataFrame, ev: dict[str, Any]) -> np.ndarray:
         mask &= zips["evac_zone_min"].is_in([int(z) for z in ev["zones"]]).to_numpy()
     if "boroughs" in ev:
         mask &= zips["borough"].is_in(list(ev["boroughs"])).to_numpy()
-    if "modzctas" in ev:
-        mask &= zips["modzcta"].is_in([str(z) for z in ev["modzctas"]]).to_numpy()
+    for key in ("geo_ids", "modzctas"):     # modzctas: the selector's pre-region name
+        if key in ev:
+            mask &= zips["geo_id"].is_in([str(z) for z in ev[key]]).to_numpy()
     if "stormwater_min_frac" in ev:
         mask &= (zips["stormwater_flooded_frac"] >= float(ev["stormwater_min_frac"])).to_numpy()
     return mask
@@ -203,9 +197,11 @@ def _nearest_monitor_pm25(zips: pl.DataFrame, monitors: pl.DataFrame) -> np.ndar
 
 
 def _apply_smoke_replay(pm25: np.ndarray, zips: pl.DataFrame, dates: list[date],
-                        ev: dict[str, Any]) -> None:
-    source = ev.get("source", "airnow_pm25_nyc_smoke2023")
-    mon = (_ref(source)
+                        ev: dict[str, Any], r: Region) -> None:
+    source = ev.get("source")
+    mon = (pl.read_parquet(r.reference_dir / f"{source}.parquet") if source
+           else r.ref("smoke_replay"))
+    mon = (mon
            .filter(pl.col("parameter").str.starts_with("PM2.5"))
            .with_columns(pl.col("date").str.strptime(pl.Date, "%m/%d/%y").alias("obs_date"))
            .drop_nulls(["lat", "lon", "value"]))
@@ -228,8 +224,9 @@ def _apply_smoke_replay(pm25: np.ndarray, zips: pl.DataFrame, dates: list[date],
 
 def assemble(scen: dict[str, Any]) -> tuple[pl.DataFrame, pl.DataFrame]:
     """Return (hazards, site_status) for the scenario. Pure: reads reference tables only."""
-    zips = zip_frame()
-    fac = facility_frame()
+    r = regions.get(scen.get("region") or regions.DEFAULT)
+    zips = zip_frame(r)
+    fac = facility_frame(r)
     n_days, n_zips = scen["days"], zips.height
     dates = [scen["start_date"] + timedelta(days=i) for i in range(n_days)]
     bl = scen["baseline"]
@@ -292,13 +289,13 @@ def assemble(scen: dict[str, Any]) -> tuple[pl.DataFrame, pl.DataFrame]:
                     heat_alert[t] = bool(ev.get("heat_alert", True))
 
         elif kind == "smoke_replay":
-            _apply_smoke_replay(pm25, zips, dates, ev)
+            _apply_smoke_replay(pm25, zips, dates, ev, r)
 
         elif kind == "site_down":
             station = str(ev["facility"])
             if station not in stations:
-                raise ValueError(f"site_down: unknown station {station!r}; "
-                                 f"see va_facilities_nyc_hazard.parquet")
+                raise ValueError(f"site_down: unknown station {station!r}; see "
+                                 f"{r.path('facilities').name}")
             j = stations.index(station)
             for t in days:
                 site_down[t, j] = True
@@ -311,9 +308,10 @@ def assemble(scen: dict[str, Any]) -> tuple[pl.DataFrame, pl.DataFrame]:
     ordered_here = (zone_min[None, :] > 0) & (zone_min[None, :] <= evac_ordered[:, None])
     mail_disrupted = (flood_warning | flash | (outage >= MAIL_OUTAGE_FRAC) | ordered_here)
 
-    modz = zips["modzcta"].to_list()
+    geo = zips["geo_id"].to_list()
     hazards = pl.DataFrame({
-        "modzcta": np.tile(np.array(modz, dtype=object), n_days).tolist(),
+        "region_id": [r.id] * (n_days * n_zips),
+        "geo_id": np.tile(np.array(geo, dtype=object), n_days).tolist(),
         "date": pl.Series([d for d in dates for _ in range(n_zips)], dtype=pl.Date),
         "heat_index_max_f": heat.ravel(),
         "hot_day": (heat >= HOT_DAY_F).ravel(),

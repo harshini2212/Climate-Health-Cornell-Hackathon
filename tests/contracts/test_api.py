@@ -237,7 +237,7 @@ def test_scores_add_up_to_the_panel(client: TestClient, need: str) -> None:
         assert sum(z.expected_count for z in rows) == pytest.approx(truth["p_mean"].sum(),
                                                                     abs=0.001 * len(rows))
         assert all(z.lo80 <= z.expected_count <= z.hi80 for z in rows)
-    assert {f.modzcta for f in sc.facilities} <= set(_table("cohort")["facility_id"].to_list())
+    assert {f.geo_id for f in sc.facilities} <= set(_table("cohort")["facility_id"].to_list())
 
 
 def test_scores_reject_what_they_cannot_answer(client: TestClient) -> None:
@@ -274,8 +274,8 @@ def test_the_card_is_the_scores_and_the_cohort_row(client: TestClient) -> None:
         assert n.drivers == [row[f"driver_{i}"] for i in (1, 2, 3) if row[f"driver_{i}"]]
         assert len(n.driver_contribs) == len(n.drivers)
     assert card.tier == tiers.assign(mine, severity.load())["tier"][0] == "act_now"
-    assert (card.name_display, card.age, card.modzcta, card.borough, card.facility_id) == (
-        vet["name_display"], vet["age"], vet["modzcta"], vet["borough"], vet["facility_id"])
+    assert (card.name_display, card.age, card.geo_id, card.borough, card.facility_id) == (
+        vet["name_display"], vet["age"], vet["geo_id"], vet["borough"], vet["facility_id"])
     med = card.medications
     assert (med.n_active_meds, med.acb_score, med.cold_chain, med.controlled,
             med.mail_order_pharmacy, med.days_supply_remaining) == (
@@ -398,8 +398,8 @@ def test_actions_carry_who_and_where(client: TestClient) -> None:
     cohort = _table("cohort")
     for a in api.ActionsResponse.model_validate(_post(client)).actions[:25]:
         vet = cohort.filter(pl.col("veteran_id") == a.veteran_id).row(0, named=True)
-        assert (a.name_display, a.modzcta, a.borough) == (
-            vet["name_display"], vet["modzcta"], vet["borough"])
+        assert (a.name_display, a.geo_id, a.borough) == (
+            vet["name_display"], vet["geo_id"], vet["borough"])
         assert a.capacity_bucket == ACTION_COST_UNIT[a.action]
         assert a.message_id == f"msg-{a.action_id}"
 
@@ -728,7 +728,7 @@ def test_export_is_a_csv_of_consenting_veterans_only(client: TestClient) -> None
     assert "partner_sheet_2026-07-16.csv" in r.headers["content-disposition"]
     sheet = pl.read_csv(r.content)
     assert sheet.height > 0, "the fixtures have ride actions for consenting veterans"
-    assert sheet.columns == ["date", "veteran_id", "name_display", "modzcta", "borough",
+    assert sheet.columns == ["date", "veteran_id", "name_display", "geo_id", "borough",
                              "action", "consent_partner_check", "consent_ride",
                              "consent_housing"]
     cohort = _table("cohort")

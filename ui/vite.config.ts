@@ -1,17 +1,14 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// The map base (data/reference/nyc_modzcta.geojson) is imported straight from the repo's
-// reference directory as an asset, so there is exactly one copy in git and a clean clone
-// still builds. `server.fs.allow` lets the dev server read one level above ui/.
+// The map base is not bundled: NeedMap asks `GET /region` for the region's geojson, or reads
+// the copy scripts/make_ui_fixtures.py puts beside the fixtures for a build with no API.
 export default defineConfig({
   // Relative, so the built bundle works served from any sub-path, not just a domain root.
   base: "./",
   plugins: [react()],
-  assetsInclude: ["**/*.geojson"],
   server: {
     port: 5173,
-    fs: { allow: [".."] },
     // The UI calls /api/*; in dev that is proxied to the FastAPI app on :8000. When the
     // API is not running the proxy fails fast and the client falls back to fixtures.
     proxy: {

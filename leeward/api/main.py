@@ -1,4 +1,4 @@
-"""The Leeward API: eight routes over tables `make` already wrote (SPEC §9).
+"""The Leeward API: ten routes over tables `make` already wrote (SPEC §9).
 
     uvicorn leeward.api.main:app --port 8000
 
@@ -37,7 +37,7 @@ import numpy as np
 import polars as pl
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -163,6 +163,27 @@ def _need_scored_day(scores: pl.DataFrame, day: Date) -> pl.DataFrame:
 
 
 # --------------------------------------------------------------------------- #
+# GET /region, GET /region/geojson
+# --------------------------------------------------------------------------- #
+
+@app.get("/region", response_model=api.RegionInfo)
+def region_info() -> Response:
+    """The region the served tables live in. The map reads its base from `geojson_url`."""
+    r = store.region()
+    return _json(api.RegionInfo.model_validate(
+        {**r.summary(), "geojson_url": "region/geojson"}))
+
+
+@app.get("/region/geojson")
+def region_geojson() -> FileResponse:
+    """The served region's map base, straight off disk: one copy, the region's own."""
+    path = store.region().geojson
+    if not path.is_file():
+        raise HTTPException(404, f"{path.name} is missing from the region's reference tables")
+    return FileResponse(path, media_type="application/geo+json")
+
+
+# --------------------------------------------------------------------------- #
 # GET /forecast?scenario=&day=
 # --------------------------------------------------------------------------- #
 
@@ -185,7 +206,7 @@ def forecast(scenario: str = SCENARIO, day: int | None = Query(None, ge=0)) -> R
         raise HTTPException(404, f"day {day} is past the end of the scenario, which has "
                                  f"{len(dates)} days (0 to {len(dates) - 1})")
     window = dates[day:day + FORECAST_DAYS]
-    hz = hazards.filter(pl.col("date").is_in(window)).sort("date", "modzcta")
+    hz = hazards.filter(pl.col("date").is_in(window)).sort("date", "geo_id")
 
     # One row per facility per day, straight off `site_status`, which is already keyed that
     # way. A closure is a fact about a day: the ribbon puts it on the day it starts, and a
@@ -240,7 +261,7 @@ def scores(date: Date, need: str) -> Response:
         raise HTTPException(422, f"need {need!r} is not one of {NEEDS}")
     all_scores = store.table("scores")
     today = _need_scored_day(all_scores, date).filter(pl.col("need") == need)
-    joined = today.join(store.table("cohort").select("veteran_id", "modzcta", "facility_id"),
+    joined = today.join(store.table("cohort").select("veteran_id", "geo_id", "facility_id"),
                         on="veteran_id")
 
     def by(key: str) -> list[dict]:
@@ -250,10 +271,10 @@ def scores(date: Date, need: str) -> Response:
                           pl.col("p_hi80").sum().round(3).alias("hi80"),
                           pl.len().alias("n_panel"))
                      .sort(key))
-        return [{"modzcta": r.pop(key), "need": need, **r} for r in agg.to_dicts()]
+        return [{"geo_id": r.pop(key), "need": need, **r} for r in agg.to_dicts()]
 
     return _json(api.ScoresResponse.model_validate({
-        "date": date, "need": need, "zips": by("modzcta"), "facilities": by("facility_id"),
+        "date": date, "need": need, "zips": by("geo_id"), "facilities": by("facility_id"),
         "model_rung": _rung(all_scores),
     }))
 
@@ -383,7 +404,8 @@ def veteran(veteran_id: str, date: Date) -> Response:
     tier, tier_rule = graded["tier"], graded["tier_rule"]
 
     hazard = (store.table("hazards")
-                   .filter((pl.col("date") == date) & (pl.col("modzcta") == v["modzcta"]))
+                   .filter((pl.col("date") == date) & (pl.col("region_id") == v["region_id"])
+                           & (pl.col("geo_id") == v["geo_id"]))
                    .to_dicts() or [None])[0]
     site = store.table("site_status").filter((pl.col("date") == date)
                                              & (pl.col("facility_id") == v["facility_id"]))
@@ -399,7 +421,7 @@ def veteran(veteran_id: str, date: Date) -> Response:
 
     return _json(api.VeteranCard(
         veteran_id=veteran_id, name_display=v["name_display"], age=v["age"],
-        modzcta=v["modzcta"], borough=v["borough"], facility_id=v["facility_id"],
+        geo_id=v["geo_id"], borough=v["borough"], facility_id=v["facility_id"],
         facility_name=fac["name"][0] if fac.height else v["facility_id"], date=date,
         tier=tier, why_this_tier=why_tier(tier, needs, weights, tier_rule), needs=needs,
         medications=api.MedicationFlags(
@@ -463,7 +485,7 @@ def actions(req: api.ActionsRequest) -> Response:
     # `limit` cuts the rows and nothing else: every count below is of the whole allocation,
     # so a board showing a top slice can say "40 of 6,303" without asking a second time.
     shown = chosen if req.limit is None else chosen.sort("rank").head(req.limit)
-    rows = (shown.join(cohort.select("veteran_id", "name_display", "modzcta", "borough"),
+    rows = (shown.join(cohort.select("veteran_id", "name_display", "geo_id", "borough"),
                        on="veteran_id", how="left")
                  .sort("rank").select(list(api.ActionRow.model_fields)).to_dicts())
     by_tier = dict.fromkeys(TIERS, 0) | dict(chosen.group_by("tier").len().iter_rows())

@@ -206,7 +206,7 @@ export function Forecast({ scenario, day, onSource, onOpen }: { scenario: string
               {actions.actions.slice(0, 8).map((a) => (
                 <tr key={a.action_id} className="click" onClick={() => onOpen("careteam")}>
                   <td className="n">{a.rank}</td>
-                  <td>{handleFor(a.name_display, a.veteran_id)}<span className="sub">{a.borough} · {a.modzcta}</span></td>
+                  <td>{handleFor(a.name_display, a.veteran_id)}<span className="sub">{a.borough} · {a.geo_id}</span></td>
                   <td><span className={TIER_BADGE[a.tier]}>{TIER_LABEL[a.tier]}</span></td>
                   <td>{ACTION_LABEL[a.action] ?? a.action}</td>
                   <td className="muted">{a.owner.replace("_", " ")}</td>

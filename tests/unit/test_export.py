@@ -18,7 +18,7 @@ DAY = date(2026, 7, 16)
 
 def _cohort() -> pl.DataFrame:
     def vet(vid, partner, ride, housing):
-        return dict(veteran_id=vid, name_display=f"Name {vid}", modzcta="10001",
+        return dict(veteran_id=vid, name_display=f"Name {vid}", geo_id="10001",
                     borough="Manhattan", consent_partner_check=partner, consent_ride=ride,
                     consent_housing=housing)
     return pl.DataFrame([

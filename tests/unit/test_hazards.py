@@ -2,7 +2,7 @@
 
 Written before the module. What they pin down:
 
-- every modzcta appears on every day of every scenario, with no nulls
+- every geo_id (NYC: MODZCTA) appears on every day of every scenario, with no nulls
 - both tables satisfy the frozen contracts in leeward/schema.py
 - the smoke scenario is a *replay* of the June 2023 AirNow monitors, not a simulation:
   the citywide max on 7 June 2023 must exceed 190 ug/m3 (the real peak was 203.5)
@@ -46,15 +46,16 @@ def _dates(hz: pl.DataFrame) -> list[date]:
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.parametrize("name", SCENARIO_NAMES)
-def test_every_modzcta_appears_on_every_day(built, name) -> None:
+def test_every_geo_id_appears_on_every_day(built, name) -> None:
     scen, hz, _ = built[name]
     real = pl.read_parquet(schema.REFERENCE / "nyc_modzcta.parquet")["modzcta"].to_list()
     dates = _dates(hz)
     assert len(dates) == scen["days"], f"{name}: expected {scen['days']} days, got {len(dates)}"
     assert hz.height == len(real) * scen["days"]
-    per_day = hz.group_by("date").agg(pl.col("modzcta").n_unique().alias("n"))
+    per_day = hz.group_by("date").agg(pl.col("geo_id").n_unique().alias("n"))
     assert per_day["n"].min() == len(real) == per_day["n"].max()
-    assert set(hz["modzcta"].unique().to_list()) == set(real)
+    assert set(hz["geo_id"].unique().to_list()) == set(real)
+    assert set(hz["region_id"].unique().to_list()) == {"nyc"}
 
 
 @pytest.mark.parametrize("name", SCENARIO_NAMES)
@@ -91,7 +92,8 @@ def test_static_zip_joins_are_present(built) -> None:
     for col in ("evac_zone_min", "hvi", "stormwater_flooded_frac"):
         assert col in hz.columns, f"{col} is a static per-ZIP join and must be carried"
     ref = pl.read_parquet(schema.REFERENCE / "stormwater_by_modzcta.parquet")
-    one_day = hz.filter(pl.col("date") == hz["date"].min()).select("modzcta", "stormwater_flooded_frac")
+    one_day = hz.filter(pl.col("date") == hz["date"].min()).select(
+        pl.col("geo_id").alias("modzcta"), "stormwater_flooded_frac")
     joined = one_day.join(ref, on="modzcta", suffix="_ref")
     assert (joined["stormwater_flooded_frac"] - joined["stormwater_flooded_frac_ref"]).abs().max() < 1e-9
 

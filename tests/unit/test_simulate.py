@@ -85,12 +85,13 @@ def _many(vet: pl.DataFrame, n: int, prefix: str) -> pl.DataFrame:
                .with_columns(veteran_id=pl.format(prefix + "-{}", pl.int_range(pl.len()))))
 
 
-def _calm(modzctas: list[str], days: list[date], **overrides) -> pl.DataFrame:
+def _calm(geo_ids: list[str], days: list[date], **overrides) -> pl.DataFrame:
     """72F, clean air, dry, powered, mail running: every hazard feature reads zero."""
-    n = len(modzctas) * len(days)
+    n = len(geo_ids) * len(days)
     hz = pl.DataFrame({
-        "modzcta": [z for z in modzctas for _ in days],
-        "date": pl.Series([d for _ in modzctas for d in days], dtype=pl.Date),
+        "region_id": ["nyc"] * n,
+        "geo_id": [z for z in geo_ids for _ in days],
+        "date": pl.Series([d for _ in geo_ids for d in days], dtype=pl.Date),
         "heat_index_max_f": [72.0] * n,
         "hot_day": [False] * n,
         "heat_alert": [False] * n,
@@ -123,7 +124,7 @@ def _sites(facilities: list[str], days: list[date],
 
 
 def _world(cohort: pl.DataFrame, days: list[date], **hazard_overrides):
-    return (_calm(cohort["modzcta"].unique().to_list(), days, **hazard_overrides),
+    return (_calm(cohort["geo_id"].unique().to_list(), days, **hazard_overrides),
             _sites(cohort["facility_id"].unique().to_list(), days))
 
 
@@ -199,7 +200,7 @@ def test_site_down_at_least_triples_the_treatment_gap_for_dialysis(truth: simula
     here = _many(_vet(**NEUTRAL | {"ckd_dialysis": True, "facility_id": "630"}), 1_000, "V630")
     away = _many(_vet(**NEUTRAL | {"ckd_dialysis": True, "facility_id": "630A4"}), 1_000, "VA4")
     cohort = pl.concat([here, away])
-    hazards = _calm(cohort["modzcta"].unique().to_list(), days)
+    hazards = _calm(cohort["geo_id"].unique().to_list(), days)
     sites = _sites(["630", "630A4"], days, down={"630": closed})
 
     out = simulate.simulate(cohort, hazards, sites, truth=truth, seed=0, latent=False)

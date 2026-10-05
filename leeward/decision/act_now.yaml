@@ -10,7 +10,7 @@
 #
 #     veteran   a fact about the person, from data/cohort.parquet
 #     station   a fact about their VA station that day, from site_status.parquet
-#     zip       a fact about their MODZCTA that day, from hazards.parquet
+#     zip       a fact about their geography unit (NYC: MODZCTA) that day, from hazards.parquet
 #
 # A cell that is left out asks nothing. Inside one cell, join terms with `and` or `or` --
 # one or the other, never both, so no row can depend on precedence you cannot see. A bare

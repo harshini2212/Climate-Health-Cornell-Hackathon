@@ -121,6 +121,7 @@ from leeward import schema
 from leeward.decision import eha, severity, tiers
 from leeward.decision import rules as rule_table
 from leeward.decision import tau as tau_table
+from leeward.geo import region as regions
 from leeward.schema import ACTION_COST_UNIT, DEFAULT_CAPACITY, NEEDS
 
 CHECK_IN = "check_in_call"
@@ -278,6 +279,16 @@ def compare(
     # needs the sentences, and act_now.yaml carries a paragraph per rule.
     if rules is None and (hazards is not None or site_status is not None):
         rules = rule_table.load()
+    region_id = _one_region(cohort)
+    for name, frame in (("scores", scores), ("hazards", hazards)):
+        if frame is None or "region_id" not in frame.columns or not frame.height:
+            continue
+        # A hazard row from another region joins nothing, and a rule that joins nothing
+        # reads as calm: refused here rather than quietly firing no Act-now at all.
+        other = sorted(set(frame["region_id"].unique().to_list()) - {region_id})
+        if other:
+            raise ValueError(f"{name} from region(s) {other} cannot be allocated against a "
+                             f"{region_id} cohort")
     cap = _check_capacity(capacity)
     floor = _check_floor(group_floor or {}, cohort)
     rank_by = dict(rank_by or {})
@@ -355,7 +366,7 @@ def compare(
             n_too_late += len(taken["unit"])
     if not chosen:
         return _empty(), totals, n_too_late, n_not_reached
-    return (_rows(chosen, frame, act_names, lead_of, rules), totals,
+    return (_rows(chosen, frame, act_names, lead_of, rules, region_id), totals,
             n_too_late, n_not_reached)
 
 
@@ -588,7 +599,8 @@ def _allocate_do_by_day(day: dict[str, np.ndarray], cap: dict[str, int],
 
 def _rows(chosen: list[dict[str, np.ndarray]], frame: pl.DataFrame, act_names: list[str],
           lead_of: np.ndarray,
-          rules: dict[str, rule_table.Rule] | None = None) -> pl.DataFrame:
+          rules: dict[str, rule_table.Rule] | None = None,
+          region_id: str = "") -> pl.DataFrame:
     """The chosen candidates as the `actions` table, ranked within each do-by day."""
     picked = {k: np.concatenate([c[k] for c in chosen]) for k in chosen[0]}
     meta = frame.select(
@@ -616,10 +628,14 @@ def _rows(chosen: list[dict[str, np.ndarray]], frame: pl.DataFrame, act_names: l
     for n in range(len(vids)):
         act, need, k = act_names[picked["action"][n]], NEEDS[k_idx[n]], int(k_idx[n])
         on, vid, tier = dates[n], vids[n], tiers_[n]
-        aid = hashlib.sha1(f"{on}|{vid}|{act}".encode()).hexdigest()[:12]
+        # NYC's ids predate regions and stay as they were; any other region salts its own,
+        # so two regions' SYN-000001 can never share an outcome_log row.
+        salt = "" if region_id == regions.DEFAULT else f"{region_id}|"
+        aid = hashlib.sha1(f"{salt}{on}|{vid}|{act}".encode()).hexdigest()[:12]
         p = fields["p_mean"][n, k]
         out.append({
-            "action_id": aid, "date": on, "veteran_id": vid, "action": act, "tier": tier,
+            "action_id": aid, "region_id": region_id, "date": on, "veteran_id": vid,
+            "action": act, "tier": tier,
             "eha": float(picked["value"][n]), "rank": 0,
             "lead_days": int(lead_of[picked["action"][n]]),
             "capacity_bucket": ACTION_COST_UNIT[act],
@@ -699,6 +715,21 @@ def _check_lead(lead: Mapping[str, int], act_names: list[str]) -> np.ndarray:
     if bad:
         raise ValueError(f"lead days must be whole days, zero or more: {bad}")
     return np.array([lead[a] for a in act_names], dtype=np.int64)
+
+
+def _one_region(cohort: pl.DataFrame) -> str:
+    """The one region `cohort` lives in. Capacity is one care team's day, and a team serves
+    one region, so a panel spanning two would quietly share forty calls between them."""
+    if "region_id" not in cohort.columns:
+        # A frame with no region column is one region by construction, and the one every
+        # pre-region file is (schema.upgrade): the default. Enough for the scores-only path;
+        # the hazard rules join on region_id, so a cohort read through schema.read has it.
+        return regions.DEFAULT
+    found = cohort["region_id"].unique().sort().to_list()
+    if len(found) != 1:
+        raise ValueError(f"allocate() serves one region at a time, and this cohort spans "
+                         f"{found}; allocate each region against its own capacity")
+    return str(found[0])
 
 
 def _check_floor(group_floor: dict[str, float], cohort: pl.DataFrame) -> dict[str, float]:

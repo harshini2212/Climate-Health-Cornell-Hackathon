@@ -62,9 +62,9 @@ its description.
 - `leeward/model/design.py` is shared by the simulator and the model. Do not fork it.
 - Write tables with `schema.write(df, "<table>")`, never `df.write_parquet(...)`. It validates
   first.
-- **`modzcta` is the geography key everywhere.** Not `zip`, not `zcta`, not NTA. (Multi-region
-  support will replace it with `region_id` + `geo_id`; see `docs/ROADMAP.md`. Until that PR
-  lands, `modzcta` it is.)
+- **`(region_id, geo_id)` is the geography key everywhere.** Not `zip`, not `zcta`, not NTA,
+  and not `modzcta`, which `schema.write()` now refuses. A place is a `regions/<id>.yaml`
+  read through `leeward/geo/region.py`; code never names NYC's tables or boroughs directly.
 - **Layering:** production code never imports `leeward.cohort` or `leeward.eval`, and only
   `leeward.api` imports `leeward.api`. `lint-imports` enforces both, in `make check` and CI.
   Deploy-time defaults (scenario, CORS, OTP stations) are in `leeward/settings.py`
