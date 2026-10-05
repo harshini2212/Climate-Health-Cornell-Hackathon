@@ -169,6 +169,20 @@ The smoke file is not a simulation. It is what the monitors recorded:
 Re-run `--only nws_snapshot` on the morning of the demo so the forecast panel shows
 something current, then do not touch the network again.
 
+### Observed heat outcomes, for the back-test
+
+The only real *outcomes* in the repo. Everything else the model is scored on is simulated;
+these are what `make backtest` (`leeward/eval/backtest.py`) scores the heat terms against.
+
+| File | Rows | What it is |
+| --- | --- | --- |
+| `nyc_heat_ed_daily.parquet` | 765 | NYC Health daily heat-syndrome ED visits, citywide, 1 May–30 Sep 2017–2021, with the LaGuardia daily max of heat index and temperature. Every row carries `source = nychealth/heat-syndrome-data`, and the back-test refuses a frame without it. |
+| `ehdp_heat_by_geo.parquet` | 5,161 | EHDP heat ED visits and hospitalizations (indicators 2443, 2410, 2075, 2076) by community district, UHF42, borough and citywide: number, annual rate, age-adjusted rate. SPARCS-suppressed cells are null with `suppressed = True`. |
+| `ehdp_geo_by_modzcta.parquet` | 178 | Each MODZCTA's UHF42 and community district, so EHDP's neighbourhood rates join on `modzcta`. |
+
+Neighbourhood heat ED rates that overlap 2017–2021 exist only by community district
+(2443, 2018-22). The UHF42 yearly series stop in 2014.
+
 ---
 
 ## The augment priors — read this before writing `cohort/augment.py`
