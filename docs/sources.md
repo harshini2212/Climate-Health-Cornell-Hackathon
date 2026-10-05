@@ -128,6 +128,28 @@ Mechanisms, quoted by class:
 | NSAIDs | "Kidney injury with dehydration" |
 | Stimulants | "Increased body temperature" |
 
+**Track A audit, read 5 October 2026** (the page says *last reviewed 18 September 2025*).
+CDC names antipsychotics (haloperidol, olanzapine, quetiapine, risperidone), lithium,
+tricyclics (amitriptyline, clomipramine) and antihistamines "with anticholinergic properties"
+(promethazine, doxylamine, diphenhydramine). Every one of those ten examples resolves through
+RxNav's VA classes to a heat row of `med_climate_risk.csv` that carries CDC's mechanism, and
+`tests/unit/test_medications.py` asserts it drug by drug, so nothing had to be added for
+Track A. Two rows had claimed CDC and could not: CDC's table does not name **CN500
+antiparkinson agents** or **RE105 anticholinergic bronchodilators**. They stay in, tagged
+`ACB_scale`: CN500's anticholinergic members score 3 on the ACB scale (benztropine,
+trihexyphenidyl — https://pmc.ncbi.nlm.nih.gov/articles/PMC8440496/, read 5 October 2026),
+and RE105 is anticholinergic by its VA class definition. RE105's ACB of 1 is the original
+curation's and is **not verified** against a published ACB list; it is a pharmacist question. **Not added:** GU201 urinary antispasmodics
+(oxybutynin, ACB 3), which CDC does not name either; that one is a call for the VA pharmacist.
+
+`source` tags in `med_climate_risk.csv`:
+
+| Tag | Means |
+| --- | --- |
+| `CDC_heat_meds` | CDC, *Heat and Medications — Guidance for Clinicians* (above) |
+| `ACB_scale` | Anticholinergic class whose members the ACB scale scores (below); the heat mechanism is CDC's "anticholinergic properties → decreased sweating", applied by class |
+| `VA_disaster_pharmacy` | VA, *Pharmacy Disaster Relief Plan* and the controlled-substance exclusion (below) |
+
 - **The named additive combination:** "an angiotensin converting enzyme (ACE) inhibitor or an
   angiotensin II receptor blocker (ARB) with a diuretic may significantly increase risk."
 - **Storage:** "Insulin, which should be stored in a refrigerator, may become less effective
@@ -267,6 +289,8 @@ prefix for each in `data/reference/manifest.json`.
 | `va_drug_classes` | https://rxnav.nlm.nih.gov/REST/rxclass/ | `va_drug_class_members.parquet` |
 | `synthea_sample` | https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip | `data/raw/synthea_sample_fhir.zip` |
 | `synthea_med_profiles` | derived from `synthea_sample` | `synthea_med_profiles.parquet` |
+| `synthea_veterans` | https://github.com/synthetichealth/synthea/releases/download/v4.0.0/synthea-with-dependencies.jar, run locally (see *Synthetic cohort*) | `data/raw/synthea_veterans/csv/` |
+| `synthea_veteran_profiles` | derived from `synthea_veterans` | `synthea_veteran_profiles.parquet` |
 | `heat_syndrome` | https://github.com/nychealth/heat-syndrome-data/tree/58dc5420c05b90bacd13af8696282495aac9f87e | `nyc_heat_ed_daily.parquet` |
 | `ehdp_heat` | https://github.com/nychealth/EHDP-data/tree/08d6e68f6e1d744f31b54401ec3165520681bb95 (`indicators/data/{2443,2410,2075,2076}.json`) | `ehdp_heat_by_geo.parquet` |
 | `ehdp_geo_modzcta` | same commit (`geography/zcta_to_uhf.csv`, `geography/CD.geojson`) | `ehdp_geo_by_modzcta.parquet` |
@@ -305,6 +329,21 @@ manifest hashes to change.
 
 ### Synthetic cohort
 
+- **Synthea v4.0.0** (released 5 March 2026), MITRE, Apache-2.0 —
+  https://github.com/synthetichealth/synthea/releases/tag/v4.0.0. Jar
+  `synthea-with-dependencies.jar`, sha256
+  `ed43c20ad40ba5c3bc724503a5af032715fe3c491620b766148e7c2361e6ecc1`, run with OpenJDK 17 on
+  5 October 2026 as
+  `java -jar synthea-with-dependencies.jar -s 0 -cs 0 -r 20260101 -e 20260101 -p 8000 -a 18-100 --generate.veteran_population_override=true --exporter.csv.export=true --exporter.fhir.export=false --exporter.hospital.fhir.export=false --exporter.practitioner.fhir.export=false "New York"`
+  (`leeward/cohort/synthea.py` `RUN_ARGS`). The veteran override puts every adult on the
+  veteran modules: `veteran_ptsd`, `veteran_mdd`, `veteran_self_harm`,
+  `veteran_substance_abuse_conditions` / `_treatment`, `veteran_lung_cancer`,
+  `veteran_prostate_cancer`, plus `dialysis` and `homelessness`
+  (https://github.com/synthetichealth/synthea/tree/v4.0.0/src/main/resources/modules).
+  Distilled to `synthea_veteran_profiles.parquet`, which sets `ptsd`, `depression`,
+  `active_cancer_tx`, `suicide_risk`, `substance_use_disorder`, `homeless` and
+  `med_rxcuis`. Chosen over the VA release below because that one states no generator
+  version and is a 4 GB download.
 - VA, *Synthetic Suicide Prevention Dataset with SDoH* —
   https://catalog.data.gov/dataset/synthetic-suicide-prevention-dataset-with-sdoh
   Resource: https://www.data.va.gov/download/h5zp-pekf/application/zip
@@ -324,8 +363,8 @@ manifest hashes to change.
 - VA National Center for PTSD, *How Common Is PTSD in Veterans?* —
   https://www.ptsd.va.gov/understand/common/common_veterans.asp
   Past-year PTSD: **15%** OEF/OIF, **14%** Gulf War, **5%** Vietnam, **2%** WWII/Korea.
-  Sets `ptsd` by service era in `leeward/cohort/build.py`; peacetime borrows the 2%, which
-  is an assumption, not a quote.
+  Set `ptsd` by service era until Track A; `ptsd` now comes from Synthea's `veteran_ptsd`
+  module, and these figures are the external yardstick its prevalence is compared with.
 
 ---
 

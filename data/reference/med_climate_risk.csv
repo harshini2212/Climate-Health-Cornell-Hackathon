@@ -18,7 +18,7 @@ CN601,"TRICYCLIC ANTIDEPRESSANTS",anticholinergic_decreased_sweating,heat,0.9,3,
 CN600,"ANTIDEPRESSANTS",altered_sweating,heat,0.4,1,0,0,0,CDC_heat_meds
 CN602,"MONAMINE OXIDASE INHIBITOR ANTIDEPRESSANTS",altered_thermoregulation,heat,0.6,1,0,0,0,CDC_heat_meds
 CN609,"ANTIDEPRESSANTS,OTHER",altered_sweating,heat,0.4,1,0,0,0,CDC_heat_meds
-CN500,"ANTIPARKINSON AGENTS",anticholinergic_decreased_sweating,heat,0.8,3,0,0,0,CDC_heat_meds
+CN500,"ANTIPARKINSON AGENTS",anticholinergic_decreased_sweating,heat,0.8,3,0,0,0,ACB_scale
 CN400,"ANTICONVULSANTS",variable_thermoregulation,heat,0.3,1,0,0,1,CDC_heat_meds
 CN800,"CNS STIMULANTS",increased_heat_production,heat,0.8,0,1,0,0,CDC_heat_meds
 CN802,"AMPHETAMINE LIKE STIMULANTS",increased_heat_production,heat,0.9,0,1,0,0,CDC_heat_meds
@@ -37,7 +37,7 @@ AH105,"ANTIHISTAMINES,PIPERAZINE",anticholinergic_decreased_sweating,heat,0.7,3,
 AH106,"ANTIHISTAMINES,BUTYROPHENONE",anticholinergic_decreased_sweating,heat,0.7,2,0,0,0,CDC_heat_meds
 AH107,"ANTIHISTAMINES,PIPERIDINE",anticholinergic_decreased_sweating,heat,0.4,1,0,0,0,CDC_heat_meds
 AH109,"ANTIHISTAMINES,OTHER",anticholinergic_decreased_sweating,heat,0.5,1,0,0,0,CDC_heat_meds
-RE105,"BRONCHODILATORS,ANTICHOLINERGIC",anticholinergic,heat,0.4,1,0,0,0,CDC_heat_meds
+RE105,"BRONCHODILATORS,ANTICHOLINERGIC",anticholinergic,heat,0.4,1,0,0,0,ACB_scale
 MS101,"SALICYLATES,ANTIRHEUMATIC",renal_injury_with_dehydration,heat,0.6,0,0,0,0,CDC_heat_meds
 MS102,"NONSALICYLATE NSAIs,ANTIRHEUMATIC",renal_injury_with_dehydration,heat,0.7,0,0,0,0,CDC_heat_meds
 HS501,"INSULIN",requires_refrigeration,outage,1.0,0,0,1,1,CDC_heat_meds

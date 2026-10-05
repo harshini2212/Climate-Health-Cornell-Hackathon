@@ -254,9 +254,16 @@ def supply(mail_order: np.ndarray, seed: int = 0) -> np.ndarray:
     return np.floor(u * (fill + 1)).astype(np.int32)
 
 
-def attach(people: pl.DataFrame, seed: int = 0) -> pl.DataFrame:
-    """Add every medication column in the cohort contract to `people`."""
-    rxcuis = prescribe(people["age"].to_list(), seed)
+def attach(people: pl.DataFrame, seed: int = 0,
+           rxcuis: list[list[str]] | None = None) -> pl.DataFrame:
+    """Add every medication column in the cohort contract to `people`.
+
+    `rxcuis` is each veteran's own active list when the caller already has one -- the
+    cohort passes its Synthea veteran's (cohort/synthea.py), so the list belongs to the
+    same patient as the diagnoses. Without it, a list is bootstrapped from the FHIR sample.
+    """
+    if rxcuis is None:
+        rxcuis = prescribe(people["age"].to_list(), seed)
     mail = _stream(seed, "mail_order").random(people.height) < MAIL_ORDER_RATE
     return people.with_columns(
         pl.Series("med_rxcuis", rxcuis, dtype=pl.List(pl.Utf8)),

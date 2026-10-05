@@ -22,6 +22,8 @@ REF = schema.REFERENCE
 N = 10_000
 
 # cohort field -> the CDC PLACES column its per-ZIP rate comes from (docs/SPEC.md §5.3).
+# depression and active_cancer_tx left this list for Synthea's veteran modules; their
+# tolerance test is in test_synthea_veterans.py.
 PLACES_FIELDS = {
     "mobility_impaired": "mobility_crudeprev",
     "low_assets": "shututility_crudeprev",
@@ -29,8 +31,6 @@ PLACES_FIELDS = {
     "caregiver_none": "emotionspt_crudeprev",
     "copd": "copd_crudeprev",
     "asthma": "casthma_crudeprev",
-    "active_cancer_tx": "cancer_crudeprev",
-    "depression": "depression_crudeprev",
     "diabetes": "diabetes_crudeprev",
     # SNAP receipt: a measured per-ZIP floor on the low-income share.
     "income_low": "foodstamp_crudeprev",

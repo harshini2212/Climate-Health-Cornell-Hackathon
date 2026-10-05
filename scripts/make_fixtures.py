@@ -149,6 +149,10 @@ def make_cohort(n: int, seed: int, zips: pl.DataFrame, fac: pl.DataFrame) -> pl.
         "active_cancer_tx": r.random(n) < 0.03,
         "ptsd": r.random(n) < 0.22,
         "depression": r.random(n) < 0.19,
+        # Track A columns draw from their own stream so the fixture rows above are unchanged.
+        **{c: np.random.default_rng([seed, i]).random(n) < rate for i, (c, rate) in enumerate(
+            (("suicide_risk", 0.02), ("substance_use_disorder", 0.08),
+             ("homeless", 0.01)), start=101)},
         "pact_presumptive": r.random(n) < 0.17,
         "n_chronic": r.poisson(2.4 + 1.2 * older, n).clip(0, 15).astype(np.int32),
         "er_visits_12m": r.poisson(0.6, n).astype(np.int32),
