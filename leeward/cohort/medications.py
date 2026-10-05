@@ -39,10 +39,10 @@ medication list a synthetic veteran carries.
     stratified by age band only, because the sample's medication burden triples at 55+
     (1.9 active meds under 55, 5.4 at 55+) and our panel is mostly older.
 
-    **Known gap:** the draw ignores the veteran's own diagnosis list, so a cold-chain
-    medication does not imply the diabetes flag. The sample has six diabetics -- too few to
-    condition on without inventing the structure. This closes if the cohort moves to full
-    Synthea patients, where one patient brings diagnoses and prescriptions together.
+    Since Track A the cohort no longer uses this bootstrap: `attach()` is handed each
+    veteran's own Synthea profile list (cohort/synthea.py), so diagnoses -- diabetes
+    included -- and prescriptions come from one patient. `prescribe()` remains the fallback
+    when no list is given.
 """
 
 from __future__ import annotations

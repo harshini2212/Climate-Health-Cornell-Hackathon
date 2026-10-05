@@ -136,12 +136,22 @@ def _write_csvs(tmp: Path) -> Path:
     }).write_csv(tmp / "procedures.csv")
     pl.DataFrame({
         # sertraline (open), fluoxetine (ended), insulin 70/30 for *prediabetes* (open),
-        # hydrocodone started 2014 and never closed, oxycodone started 30 days ago.
-        "START": ["2020-01-01", "2010-01-01", "2019-01-01", "2014-03-01", "2025-12-02"],
-        "STOP": [None, "2011-01-01", None, None, None],
-        "PATIENT": ["alive"] * 5,
-        "CODE": ["312938", "310385", INSULIN_70_30, HYDROCODONE, OXYCODONE],
-        "REASONCODE": [None, None, synthea.PREDIABETES, "47505003", None],
+        # hydrocodone started 2014 and never closed, oxycodone started 30 days ago, and two
+        # long-term opioids a pharmacist would never call acute: a fentanyl patch and
+        # buprenorphine/naloxone, both started in 2014.
+        "START": ["2020-01-01", "2010-01-01", "2019-01-01", "2014-03-01", "2025-12-02",
+                  "2014-03-01", "2014-03-01"],
+        "STOP": [None, "2011-01-01", None, None, None, None, None],
+        "PATIENT": ["alive"] * 7,
+        "CODE": ["312938", "310385", INSULIN_70_30, HYDROCODONE, OXYCODONE, FENTANYL_PATCH,
+                 BUPRENORPHINE],
+        "DESCRIPTION": ["Sertraline 100 MG Oral Tablet", "FLUoxetine 20 MG Oral Capsule",
+                        "insulin isophane, human 70 UNT/ML", "acetaminophen 300 MG / "
+                        "hydrocodone bitartrate 10 MG Oral Tablet",
+                        "oxycodone hydrochloride 5 MG Oral Tablet",
+                        "72 HR Fentanyl 0.025 MG/HR Transdermal System",
+                        "buprenorphine 2 MG / naloxone 0.5 MG Sublingual Tablet"],
+        "REASONCODE": [None, None, synthea.PREDIABETES, "47505003", None, None, None],
     }).write_csv(tmp / "medications.csv")
     return tmp
 
@@ -149,6 +159,7 @@ def _write_csvs(tmp: Path) -> Path:
 #: Real RxNorm codes from the run: Humulin 70/30, hydrocodone/APAP 10/300, oxycodone 5 mg.
 INSULIN_70_30, HYDROCODONE, OXYCODONE = "106892", "856980", "1049621"
 METFORMIN_1000 = "861004"   # metformin hydrochloride 1000 MG oral tablet
+FENTANYL_PATCH, BUPRENORPHINE = "245134", "351266"   # 72 HR patch; bup/naloxone 2/0.5 SL
 
 
 def test_the_fixture_codes_are_the_classes_the_rules_are_about() -> None:
@@ -172,9 +183,9 @@ def test_the_distiller_keeps_active_conditions_and_meds_and_drops_the_dead(tmp_p
     assert row["suicide_risk"] is True, "a suicide-risk finding in the record counts"
     assert row["substance_use_disorder"] is True
     assert row["active_cancer_tx"] is False, "an open cancer with no treatment in 365 days"
-    assert set(row["rxcuis"]) == {"312938", OXYCODONE}, (
-        "active at the reference date, minus insulin for prediabetes and opioids started "
-        "more than ACUTE_DAYS ago")
+    assert set(row["rxcuis"]) == {"312938", OXYCODONE, FENTANYL_PATCH, BUPRENORPHINE}, (
+        "active at the reference date, minus insulin for prediabetes and *short-acting*"
+        " opioids started more than ACUTE_DAYS ago; long-acting and buprenorphine stay")
 
 
 # --------------------------------------------------------------------------- #
@@ -244,6 +255,16 @@ def test_depression_keeps_the_places_zip_gradient(cohort: pl.DataFrame) -> None:
     assert r > 0.3, f"per-ZIP depression correlates {r:.2f} with PLACES"
 
 
+def test_diabetes_keeps_the_places_zip_gradient(cohort: pl.DataFrame) -> None:
+    """Diabetes moved from a PLACES draw to the tilted Synthea draw; its gradient must stay."""
+    by = cohort.group_by("geo_id").agg(pl.len().alias("n"), pl.col("diabetes").mean())
+    places = pl.read_parquet(REF / "places_zcta_nyc.parquet").select(
+        pl.col("zcta").alias("geo_id"), "diabetes_crudeprev")
+    j = by.filter(pl.col("n") >= 30).join(places, on="geo_id")
+    r = np.corrcoef(j["diabetes"].to_numpy(), j["diabetes_crudeprev"].to_numpy())[0, 1]
+    assert r > 0.4, f"per-ZIP diabetes correlates {r:.2f} with PLACES"
+
+
 def _within_se(field: str, realised: float, expected: float, n: int, what: str) -> None:
     se = np.sqrt(max(expected * (1 - expected), 1e-6) / n)
     assert abs(realised - expected) <= SE_TOLERANCE * se, (
@@ -304,13 +325,22 @@ def test_no_veteran_is_on_insulin_without_diabetes(cohort: pl.DataFrame) -> None
     assert insulin.mean() < cohort["diabetes"].mean()
 
 
-def test_opioid_use_is_near_the_vas_published_dispensing_rate(cohort: pl.DataFrame) -> None:
-    """GAO-18-380: ~10% of VA patients were dispensed an opioid in a quarter (FY2018 Q1).
-    Synthea leaves opioid prescriptions open for years, which put 25% of the panel on one.
-    With the 90-day rule (CDC 2022: acute < 1 month, subacute 1-3) the panel must sit at
-    or below the published quarterly rate."""
+#: Any opioid: 7.0% of Veterans with VA pharmacy activity, Q1 FY2020 (Sandbrink et al.,
+#: JGIM 2020). Ceiling: GAO-18-380's ~10% per quarter (FY2018). Floor: VA 2023 says more
+#: than half of Veterans prescribed opioids are on long-term therapy, so long-term alone is
+#: ~3.5% -- a panel under that has lost its long-term patients. docs/sources.md cites all three.
+OPIOID_FLOOR, OPIOID_CEILING = 0.035, 0.10
+
+
+def test_opioid_use_sits_between_the_vas_long_term_and_any_opioid_rates(
+        cohort: pl.DataFrame) -> None:
+    """Synthea leaves short-acting opioid prescriptions open for years (25% of the panel).
+    The 90-day rule (CDC 2022: acute < 1 month, subacute 1-3) removes those; long-acting
+    formulations and buprenorphine are long-term therapy and stay. Both ends are checked,
+    so a rule that removed every opioid would fail too."""
     share = cohort["va_drug_classes"].list.contains("CN101").mean()
-    assert share is not None and share <= 0.10, f"{share:.1%} of veterans on an opioid"
+    assert share is not None
+    assert OPIOID_FLOOR <= share <= OPIOID_CEILING, f"{share:.1%} of veterans on an opioid"
 
 
 def test_metformin_is_not_cold_chain() -> None:

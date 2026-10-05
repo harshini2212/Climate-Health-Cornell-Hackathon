@@ -400,8 +400,9 @@ psychiatric medication independent of the diagnosis list) closes for these condi
 in 26.8%) and carry no ZIP gradient, so the pick is tilted — whole profiles only — so that
 `ptsd` lands on VA NCPTSD past-year by era, `depression` and `diabetes` on PLACES per ZIP,
 and `substance_use_disorder` on NSDUH 2022–24 by era. Two Synthea medication artifacts are
-removed when the profiles are distilled: insulin prescribed for prediabetes, and opioids
-started more than 90 days before the reference date (CDC 2022's acute + subacute window). A sex × band pool with fewer than
+removed when the profiles are distilled: insulin prescribed for prediabetes, and short-acting
+opioids started more than 90 days before the reference date (CDC 2022's acute + subacute
+window). Extended-release and transdermal opioids, methadone and buprenorphine are kept. A sex × band pool with fewer than
 `MIN_CARRIERS` carriers of a targeted flag borrows that flag's carriers from the nearest
 bands (men 65–74 have none). `active_cancer_tx`, `suicide_risk` and `homeless` keep Synthea's
 rates, have no cited target, and so carry a `_synthetic` flag. **What it costs:** depression keeps its PLACES gradient (per-ZIP r 0.42 before and
@@ -412,7 +413,8 @@ cancer and this flag is now in-treatment only.
 binomial standard errors of their cited rates, and the other three to within 3 SE of the
 Synthea source rate reweighted to the cohort's own sex × band mix; it asserts that every
 veteran's (flags, medication list) is one real profile's, that nobody is on insulin without
-diabetes, and that opioid use sits at or below GAO's ~10% quarterly VA dispensing rate.
+diabetes, and that opioid use sits between VA's long-term-therapy share (~3.5%) and GAO's ~10%
+quarterly dispensing rate (7.0% in Q1 FY2020; the panel is 7.7%).
 
 **Still genuinely synthetic** — no public source exists, so these keep parametric priors and a
 `_synthetic` flag:

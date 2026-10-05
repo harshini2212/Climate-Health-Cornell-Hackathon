@@ -379,13 +379,28 @@ manifest hashes to change.
   open glucose-lowering prescriptions); insulin whose reason is prediabetes is dropped, and
   `diabetes` now comes from the same patient, so insulin always arrives with its diagnosis.
   Synthea's ended opioid prescriptions run a median 28 days, but 951 open ones started before
-  2025; an opioid (CN101) counts only if started within **90 days**, CDC's acute-plus-subacute
-  window — *CDC Clinical Practice Guideline for Prescribing Opioids for Pain, 2022*,
-  https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9639433/ (acute < 1 month, subacute 1–3
-  months; read 5 October 2026). Checked against GAO, *VA Health Care: Progress Made Towards
-  Improving Opioid Safety*, GAO-18-380 — https://www.gao.gov/products/gao-18-380 — where the
-  share of VA patients dispensed an opioid fell from ~17% to **~10%** per quarter (FY2013 Q4 →
-  FY2018 Q1). The panel sits at 4.6%, below that, as a point-in-time share should.
+  2025; a *short-acting* opioid (CN101) counts only if started within **90 days**, CDC's
+  acute-plus-subacute window — *CDC Clinical Practice Guideline for Prescribing Opioids for
+  Pain, 2022*, https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9639433/ (acute < 1 month,
+  subacute 1–3 months; read 5 October 2026). Extended-release and transdermal opioids,
+  methadone and buprenorphine are long-term therapy by design and are kept whatever their
+  start date. The panel lands at **7.7%** on an opioid, checked against three published rates:
+  - Sandbrink et al., *Opioid Prescribing and Opioid Risk Mitigation Strategies in the
+    Veterans Health Administration*, J Gen Intern Med 2020 —
+    https://pmc.ncbi.nlm.nih.gov/articles/PMC7728840/ — **7.0%** of Veterans with VA pharmacy
+    activity had an opioid in Q1 FY2020 (297,251 Veterans).
+  - GAO-18-380 — https://www.gao.gov/products/gao-18-380 — ~17% → **~10%** of VA patients
+    dispensed an opioid per quarter, FY2013 Q4 → FY2018 Q1. The test's ceiling.
+  - VA (2023), as cited in *Substance use and use disorders among Veterans on long-term opioid
+    therapy*, Drug Alcohol Depend Rep 2025 — https://pmc.ncbi.nlm.nih.gov/articles/PMC12166433/
+    — "more than 50% of Veterans prescribed opioids in 2023 were on long-term opioid therapy".
+    Half of ~7% gives the test's **3.5%** floor.
+- **Not reproduced, from Synthea:** benzodiazepines (CN302) reach 0.12% of the panel and
+  stimulants 0%. VA's own figure for benzodiazepines is several times higher: **3.0%** of VA
+  adults ≥ 55 received one in a month by December 2017 (*Benzodiazepine Use among Medicare,
+  Commercially-Insured, and Veteran Older Adults from 2013–2017*,
+  https://pmc.ncbi.nlm.nih.gov/articles/PMC7856043/). Read the controlled-substance flag with
+  that in mind.
 
 ---
 

@@ -129,8 +129,9 @@ medications that patient was actually prescribed. Synthea's own rates are off fo
 the flags (PTSD ~1% of records, substance use ~27%, no ZIP gradient for depression), so the
 pick is tilted toward cited rates — VA NCPTSD by era, NSDUH, and PLACES per ZIP for
 depression and diabetes — without ever splitting a profile (`cohort/synthea.py`,
-"Weighting"). Insulin for prediabetes and opioids started more than 90 days earlier are
-Synthea artifacts and are dropped when the profiles are distilled. `copd`, `asthma` and
+"Weighting"). Insulin for prediabetes and short-acting opioids started more than 90 days
+earlier are Synthea artifacts and are dropped when the profiles are distilled; long-acting
+opioids and buprenorphine are kept. `copd`, `asthma` and
 `chf` still come from PLACES.
 
 ### Care sites and hazard to those sites

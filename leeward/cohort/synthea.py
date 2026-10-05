@@ -140,6 +140,11 @@ PREDIABETES, INSULIN_CLASS = "714628002", "HS501"
 #: the reference date: CDC's 2022 guideline calls pain under 1 month acute and 1-3 months
 #: subacute (https://www.ncbi.nlm.nih.gov/pmc/articles/PMC9639433/).
 ACUTE_CLASSES, ACUTE_DAYS = frozenset({"CN101"}), 90
+#: ...except formulations that are long-term therapy by design, whatever their start date:
+#: extended-release and transdermal opioids, methadone, and buprenorphine (opioid use
+#: disorder treatment that must not stop abruptly). Matched on the prescription's own
+#: RxNorm description, which names the dose form.
+LONG_TERM_OPIOID = r"(?i)\b(?:12|24|72) HR\b|extended release|transdermal|buprenorphine|methadone"
 
 #: A cancer is being treated when one of these procedures fell in the last CANCER_TX_DAYS...
 #: Every chemotherapy and radiotherapy procedure the v4.0.0 cancer modules emit (SNOMED;
@@ -228,7 +233,8 @@ def profiles_from_csv(csv_dir: Path, ref: date = REFERENCE_DATE,
                         .select(pl.col("PATIENT").unique()).with_columns(pl.lit(True).alias(field)))
 
     meds = _current_meds(_open_at(_read(csv_dir, "medications",
-                                        ["START", "STOP", "PATIENT", "CODE", "REASONCODE"]),
+                                        ["START", "STOP", "PATIENT", "CODE", "DESCRIPTION",
+                                         "REASONCODE"]),
                                   ref), ref)
     rx = meds.group_by("PATIENT").agg(pl.col("CODE").unique().sort().alias("rxcuis"))
 
@@ -265,7 +271,8 @@ def _current_meds(meds: pl.DataFrame, ref: date) -> pl.DataFrame:
     start = pl.col("START").str.slice(0, 10).str.to_date()
     return meds.filter(
         ~(pl.col("CODE").is_in(insulin) & (pl.col("REASONCODE") == PREDIABETES).fill_null(False))
-        & ~(pl.col("CODE").is_in(acute) & (start <= ref - timedelta(days=ACUTE_DAYS))))
+        & ~(pl.col("CODE").is_in(acute) & (start <= ref - timedelta(days=ACUTE_DAYS))
+            & ~pl.col("DESCRIPTION").fill_null("").str.contains(LONG_TERM_OPIOID)))
 
 
 def _years(birth: date, ref: date) -> int:
