@@ -180,7 +180,7 @@ def test_an_explicit_day_still_wins(client: TestClient) -> None:
 UI = ROOT / "ui" / "src"
 
 
-@pytest.mark.parametrize("screen", ["Week.tsx", "Forecast.tsx", "Map.tsx"])
+@pytest.mark.parametrize("screen", ["CommandCenter.tsx", "Forecast.tsx", "Map.tsx"])
 def test_no_screen_hard_codes_the_quiet_week(screen: str) -> None:
     src = (UI / "screens" / screen).read_text(encoding="utf-8")
     hits = re.findall(r"getForecast\(([^)]*)\)", src)

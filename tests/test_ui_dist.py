@@ -139,6 +139,14 @@ def test_a_page_that_points_at_a_missing_asset_is_a_broken_bundle(tree: Path) ->
     assert any("/assets/app.js" in p and "not in ui/dist" in p for p in ui_dist.problems(tree))
 
 
+def test_a_relative_asset_ref_is_checked_too(tree: Path) -> None:
+    """Vite's `base: "./"` writes `./assets/...`; a checker that only reads `/assets/...`
+    would pass a white-screen bundle without looking at it."""
+    (tree / "ui/dist/index.html").write_text(
+        '<div id="root"></div><script src="./assets/gone.js"></script>')
+    assert any("/assets/gone.js" in p and "not in ui/dist" in p for p in ui_dist.problems(tree))
+
+
 def test_a_build_nobody_stamped_is_not_trusted(tree: Path) -> None:
     """`npm run build` by hand empties dist and drops the manifest with it."""
     (tree / "ui/dist" / ui_dist.MANIFEST).unlink()

@@ -32,7 +32,8 @@ IGNORED = {".DS_Store"}
 
 #: A relative import in a .ts/.tsx file: `from "../x"`, `import "./x.css"`, `import("./x")`.
 RELATIVE_IMPORT = re.compile(r"""(?:from|import)\s*\(?\s*["'](\.{1,2}/[^"']+)["']""")
-ASSET_REF = re.compile(r'(?:src|href)="(/[^/"][^"]*)"')
+#: `./assets/x.js` (Vite's relative `base`) or `/assets/x.js`; either way captured as `/assets/x.js`.
+ASSET_REF = re.compile(r'(?:src|href)="\.?(/[^/"][^"]*)"')
 
 
 def _digest(path: Path) -> str:
