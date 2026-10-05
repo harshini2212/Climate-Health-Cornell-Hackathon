@@ -313,3 +313,46 @@ The rung-0 baseline — your "before"
 **Pipeline** — hazards 0.16s · cohort 0.29s · simulate 1.38s · score 16.92s · allocate 7.37s · report 9.68s · total 35.8s
 
 ---
+
+## Sprint 0 end: post-cleanup and act-now rules — rung 0 — `ed18013`
+
+*2026-10-05T02:39:49Z · Python 3.11.16 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **24.77** vs random 3.74, rank_by_age 3.37, rank_by_chronic 6.79 — **3.65× the best baseline** |
+| **Per call actually made** | **0.7955** — **4.68×**, spending 934 of 1200 available calls |
+| **Discrimination (within-day AUC)** | heat **0.727** · treatment gap **0.715** · worst need 0.581 · 2 of 5 needs above 0.65 |
+| **Calibration (ECE, bar 0.03)** | max **0.0076** · mean 0.005 — but a constant at the base rate scores 0.0, so this is not evidence on its own |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.048 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0076 · mental 0.0044 · treatment_gap 0.0055
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.837% · mental 0.537% · treatment_gap 1.859%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 343,227 actions
+
+**Medication** — 4.37 drugs each · 72.0% heat-impairing · 18.4% on the CDC pair · 10.8% cold-chain · 5.5% controlled
+
+**Tier mix** — act-now 12.12% · find-out 9.084%
+
+**Pipeline** — hazards 0.83s · cohort 1.33s · simulate 11.58s · score 97.27s · allocate 42.47s · report 55.49s · total 209.0s
+
+**Read before quoting.** Two numbers moved and neither means what it seems on its own:
+
+- *Harm averted +53% (16.14 → 24.77 at K=40).* This comes from the four act-now rules and the
+  round/tier-band ordering (#35). It is scored against **simulated** outcomes whose SiteDown and
+  outage interaction terms are exactly what those rules target, so part of the gain is the
+  simulator agreeing with itself. It is not evidence of real-world benefit; the real-data
+  back-test (#33) is where that question is asked, and at rung 0 the model does not yet beat raw
+  temperature there.
+- *Pipeline 209 s vs 35.8 s.* Recorded at a load average of ~205 with model fits and other
+  branches running on the same machine. Wall-clock here measures the machine, not the code;
+  re-time on a quiet machine before comparing.
+
+Discrimination, calibration, parameter coverage and fairness are unchanged from the previous
+row, as expected: #35 changes who is acted on first, not the risk scores.
+
+---
