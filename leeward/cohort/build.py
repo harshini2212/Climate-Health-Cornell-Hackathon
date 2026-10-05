@@ -33,8 +33,9 @@ The behavioral-health, cancer and housing columns, and the active-medication lis
 from one Synthea veteran (Synthea v4.0.0's veteran modules, cohort/synthea.py) drawn whole
 from the veteran's own sex and age band, so a diagnosis travels with the prescription that
 treats it. `leeward/cohort/medications.py` derives every medication flag from that list's
-VA drug classes and CDC mechanisms. Synthea does not know where anyone lives: those columns
-carry no per-ZIP gradient, unlike the PLACES ones.
+VA drug classes and CDC mechanisms. Synthea does not know where anyone lives, so the pick is
+tilted toward cited rates (PTSD by era, depression per ZIP from PLACES, substance use by era;
+see "Track A" below); cancer treatment, suicide risk and homelessness carry no ZIP gradient.
 
 `race` and `ethnicity` are drawn jointly from the composition of the veteran's own ZIP
 (ACS B03002, all residents: no public table gives veterans' race per ZIP). That grounds the

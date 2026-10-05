@@ -179,7 +179,7 @@ salted with its id.
 | lives_alone | bool | synthea SDoH | |
 | conditions | list[str] | synthea | SNOMED codes |
 | copd, asthma, chf, diabetes, ckd_dialysis | bool | derived | PLACES per ZIP (dialysis: VA ESRD × emPOWER shape) |
-| ptsd, depression, active_cancer_tx | bool | synthea | **Track A:** from one whole Synthea v4.0.0 veteran (`synthea_veteran_profiles.parquet`), drawn within sex × ACS age band; see §5.3. No per-ZIP gradient |
+| ptsd, depression, active_cancer_tx | bool | synthea | **Track A:** from one whole Synthea v4.0.0 veteran (`synthea_veteran_profiles.parquet`), drawn within sex × ACS age band and tilted to cited rates (§5.3): ptsd to VA NCPTSD by era, depression to PLACES per ZIP. active_cancer_tx is untilted: open malignancy + chemo/radiation in the last 365 days |
 | suicide_risk | bool | synthea | **New (Track A).** "At increased risk for suicide" or "suicidal thoughts" finding in the record's 10-year history (`veteran_ptsd`, `veteran_self_harm`). The run has no suicide attempt by a living patient, so attempts are not a flag |
 | substance_use_disorder | bool | synthea | **New (Track A).** Open alcohol, opioid or drug-use disorder (`veteran_substance_abuse_*`) |
 | homeless | bool | synthea | **New (Track A).** Open "Homeless (finding)" (`homelessness`). Forces `home_ac=False`, `floor=ground`, `lives_alone=True` |
@@ -395,13 +395,20 @@ and sex are still ACS (§5.2); Synthea supplies only the clinical record. Becaus
 and prescriptions now belong to the same patient, the known gap below (a cold-chain or
 psychiatric medication independent of the diagnosis list) closes for these conditions.
 
-**What it costs:** Synthea knows nothing about NYC ZIPs, so depression and cancer lose the
-per-ZIP PLACES gradient they had. The PR measures that loss (per-ZIP correlation with PLACES
-before and after, and the spatial back-test).
+**Weighting.** Synthea's own rates are off (PTSD in 1.6% of records, substance use disorder
+in 26.8%) and carry no ZIP gradient, so the pick is tilted — whole profiles only — so that
+`ptsd` lands on VA NCPTSD past-year by era, `depression` on PLACES per ZIP, and
+`substance_use_disorder` on NSDUH 2022–24 by era. A sex × band pool with fewer than
+`MIN_CARRIERS` carriers of a targeted flag borrows that flag's carriers from the nearest
+bands (men 65–74 have none). `active_cancer_tx`, `suicide_risk` and `homeless` keep Synthea's
+rates. **What it costs:** depression keeps its PLACES gradient (per-ZIP r 0.42 before and
+after); `active_cancer_tx` loses it (r 0.51 → 0.14), because PLACES measures ever-diagnosed
+cancer and this flag is now in-treatment only.
 
-**Acceptance:** `tests/unit/test_synthea_veterans.py` holds each of the six flags to within 3
-binomial standard errors of the Synthea source rate reweighted to the cohort's own sex × band
-mix, and asserts that every veteran's (flags, medication list) is one real profile's.
+**Acceptance:** `tests/unit/test_synthea_veterans.py` holds the three tilted flags to within 3
+binomial standard errors of their cited rates, and the other three to within 3 SE of the
+Synthea source rate reweighted to the cohort's own sex × band mix; it asserts that every
+veteran's (flags, medication list) is one real profile's.
 
 **Still genuinely synthetic** — no public source exists, so these keep parametric priors and a
 `_synthetic` flag:

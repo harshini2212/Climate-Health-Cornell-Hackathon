@@ -363,8 +363,17 @@ manifest hashes to change.
 - VA National Center for PTSD, *How Common Is PTSD in Veterans?* —
   https://www.ptsd.va.gov/understand/common/common_veterans.asp
   Past-year PTSD: **15%** OEF/OIF, **14%** Gulf War, **5%** Vietnam, **2%** WWII/Korea.
-  Set `ptsd` by service era until Track A; `ptsd` now comes from Synthea's `veteran_ptsd`
-  module, and these figures are the external yardstick its prevalence is compared with.
+  **The rate the cohort's `ptsd` is tilted to**, by service era (`PTSD_PAST_YEAR` in
+  `leeward/cohort/build.py`). The flag itself comes from Synthea's `veteran_ptsd` module; the
+  draw picks whole Synthea veterans so that it lands on these rates. Peacetime borrows the 2%,
+  which is an assumption, not a quote.
+- SAMHSA, *NSDUH Data Spotlight: Mental Health and Substance Use among Veterans*, 2022–2024
+  annual averages — https://www.samhsa.gov/data/sites/default/files/reports/rpt56774/2024-nsduh-data-spotlight-veterans.pdf
+  (read 5 October 2026). Past-year substance use disorder (DSM-5): **17.5%** of veterans who
+  served in a military combat zone, **15.4%** of those who did not. The rate the cohort's
+  `substance_use_disorder` is tilted to (`SUD_PAST_YEAR`); the panel has no combat-zone flag,
+  so gulf and post-9/11 service stands in for combat-zone service, which is an assumption.
+  Synthea's own rate in the profiles is 26.8%.
 
 ---
 

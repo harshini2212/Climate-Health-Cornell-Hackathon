@@ -49,10 +49,22 @@ veteran's own sex x age-band pool, with theta solved so every targeted flag hits
 veteran's target. Profiles stay whole -- the tilt only changes *which* real patient a
 veteran gets -- so the medications still belong to the diagnoses. Cancer treatment,
 suicide risk and homelessness take Synthea's own rates: no cited rate measures the same thing.
+
+Two definitional gaps, stated rather than hidden: the PTSD target is *past-year* (VA NCPTSD)
+while the flag is a diagnosis anywhere in the 10-year record, and PLACES depression is
+*ever told* while the flag is an open condition. Both targets are the nearest published
+rate, not an exact match. Cancer is held to the stricter rule and is not tilted, because
+PLACES' ever-diagnosed cancer rate is three times any plausible in-treatment rate.
+
+Thin pools: Synthea gives men now 65-74 almost no PTSD, so their PTSD carriers are
+borrowed from ages 55-64 and 75+ (MIN_CARRIERS). With the committed profiles that is ~11
+distinct records serving every PTSD veteran over 65; treat medication detail for that
+group as thin.
 """
 
 from __future__ import annotations
 
+import logging
 import zlib
 from datetime import date, timedelta
 from functools import cache
@@ -62,6 +74,8 @@ import numpy as np
 import polars as pl
 
 from leeward.schema import REFERENCE
+
+log = logging.getLogger(__name__)
 
 #: ACS B21001 age bands -> inclusive age range. The 75+ upper bound is open. build.py
 #: re-homes on these bands and this module bootstraps within them, so they live here once.
@@ -297,6 +311,17 @@ def _pool(pools: dict, key: tuple[str, str], x: np.ndarray | None, flags: list[s
     return np.unique(np.concatenate([pool, *extra])) if extra else pool
 
 
+def _warn_if_short(key: tuple[str, str], flags: list[str], got: np.ndarray,
+                   want: np.ndarray, tol: float = 0.005) -> None:
+    """Say so when a target is out of reach even after borrowing: theta sits at TILT_CAP and
+    the rate falls short. Silence here would read as calibrated."""
+    gap = np.abs(got - want).max(axis=0)
+    for k, f in enumerate(flags):
+        if gap[k] > tol:
+            log.warning("synthea draw: %s in %s/%s misses its cited rate by up to %.3f; "
+                        "too few carriers in the profiles", f, key[0], key[1], gap[k])
+
+
 def draw(sex: np.ndarray, age: np.ndarray, seed: int,
          targets: dict[str, np.ndarray] | None = None) -> pl.DataFrame:
     """One profile row per veteran, in the order given, from the veteran's own sex and band.
@@ -325,8 +350,12 @@ def draw(sex: np.ndarray, age: np.ndarray, seed: int,
         if not flags:
             pick[rows] = pool[(u[rows] * len(pool)).astype(np.int64)]
             continue
-        prob = tilt(x_all[pool], t_all[rows])                      # type: ignore[index]
-        cdf = np.cumsum(prob, axis=1)
+        # Targets repeat (one per ZIP x era), so solve the tilt once per distinct row.
+        uniq, inv = np.unique(t_all[rows], axis=0, return_inverse=True)  # type: ignore[index]
+        x = x_all[pool]                                                  # type: ignore[index]
+        prob = tilt(x, uniq)
+        _warn_if_short(key, flags, prob @ x, uniq)
+        cdf = np.cumsum(prob, axis=1)[inv.reshape(-1)]
         j = np.minimum((cdf < u[rows, None] * cdf[:, -1:]).sum(axis=1), len(pool) - 1)
         pick[rows] = pool[j]
     return profiles[pick].drop("band")

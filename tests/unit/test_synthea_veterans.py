@@ -107,26 +107,32 @@ def test_the_condition_codes_are_the_ones_the_modules_emit() -> None:
 def _write_csvs(tmp: Path) -> Path:
     tmp.mkdir(parents=True, exist_ok=True)
     pl.DataFrame({
-        "Id": ["alive", "dead", "child"],
-        "BIRTHDATE": ["1950-06-01", "1950-06-01", "2015-01-01"],
-        "DEATHDATE": [None, "2020-01-01", None],
-        "GENDER": ["M", "F", "F"],
+        "Id": ["alive", "dead", "child", "treated"],
+        "BIRTHDATE": ["1950-06-01", "1950-06-01", "2015-01-01", "1960-01-01"],
+        "DEATHDATE": [None, "2020-01-01", None, None],
+        "GENDER": ["M", "F", "F", "M"],
     }).write_csv(tmp / "patients.csv")
     pl.DataFrame({
         "START": ["2018-01-01", "2010-01-01", "2019-01-01", "2001-01-01", "2005-01-01",
-                  "2016-01-01", "2016-01-01"],
-        "STOP": ["2020-01-01", "2011-01-01", "2019-02-01", None, None, None, None],
-        "PATIENT": ["alive", "alive", "alive", "dead", "child", "alive", "alive"],
+                  "2016-01-01", "2016-01-01", "2024-06-01", "2020-01-01", "2023-01-01"],
+        "STOP": ["2020-01-01", "2011-01-01", "2019-02-01", None, None, None, None, None,
+                 "2021-01-01", None],
+        "PATIENT": ["alive", "alive", "alive", "dead", "child", "alive", "alive", "treated",
+                    "treated", "treated"],
         "CODE": ["47505003", "370143000", "225444004", "47505003", "32911000",
-                 "7200002", "126906006"],
+                 "7200002", "126906006", "254637007", "370143000", "370143000"],
         "DESCRIPTION": ["Posttraumatic stress disorder (disorder)",
                         "Major depressive disorder (disorder)",
                         "At increased risk for suicide (finding)",
                         "Posttraumatic stress disorder (disorder)", "Homeless (finding)",
-                        "Alcoholism (disorder)", "Neoplasm of prostate (disorder)"],
+                        "Alcoholism (disorder)", "Neoplasm of prostate (disorder)",
+                        "Non-small cell lung cancer (disorder)",
+                        "Major depressive disorder (disorder)",
+                        "Major depressive disorder (disorder)"],
     }).write_csv(tmp / "conditions.csv")
-    pl.DataFrame({   # radiotherapy 2 years ago: the prostate cancer is no longer in treatment
-        "START": ["2024-01-01"], "PATIENT": ["alive"], "CODE": ["999"],
+    pl.DataFrame({   # "alive": radiotherapy 2 years ago, out of the window; "treated": 2025
+        "START": ["2024-01-01", "2025-09-01"], "PATIENT": ["alive", "treated"],
+        "CODE": ["999", "999"],
     }).write_csv(tmp / "procedures.csv")
     pl.DataFrame({
         "START": ["2020-01-01", "2010-01-01"],
@@ -140,7 +146,11 @@ def _write_csvs(tmp: Path) -> Path:
 def test_the_distiller_keeps_active_conditions_and_meds_and_drops_the_dead(tmp_path: Path) -> None:
     p = synthea.profiles_from_csv(_write_csvs(tmp_path / "csv"),
                                   antineoplastic_rxcuis=frozenset(), cancer_tx_procedures={"999"})
-    assert p["profile_id"].to_list() == ["alive"], "dead and under-18 patients are not veterans to reach"
+    assert p["profile_id"].to_list() == ["alive", "treated"], (
+        "dead and under-18 patients are not veterans to reach")
+    treated = p.row(1, named=True)
+    assert treated["active_cancer_tx"] is True, "open lung cancer + radiotherapy in 2025"
+    assert treated["depression"] is True, "one closed and one open episode: open wins"
     row = p.row(0, named=True)
     assert row["age"] == 75 and row["sex"] == "M"
     assert row["ptsd"] is True, "PTSD in the record stays on the problem list after treatment"
@@ -174,8 +184,9 @@ def test_schema_write_accepts_the_new_cohort(cohort: pl.DataFrame, tmp_path: Pat
 @pytest.mark.parametrize("field", UNWEIGHTED)
 def test_unweighted_prevalence_matches_the_synthea_source_within_three_standard_errors(
         cohort: pl.DataFrame, profiles: pl.DataFrame, field: str) -> None:
-    """Uniform draw within sex x age band is exact in expectation: the source rate in each
-    stratum, weighted by how many veterans the cohort put there. Tolerance: 3 binomial SE."""
+    """These flags are not targeted, so in expectation they keep the source rate in each
+    stratum, weighted by how many veterans the cohort put there. The tilt on the other flags
+    could drag them through correlation; 3 binomial SE is the bound that says it does not."""
     src = (profiles.with_columns(_stratum(pl.col("age")))
                    .group_by("sex", "band").agg(pl.col(field).mean().alias("rate")))
     mix = (cohort.with_columns(_stratum(pl.col("age")))
