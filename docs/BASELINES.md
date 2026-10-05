@@ -356,3 +356,31 @@ Discrimination, calibration, parameter coverage and fairness are unchanged from 
 row, as expected: #35 changes who is acted on first, not the risk scores.
 
 ---
+
+## Track A cohort (Synthea v4.0.0, tilted) — rung 0 — `17c3627`
+
+*2026-10-05T08:14:13Z · Python 3.11.16 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **22.34** vs random 3.97, rank_by_age 3.47, rank_by_chronic 6.14 — **3.64× the best baseline** |
+| **Per call actually made** | **0.7121** — **4.64×**, spending 941 of 1200 available calls |
+| **Discrimination (within-day AUC)** | heat **0.726** · treatment gap **0.711** · worst need 0.581 · 2 of 5 needs above 0.65 |
+| **Calibration (ECE, bar 0.03)** | max **0.0077** · mean 0.005 — but a constant at the base rate scores 0.0, so this is not evidence on its own |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.053 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0077 · mental 0.0043 · treatment_gap 0.0051
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.872% · mental 0.543% · treatment_gap 1.865%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 341,560 actions
+
+**Medication** — 5.6 drugs each · 78.7% heat-impairing · 14.9% on the CDC pair · 27.8% cold-chain · 25.6% controlled
+
+**Tier mix** — act-now 14.13% · find-out 9.356%
+
+**Pipeline** — hazards 0.47s · cohort 2.5s · simulate 8.18s · score 72.91s · allocate 39.78s · report 86.37s · total 210.2s
+
+---
