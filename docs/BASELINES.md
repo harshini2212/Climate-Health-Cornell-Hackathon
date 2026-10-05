@@ -384,3 +384,31 @@ row, as expected: #35 changes who is acted on first, not the risk scores.
 **Pipeline** — hazards 0.47s · cohort 2.5s · simulate 8.18s · score 72.91s · allocate 39.78s · report 86.37s · total 210.2s
 
 ---
+
+## Track A cohort, artifacts removed — rung 0 — `64aebda`
+
+*2026-10-05T11:22:48Z · Python 3.11.16 · arm64*
+
+| | |
+| --- | --- |
+| **Harm averted, 40 calls/day** | **23.7** vs random 3.78, rank_by_age 3.52, rank_by_chronic 4.9 — **4.84× the best baseline** |
+| **Per call actually made** | **0.7612** — **6.21×**, spending 934 of 1200 available calls |
+| **Discrimination (within-day AUC)** | heat **0.72** · treatment gap **0.702** · worst need 0.581 · 2 of 5 needs above 0.65 |
+| **Calibration (ECE, bar 0.03)** | max **0.0073** · mean 0.0048 — but a constant at the base rate scores 0.0, so this is not evidence on its own |
+| **Parameter coverage (bar 0.90)** | **0.9833** |
+| **Fairness** | 0 flagged of 33 groups · worst FNR ratio 1.047 |
+| **Model fit** | prior-only, so no r-hat and no divergences |
+
+**ECE by need** — access_loss 0.0067 · breathing 0.0011 · heat 0.0073 · mental 0.0043 · treatment_gap 0.0046
+
+**Simulated base rate per day** — access_loss 0.437% · breathing 0.669% · heat 5.891% · mental 0.546% · treatment_gap 1.754%
+
+**Panel** — 10,000 veterans across 175 ZIPs · 6,000,000 scored rows · 333,843 actions
+
+**Medication** — 5.12 drugs each · 78.9% heat-impairing · 14.9% on the CDC pair · 8.7% cold-chain · 4.8% controlled
+
+**Tier mix** — act-now 11.06% · find-out 9.499%
+
+**Pipeline** — hazards 1.46s · cohort 9.47s · simulate 17.39s · score 191.53s · allocate 61.52s · report 274.62s · total 556.0s
+
+---
