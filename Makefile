@@ -1,5 +1,5 @@
 .PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo demo-dev ui report ablate \
-        test perf check smoke clean-clone backtest backtest-fitted
+        test perf check smoke clean-clone backtest backtest-fitted baseline baseline-diff
 PY  ?= .venv/bin/python
 PIP ?= .venv/bin/python -m pip
 
@@ -8,7 +8,7 @@ help:               ## show this
 
 # --------------------------------------------------------------------------- #
 # The gate. If `make check` is green you may merge. If it is red you may not.
-# Nobody reads diffs on this project; this is the review.
+# It is the mechanical half of review; every PR also gets a human or fresh-context review.
 # --------------------------------------------------------------------------- #
 
 check:              ## THE GATE, same as CI: lint, types, import layering, every test (parallel, once)
@@ -29,7 +29,7 @@ check:              ## THE GATE, same as CI: lint, types, import layering, every
 
 # Wall-clock budgets, kept out of `make check`: next to `-n auto` workers they measure the
 # contention, not the code. Run serially, on a quiet machine, before a demo.
-perf:               ## the timing tests (slider < 300 ms, scoring < 5 s, toy fit < 60 s), serially
+perf:               ## the timing tests (slider < 300 ms, scoring < 5 s, toy fit < 60 s; looser on CI), serially
 	@.venv/bin/pytest -m perf -rs -p no:cacheprovider
 
 test:               ## pytest only
@@ -39,10 +39,9 @@ test:               ## pytest only
 # Setup and data
 # --------------------------------------------------------------------------- #
 
-setup:              ## venv + deps + editable install
-	uv venv --python 3.11 .venv || python3.11 -m venv .venv
-	uv pip install -e ".[dev,geo]" || $(PIP) install -e ".[dev,geo]"
-	@echo "Now run: make fixtures && make check"
+setup:              ## venv with exactly the locked deps (same as CI) + the geo extra
+	uv sync --frozen --extra dev --extra geo
+	@echo "Now run: make check"
 
 sources:            ## re-fetch public data into data/reference/ (needs network; already committed)
 	$(PY) scripts/fetch_sources.py

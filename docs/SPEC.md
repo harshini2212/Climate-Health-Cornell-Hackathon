@@ -59,6 +59,8 @@ Every section states a contract and the acceptance test that holds it.
 
 ## 2. Repo layout
 
+*This is the layout the first spec planned; some files were never built under these names (the routes live in `api/main.py`, the outcome log in `api/store.py`). The README has the current layout.*
+
 ```
 leeward/
   CLAUDE.md
@@ -365,7 +367,7 @@ and nothing else, which is also the class a pharmacist would say out loud. The h
 strict subset of its parent's (27 such pairs, all clean).
 
 Expected prevalence among the **77** sample patients who have an active medication,
-measured and reproduced in `tests/test_medications.py`: **77 percent** on ≥1 crosswalk
+measured and reproduced in `tests/unit/test_medications.py`: **77 percent** on ≥1 crosswalk
 medication of any hazard, **65 percent** on a heat-mechanism one, **16 percent** on the
 CDC-named pair, 10 percent controlled, 9 percent cold-chain, 8 percent narrow-TI, 12 percent
 at ACB ≥ 3. (An earlier draft of this paragraph put 77 percent on the heat row and 5 percent
@@ -483,7 +485,7 @@ Builds `X_health (N×p)`, `X_int (N×q per hazard)`, `hazard tensors (Z×T×m)` 
 
 **The binomial cells moved to `hazard.cells()`** (rung 1, September 2026) and `design.py` was left alone, because the simulator shares it. Two changes to what this section originally specified, both in the safer direction:
 
-- The grouping key is **the exact design row**, not `(zip, stratum, date)`. The likelihood depends on a veteran-day only through its row of `X`, so identical rows are one cell whatever ZIP or day they came from — which is *exactly* equal to the Bernoulli likelihood rather than approximately, and `tests/test_hazard_toy.py` asserts that against the panel. Measured over the 120-day panel: 1,200,000 veteran-days → **135,743 cells, 8.8×** (and the same 8.8× on the 6M Bernoulli terms — a cell still carries one binomial term per need, not one in total).
+- The grouping key is **the exact design row**, not `(zip, stratum, date)`. The likelihood depends on a veteran-day only through its row of `X`, so identical rows are one cell whatever ZIP or day they came from — which is *exactly* equal to the Bernoulli likelihood rather than approximately, and `tests/unit/test_hazard_toy.py` asserts that against the panel. Measured over the 120-day panel: 1,200,000 veteran-days → **135,743 cells, 8.8×** (and the same 8.8× on the 6M Bernoulli terms — a cell still carries one binomial term per need, not one in total).
 - Grouping is on the **active** columns for the rung, so at rung 1 two veterans who differ only in a medication interaction are one cell.
 
 No `cells.parquet` is written: cells are derived from `cohort × hazards × site_status × outcomes` in about a second, and a cached copy is one more thing that can go stale against `truth.json`.
@@ -624,7 +626,7 @@ The two thresholds are editable numbers in the YAML, not constants: 7 days is th
 
 - `messages.py`: templates per tier and hazard. Every message contains: channel tag (`VEText` / `MHV` / `care_team_phone`), a 4-word verification phrase from `verify.py` (deterministic per veteran-day from a seed; word list of 512 common words), the line *"The VA will never ask you to pay, wire money, or share bank details,"* `VSAFE 833-388-7233`, and `Veterans Crisis Line: dial 988, press 1`. Flood messages add the evacuation center with step-free access and a "pack list" (meds, equipment, chargers, IDs). Caregiver-addressed messages name the veteran, state the plan in second person to the caregiver, and never include diagnoses. Low-assets messages state what is free (HEAP, cooling centers, emergency refill voucher, VA transport) and never suggest a paid option.
 - `export.py`: partner sheet CSV with `consent_partner_check, consent_ride, consent_housing` flags; rows without consent are excluded, never redacted.
-- `outcome_log.py`: append-only parquet; `POST /log` writes it; `score.py` reads it to update per-veteran frailty (simple Beta-Binomial update on top of the cached posterior).
+- Outcome log: append-only parquet, written by `POST /log` through `api/store.py` (`append_outcome`). Planned, not built: `score.py` reading it to update per-veteran frailty (a Beta-Binomial update on the cached posterior).
 
 **Acceptance:** `test_messages.py` asserts every rendered message contains all five mandatory elements; no message contains a URL shortener or a phone number not in the allow-list.
 

@@ -33,7 +33,8 @@ SEED = 0
 # The acceptance bar is 60 s on a developer laptop. GitHub's shared runners take ~80 s for the
 # same fit with no code change (2026-10-05, five runs 79.8-82.6 s), so CI gets 120 s: loose
 # enough to stop reporting noise every night, tight enough that a real slowdown still shows.
-BUDGET_S = 120.0 if os.environ.get("CI") else 60.0
+_ON_CI = os.environ.get("CI", "").lower() in ("1", "true", "yes")
+BUDGET_S = 120.0 if _ON_CI else 60.0
 
 
 # --------------------------------------------------------------------------- #
@@ -90,7 +91,7 @@ def draws(posterior_path) -> hazard.Posterior:
 
 
 # --------------------------------------------------------------------------- #
-# The acceptance test: a 200 x 30 toy fit inside the budget, with no divergences
+# The acceptance tests: a 200 x 30 toy fit inside the budget, and (separately) no divergences
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.perf
@@ -98,7 +99,7 @@ def test_two_hundred_veterans_by_thirty_days_fits_inside_the_budget(fitted) -> N
     assert fitted.cells.n_rows == VETERANS * DAYS
     assert fitted.seconds < BUDGET_S, (
         f"the toy fit took {fitted.seconds:.1f}s; the budget is {BUDGET_S:.0f}s "
-        f"({'CI runner' if os.environ.get('CI') else 'this machine'})")
+        f"({'CI runner' if _ON_CI else 'this machine'})")
 
 
 def test_no_divergences_after_warmup(fitted) -> None:
