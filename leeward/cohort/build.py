@@ -1,4 +1,4 @@
-"""The synthetic NYC veteran panel -> `data/cohort.parquet`.
+"""The synthetic veteran panel -> `data/cohort.parquet`, for one region (default NYC).
 
     python -m leeward.cohort.build                  # 10,000 veterans, seed 0
     python -m leeward.cohort.build --n 2000 --seed 3
@@ -7,7 +7,7 @@ Synthetic people, real places. Where each veteran lives, their age band and thei
 drawn jointly from ACS B21001, and every neighbourhood rate they are drawn against is read
 from `data/reference/`, never typed in:
 
-    where, age band, sex         acs_veterans_by_zcta       P(modzcta, sex, band) ∝ veterans
+    where, age band, sex         acs_veterans_by_zcta       P(geo_id, sex, band) ∝ veterans
     mobility, low assets,        places_zcta_nyc            CDC PLACES crude prevalence,
       transport, no caregiver,                              per ZIP (see PLACES_RATES)
       COPD, asthma, cancer,
@@ -22,6 +22,10 @@ from `data/reference/`, never typed in:
 
 What no public source publishes per person or per ZIP is drawn from the named constants in
 the ASSUMPTIONS block, and every column those feed carries a `_synthetic` flag.
+
+The table names above are NYC's. Each is read through the region (`regions/nyc.yaml` by
+default), which names the file and renames its unit column to `geo_id`, so the same code
+builds a panel for any region that supplies the same tables.
 
 This is the *parametric* cohort. The VA Synthea release is a 4 GB CSV (data/README.md), so
 until a Synthea reader lands, the health columns Synthea would supply are drawn here. The
@@ -51,7 +55,8 @@ import polars as pl
 
 from leeward import schema, settings
 from leeward.cohort import medications, missingness
-from leeward.schema import REFERENCE
+from leeward.geo import region as regions
+from leeward.geo.region import Region
 
 N_DEFAULT = 10_000
 
@@ -207,17 +212,13 @@ def _categorical(u: np.ndarray, probs: dict) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------- #
-# The ZIP frame: every per-ZIP rate and exposure, one row per MODZCTA
+# The ZIP frame: every per-ZIP rate and exposure, one row per geography unit
 # --------------------------------------------------------------------------- #
 
-def _ref(name: str) -> pl.DataFrame:
-    return pl.read_parquet(REFERENCE / f"{name}.parquet")
-
-
-def _members() -> pl.DataFrame:
-    """MODZCTA -> member ZCTA. ACS and emPOWER are published per ZCTA/ZIP, not MODZCTA."""
-    return (_ref("nyc_modzcta")
-            .select("modzcta", pl.col("zcta_members").str.split(",").alias("zcta"))
+def _members(r: Region) -> pl.DataFrame:
+    """Unit -> member ZCTA. ACS and emPOWER are published per ZCTA/ZIP, not per MODZCTA."""
+    return (r.ref(r.unit_table)
+            .select("geo_id", pl.col("zcta_members").str.split(",").alias("zcta"))
             .explode("zcta", empty_as_null=True).with_columns(pl.col("zcta").str.strip_chars()))
 
 
@@ -227,56 +228,57 @@ def _per_65plus(count: str, alias: str) -> pl.Expr:
               .clip(0.0, EQUIPMENT_RATE_CAP).alias(alias))
 
 
-def zip_frame() -> pl.DataFrame:
-    """One row per MODZCTA that has every source: counts to sample from, rates to draw at."""
-    members = _members()
+def zip_frame(r: Region | None = None) -> pl.DataFrame:
+    """One row per unit that has every source: counts to sample from, rates to draw at."""
+    r = r or regions.get()
+    members = _members(r)
     acs_cols = [f"vet_{s}_{b}" for s in ("m", "f") for b in BANDS] + ["pop_65plus"]
-    acs = (_ref("acs_veterans_by_zcta").join(members, on="zcta")
-           .group_by("modzcta").agg(pl.col(acs_cols).sum()))
-    empower = (_ref("empower_ny_zip").join(members, left_on="zip", right_on="zcta")
-               .group_by("modzcta")
+    acs = (r.ref("acs_veterans").join(members, on="zcta")
+           .group_by("geo_id").agg(pl.col(acs_cols).sum()))
+    empower = (r.ref("empower").join(members, left_on="zip", right_on="zcta")
+               .group_by("geo_id")
                .agg(pl.col("dme_power_dependent", "dme_oxygen", "dme_esrd_dialysis").sum()))
-    borough = _ref("empower_ny_zip").select(pl.col("zip").alias("modzcta"), "borough")
-    places = _ref("places_zcta_nyc").select(
-        pl.col("zcta").alias("modzcta"),
+    borough = r.ref("empower").select(pl.col("zip").alias("geo_id"), "borough")
+    places = r.ref("places").select(
+        "geo_id",
         *[(pl.col(col) / 100).alias(f"rate_{field}") for field, col in PLACES_RATES.items()])
-    hvi = _ref("hvi_by_zcta").select(pl.col("zcta").alias("modzcta"),
-                                     pl.col("hvi").cast(pl.Int32))
-    evac = _ref("evac_zone_by_modzcta").select(
-        "modzcta", pl.col("evac_zone_min").cast(pl.Int32).alias("evac_zone"))
-    storm = _ref("stormwater_by_modzcta")
+    hvi = r.ref("hvi").select("geo_id", pl.col("hvi").cast(pl.Int32))
+    evac = r.ref("evac_zones").select(
+        "geo_id", pl.col("evac_zone_min").cast(pl.Int32).alias("evac_zone"))
+    storm = r.ref("stormwater").select("geo_id", "stormwater_flooded_frac")
     b03002 = sorted({c for _, _, cols in RACE_ETHNICITY_CELLS.values() for c in cols})
-    race = (_ref("acs_race_by_zcta").join(members, on="zcta")
-            .group_by("modzcta").agg(pl.col(b03002).sum())
-            .select("modzcta", *[pl.sum_horizontal(cols).alias(f"pop_{cell}")
-                                 for cell, (_, _, cols) in RACE_ETHNICITY_CELLS.items()]))
+    race = (r.ref("acs_race").join(members, on="zcta")
+            .group_by("geo_id").agg(pl.col(b03002).sum())
+            .select("geo_id", *[pl.sum_horizontal(cols).alias(f"pop_{cell}")
+                                for cell, (_, _, cols) in RACE_ETHNICITY_CELLS.items()]))
 
-    frame = _ref("nyc_modzcta").select("modzcta", "lon", "lat")
+    frame = r.ref(r.unit_table).select("geo_id", "lon", "lat")
     for table in (acs, empower, borough, places, hvi, evac, storm, race):
-        frame = frame.join(table, on="modzcta", how="inner")
-    frame = frame.filter(pl.col("borough").is_in(schema.BOROUGHS))
+        frame = frame.join(table, on="geo_id", how="inner")
+    frame = frame.filter(pl.col("borough").is_in(r.subregions))
     return (frame.with_columns(
                 _per_65plus("dme_power_dependent", "rate_powered"),
                 _per_65plus("dme_oxygen", "rate_oxygen"),
                 _per_65plus("dme_esrd_dialysis", "rate_dialysis"))
             .with_columns(pl.min_horizontal("rate_oxygen", "rate_powered").alias("rate_oxygen"))
-            .sort("modzcta"))
+            .sort("geo_id"))
 
 
 # --------------------------------------------------------------------------- #
 # Re-homing: where each veteran lives, their age and their sex
 # --------------------------------------------------------------------------- #
 
-def rehome(n: int, seed: int, zips: pl.DataFrame) -> pl.DataFrame:
-    """Sample (modzcta, sex, age band) jointly in proportion to ACS veteran counts."""
-    cells = (zips.select("modzcta", *[f"vet_{s}_{b}" for s in ("m", "f") for b in BANDS])
-             .unpivot(index="modzcta", variable_name="cell", value_name="veterans")
+def rehome(n: int, seed: int, zips: pl.DataFrame, r: Region | None = None) -> pl.DataFrame:
+    """Sample (geo_id, sex, age band) jointly in proportion to ACS veteran counts."""
+    r = r or regions.get()
+    cells = (zips.select("geo_id", *[f"vet_{s}_{b}" for s in ("m", "f") for b in BANDS])
+             .unpivot(index="geo_id", variable_name="cell", value_name="veterans")
              .with_columns(pl.col("cell").str.slice(4, 1).str.to_uppercase().alias("sex"),
                            pl.col("cell").str.slice(6).alias("band"))
              .filter(pl.col("veterans") > 0)
-             .sort("modzcta", "sex", "band"))
+             .sort("geo_id", "sex", "band"))
 
-    acs_total = _ref("acs_veterans_by_zcta")["veterans_total"].sum()
+    acs_total = r.ref("acs_veterans")["veterans_total"].sum()
     covered = cells["veterans"].sum() / acs_total
     if covered < 0.99:
         raise SystemExit(f"only {covered:.1%} of ACS veterans live in ZIPs with every source; "
@@ -284,7 +286,7 @@ def rehome(n: int, seed: int, zips: pl.DataFrame) -> pl.DataFrame:
 
     w = cells["veterans"].to_numpy()
     pick = _stream(seed, "rehome").choice(cells.height, size=n, p=w / w.sum())
-    people = cells[pick].select("modzcta", "sex", "band")
+    people = cells[pick].select("geo_id", "sex", "band")
 
     r = _stream(seed, "age")
     u, tail = r.random(n), r.exponential(OLDEST_BAND_MEAN_EXCESS, n)
@@ -296,7 +298,7 @@ def rehome(n: int, seed: int, zips: pl.DataFrame) -> pl.DataFrame:
                    lo + np.floor(u * (hi - lo + 1)))
     return (people.with_columns(pl.Series("age", age.astype(np.int32)))
                   .with_row_index("_row")
-                  .join(zips, on="modzcta", how="left")
+                  .join(zips, on="geo_id", how="left")
                   .sort("_row").drop("_row"))
 
 
@@ -353,8 +355,9 @@ def _haversine_km(lat1, lon1, lat2, lon2) -> np.ndarray:
     return 2 * 6371.0 * np.arcsin(np.sqrt(a))
 
 
-def assign_facility(people: pl.DataFrame, dialysis: np.ndarray, otp: np.ndarray) -> np.ndarray:
-    fac = _ref("va_facilities_nyc_hazard")
+def assign_facility(people: pl.DataFrame, dialysis: np.ndarray, otp: np.ndarray,
+                    r: Region | None = None) -> np.ndarray:
+    fac = (r or regions.get()).ref("facilities")
     # Vet Centers counsel rather than treat, and the mobile clinic has no fixed site.
     care = (fac.filter(~pl.col("station_no").str.ends_with("V")
                        & ~pl.col("name").str.contains("Mobile"))
@@ -379,7 +382,8 @@ def assign_facility(people: pl.DataFrame, dialysis: np.ndarray, otp: np.ndarray)
 # Augment: everything about the person beyond where they live
 # --------------------------------------------------------------------------- #
 
-def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
+def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl.DataFrame:
+    region = region or regions.get()
     n = people.height
     col = lambda name: people[name].to_numpy()  # noqa: E731
 
@@ -479,9 +483,10 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
         "sex": sex,
         "race": race,
         "ethnicity": ethnicity,
-        "modzcta": col("modzcta"),
+        "region_id": [region.id] * n,
+        "geo_id": col("geo_id"),
         "borough": col("borough"),
-        "facility_id": assign_facility(people, dialysis, otp),
+        "facility_id": assign_facility(people, dialysis, otp, region),
         "copd": places["copd"],
         "asthma": places["asthma"],
         "chf": places["chf"],
@@ -532,9 +537,11 @@ def augment(people: pl.DataFrame, seed: int) -> pl.DataFrame:
 # Entry points
 # --------------------------------------------------------------------------- #
 
-def build(n: int = N_DEFAULT, seed: int = 0) -> pl.DataFrame:
-    """The cohort as a validated frame. Pure: reads data/reference/, writes nothing."""
-    return schema.validate(augment(rehome(n, seed, zip_frame()), seed), "cohort")
+def build(n: int = N_DEFAULT, seed: int = 0, region: Region | None = None) -> pl.DataFrame:
+    """The cohort as a validated frame. Pure: reads the region's reference tables (NYC's by
+    default), writes nothing."""
+    r = region or regions.get()
+    return schema.validate(augment(rehome(n, seed, zip_frame(r), r), seed, r), "cohort")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -549,7 +556,7 @@ def main(argv: list[str] | None = None) -> int:
     df = build(args.n, args.seed)
     path = schema.write(df, "cohort")
     share = lambda e: f"{df.select(e.mean()).item():.1%}"  # noqa: E731
-    print(f"  {df.height:,} veterans in {df['modzcta'].n_unique()} ZIPs -> {path}")
+    print(f"  {df.height:,} veterans in {df['geo_id'].n_unique()} ZIPs -> {path}")
     print(f"  65+ {share(pl.col('age') >= 65)} · female {share(pl.col('sex') == 'F')} · "
           f"mobility {share(pl.col('mobility_impaired'))} · low assets "
           f"{share(pl.col('low_assets'))} · no caregiver {share(pl.col('caregiver') == 'none')}")

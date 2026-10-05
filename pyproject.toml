@@ -114,8 +114,8 @@ root_package = "leeward"
 name = "Production never imports the synthetic cohort or the eval harness"
 type = "forbidden"
 source_modules = [
-  "leeward.api", "leeward.contracts", "leeward.decision", "leeward.demo", "leeward.ingest",
-  "leeward.model", "leeward.outreach", "leeward.schema", "leeward.settings",
+  "leeward.api", "leeward.contracts", "leeward.decision", "leeward.demo", "leeward.geo",
+  "leeward.ingest", "leeward.model", "leeward.outreach", "leeward.schema", "leeward.settings",
 ]
 forbidden_modules = ["leeward.cohort", "leeward.eval"]
 
@@ -124,6 +124,7 @@ name = "Only the API imports the API; shared types live in leeward.contracts"
 type = "forbidden"
 source_modules = [
   "leeward.cohort", "leeward.contracts", "leeward.decision", "leeward.demo", "leeward.eval",
-  "leeward.ingest", "leeward.model", "leeward.outreach", "leeward.schema", "leeward.settings",
+  "leeward.geo", "leeward.ingest", "leeward.model", "leeward.outreach", "leeward.schema",
+  "leeward.settings",
 ]
 forbidden_modules = ["leeward.api"]

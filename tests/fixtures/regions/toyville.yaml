@@ -1,0 +1,35 @@
+# A made-up four-unit region for tests: proves the pipeline runs on a place that is not NYC.
+# Nothing here is real. tests/unit/test_regions.py writes the reference tables it names
+# beside a copy of this file, so no fixture data is committed.
+
+id: toyville
+label: Toyville (test fixture)
+
+unit:
+  name: TOYZIP
+  doc: A made-up unit code
+  table: units
+
+subregions:
+  name: borough            # the cohort column keeps its name; the values are the region's
+  values: [North, South]
+  by_geo_range:
+    - {name: North, lo: 90001, hi: 90002}
+    - {name: South}
+
+county_fips: {"99001": North, "99002": South}
+
+geojson: {path: toyville.geojson, property: toyzip}
+
+reference_dir: reference
+
+tables:
+  units:          {path: toy_units.parquet, key: toyzip}
+  acs_veterans:   {path: toy_acs_veterans.parquet}
+  acs_race:       {path: toy_acs_race.parquet}
+  empower:        {path: toy_empower.parquet}
+  places:         {path: toy_places.parquet, key: zcta}
+  hvi:            {path: toy_hvi.parquet, key: zcta}
+  evac_zones:     {path: toy_evac.parquet, key: toyzip}
+  stormwater:     {path: toy_stormwater.parquet, key: toyzip}
+  facilities:     {path: toy_facilities.parquet}

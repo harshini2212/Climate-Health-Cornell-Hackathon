@@ -35,6 +35,8 @@ from pathlib import Path
 import polars as pl
 import requests
 
+from leeward.geo import region as regions
+
 ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data" / "raw"
 REF = ROOT / "data" / "reference"
@@ -43,11 +45,10 @@ MANIFEST = REF / "manifest.json"
 UA = {"User-Agent": "leeward-hackathon/0.1 (health-in-climate-ai NYC 2026; synthetic data only)"}
 TIMEOUT = 120
 
-# NYC counties, for filtering state-wide sources down to the five boroughs.
-NYC_COUNTY_FIPS = {"36005": "Bronx", "36047": "Brooklyn", "36061": "Manhattan",
-                   "36081": "Queens", "36085": "Staten Island"}
-NYC_COUNTY_NAMES = {"BRONX": "Bronx", "KINGS": "Brooklyn", "NEW YORK": "Manhattan",
-                    "QUEENS": "Queens", "RICHMOND": "Staten Island"}
+# NYC counties, for filtering state-wide sources down to the five boroughs. They live in
+# regions/nyc.yaml with the rest of what makes NYC a region; these fetchers build NYC's
+# reference tables, so they read NYC's.
+NYC = regions.get("nyc")
 
 REGISTRY: dict[str, Fetcher] = {}
 
@@ -181,7 +182,7 @@ def fetch_empower():
         "AtHome_Hospice_Any_DME": "dme_hospice",
         "Any_Healthcare_Srvc_Any_DME": "dme_any_service"})
     df = df.with_columns(
-        pl.col("county").str.to_uppercase().replace_strict(NYC_COUNTY_NAMES, default=None)
+        pl.col("county").str.to_uppercase().replace_strict(NYC.county_names, default=None)
           .alias("borough"))
     return write(df, "empower_ny_zip", svc)
 
@@ -222,8 +223,8 @@ def fetch_svi():
         "EP_MINRTY", "EP_LIMENG", "EP_MUNIT", "EP_MOBILE", "EP_CROWD", "EP_NOVEH",
         "EP_GROUPQ", "EP_UNINSUR"}]
     df = df.select(keep).with_columns(pl.col("FIPS").str.slice(0, 5).alias("county_fips"))
-    df = df.filter(pl.col("county_fips").is_in(list(NYC_COUNTY_FIPS)))
-    df = df.with_columns(pl.col("county_fips").replace_strict(NYC_COUNTY_FIPS, default=None)
+    df = df.filter(pl.col("county_fips").is_in(list(NYC.county_fips)))
+    df = df.with_columns(pl.col("county_fips").replace_strict(NYC.county_fips, default=None)
                            .alias("borough"))
     num = [c for c in df.columns if c.startswith(("E_", "EP_", "RPL_"))]
     df = df.with_columns([pl.col(c).cast(pl.Float64, strict=False) for c in num])
@@ -243,10 +244,10 @@ def fetch_nri():
     fields = ("STCOFIPS,TRACTFIPS,STATEABBRV,COUNTY,POPULATION,RISK_SCORE,RISK_RATNG,"
               "SOVI_SCORE,RESL_SCORE,HWAV_AFREQ,HWAV_EALT,HWAV_RISKS,"
               "HRCN_AFREQ,HRCN_EALT,HRCN_RISKS,CFLD_AFREQ,CFLD_EALT,CFLD_RISKS")
-    where = "STCOFIPS IN ({})".format(",".join(f"'{c}'" for c in NYC_COUNTY_FIPS))
+    where = "STCOFIPS IN ({})".format(",".join(f"'{c}'" for c in NYC.county_fips))
     feats = arcgis(svc, 0, where=where, out_fields=fields)
     df = pl.DataFrame([f["attributes"] for f in feats])
-    df = df.with_columns(pl.col("STCOFIPS").replace_strict(NYC_COUNTY_FIPS, default=None)
+    df = df.with_columns(pl.col("STCOFIPS").replace_strict(NYC.county_fips, default=None)
                            .alias("borough"))
     return write(df, "fema_nri_nyc_tract", svc)
 
@@ -401,9 +402,9 @@ def fetch_va_facility_hazard():
     from shapely.geometry import Point, shape
 
     fac = pl.read_parquet(REF / "va_facilities_ny.parquet").filter(
-        pl.col("county").str.to_uppercase().is_in(list(NYC_COUNTY_NAMES)))
+        pl.col("county").str.to_uppercase().is_in(list(NYC.county_names)))
     fac = fac.with_columns(
-        pl.col("county").str.to_uppercase().replace_strict(NYC_COUNTY_NAMES, default=None)
+        pl.col("county").str.to_uppercase().replace_strict(NYC.county_names, default=None)
           .alias("borough"))
 
     raw = socrata_rows("data.cityofnewyork.us", "epne-qv9x")

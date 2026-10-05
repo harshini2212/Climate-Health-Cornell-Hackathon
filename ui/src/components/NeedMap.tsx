@@ -8,8 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import DeckGL from "@deck.gl/react";
 import { MapView, type PickingInfo } from "@deck.gl/core";
 import { GeoJsonLayer, IconLayer } from "@deck.gl/layers";
-import geoUrl from "../../../data/reference/nyc_modzcta.geojson?url";
-import { getScores } from "../lib/api";
+import { getRegion, getScores, type RegionMap } from "../lib/api";
 import { FACILITY_DOWN, FACILITY_OPEN, NO_DATA, SEQUENTIAL, SEQUENTIAL_HEX, STATUS, rampIndex, type RGBA } from "../lib/colors";
 import { NEED_LABEL, RUNG_LABEL, fmtDate } from "../lib/labels";
 import type { FacilityStatus, ForecastResponse, ScoresResponse, ZipHazard } from "../lib/types";
@@ -21,8 +20,9 @@ const PIN_SVG =
 const ICON_ATLAS = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(PIN_SVG)}`;
 const ICON_MAPPING = { pin: { x: 0, y: 0, width: 128, height: 128, anchorY: 128, mask: true } };
 
+/** A unit of the region's map. Which property holds its geo_id is the region's to say. */
 interface Feature {
-  properties: { modzcta: string; label: string; pop_est: number };
+  properties: Record<string, unknown> & { label: string; pop_est: number };
 }
 
 interface Props {
@@ -38,6 +38,19 @@ interface Props {
 
 export function NeedMap({ forecast, date, need, showFlood = true, showOutage = true, compact = false, onScores }: Props) {
   const [scores, setScores] = useState<ScoresResponse | null>(null);
+  const [region, setRegion] = useState<RegionMap | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    getRegion().then((r) => live && setRegion(r)).catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const geoUrl = region?.geojsonUrl ?? null;
+  const prop = region?.region.geojson_property ?? "";
+  const geoId = (p: Feature["properties"]): string => String(p[prop]);
 
   useEffect(() => {
     if (!date) return;
@@ -54,13 +67,13 @@ export function NeedMap({ forecast, date, need, showFlood = true, showOutage = t
 
   const hazardByZip = useMemo(() => {
     const m = new globalThis.Map<string, ZipHazard>();
-    if (forecast && date) for (const z of forecast.zips) if (z.date === date) m.set(z.modzcta, z);
+    if (forecast && date) for (const z of forecast.zips) if (z.date === date) m.set(z.geo_id, z);
     return m;
   }, [forecast, date]);
 
   const scoreByZip = useMemo(() => {
     const m = new globalThis.Map<string, { expected_count: number; lo80: number; hi80: number; n_panel: number }>();
-    if (scores) for (const z of scores.zips) m.set(z.modzcta, z);
+    if (scores) for (const z of scores.zips) m.set(z.geo_id, z);
     return m;
   }, [scores]);
 
@@ -73,11 +86,11 @@ export function NeedMap({ forecast, date, need, showFlood = true, showOutage = t
   const layers = useMemo(() => {
     const fill = new GeoJsonLayer<Feature["properties"]>({
       id: "zips",
-      data: geoUrl,
+      data: geoUrl ?? [],
       filled: true,
       stroked: true,
       getFillColor: (f) => {
-        const s = scoreByZip.get(f.properties.modzcta);
+        const s = scoreByZip.get(geoId(f.properties));
         return s ? SEQUENTIAL[rampIndex(s.expected_count, maxCount)] : NO_DATA;
       },
       getLineColor: [255, 255, 255, 255],
@@ -86,27 +99,27 @@ export function NeedMap({ forecast, date, need, showFlood = true, showOutage = t
       autoHighlight: true,
       highlightColor: [25, 25, 25, 60],
       transitions: { getFillColor: 600 },
-      updateTriggers: { getFillColor: [scoreByZip, maxCount] },
+      updateTriggers: { getFillColor: [scoreByZip, maxCount, prop] },
     });
     const overlay = new GeoJsonLayer<Feature["properties"]>({
       id: "hazard-overlay",
-      data: geoUrl,
+      data: geoUrl ?? [],
       filled: false,
       stroked: true,
       getLineColor: (f): RGBA => {
-        const h = hazardByZip.get(f.properties.modzcta);
+        const h = hazardByZip.get(geoId(f.properties));
         if (!h) return [0, 0, 0, 0];
         if (showFlood && (h.flood_warning || h.flash_flood_emergency)) return STATUS.critical;
         if (showOutage && h.outage_frac >= 0.2) return STATUS.serious;
         return [0, 0, 0, 0];
       },
       getLineWidth: (f) => {
-        const h = hazardByZip.get(f.properties.modzcta);
+        const h = hazardByZip.get(geoId(f.properties));
         if (!h) return 0;
         return (showFlood && (h.flood_warning || h.flash_flood_emergency)) || (showOutage && h.outage_frac >= 0.2) ? (compact ? 1.8 : 2.5) : 0;
       },
       lineWidthUnits: "pixels",
-      updateTriggers: { getLineColor: [hazardByZip, showFlood, showOutage], getLineWidth: [hazardByZip, showFlood, showOutage, compact] },
+      updateTriggers: { getLineColor: [hazardByZip, showFlood, showOutage, prop], getLineWidth: [hazardByZip, showFlood, showOutage, compact, prop] },
     });
     const facilities = new IconLayer<FacilityStatus>({
       id: "facilities",
@@ -122,7 +135,7 @@ export function NeedMap({ forecast, date, need, showFlood = true, showOutage = t
       updateTriggers: { getColor: [forecast], getSize: [forecast, compact] },
     });
     return [fill, overlay, facilities];
-  }, [scoreByZip, maxCount, hazardByZip, showFlood, showOutage, forecast, compact]);
+  }, [geoUrl, prop, scoreByZip, maxCount, hazardByZip, showFlood, showOutage, forecast, compact]);
 
   const tooltip = (info: PickingInfo) => {
     const o = info.object as Feature | FacilityStatus | undefined;
@@ -138,8 +151,8 @@ export function NeedMap({ forecast, date, need, showFlood = true, showOutage = t
       };
     }
     const p = o.properties;
-    const s = scoreByZip.get(p.modzcta);
-    const h = hazardByZip.get(p.modzcta);
+    const s = scoreByZip.get(geoId(p));
+    const h = hazardByZip.get(geoId(p));
     const flags = h
       ? [h.heat_alert && "heat alert", h.smoke_alert && "smoke", h.flood_warning && "flood warning", h.flash_flood_emergency && "flash flood emergency", h.outage_frac >= 0.2 && `${Math.round(h.outage_frac * 100)}% outage`, h.mail_delivery_disrupted && "mail disrupted"].filter(Boolean)
       : [];

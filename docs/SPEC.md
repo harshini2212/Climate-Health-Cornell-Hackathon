@@ -15,7 +15,11 @@ Every section states a contract and the acceptance test that holds it.
 - **Contracts change only through this file.** `cohort.parquet`, `scores.parquet`, `posterior.nc`, and the API schemas. A PR that changes one edits §3 in the same change.
 - **Nothing runs inference in a request.** `make fit` produces a cached posterior; the API scores from cache.
 - **Every real number in the UI or slides is in `docs/sources.md` with a URL.**
-- **Geography key is `modzcta`**, not `zip` — NYC's 178 Modified ZCTAs. Everything joins on it.
+- **Geography key is `(region_id, geo_id)`.** A region is a `regions/<id>.yaml`
+  (`leeward/geo/region.py`): its geography unit, the subregions fairness floors are drawn
+  over, its reference tables and its map. `geo_id` is that region's unit — in `nyc`, one of
+  NYC's 178 Modified ZCTAs, so NYC's `geo_id` is what this file used to call `modzcta` —
+  and it means nothing without the `region_id` beside it. Never `zip`, `zcta` or NTA.
 - **No API keys.** A clean clone with no `.env` must produce a working demo. Three upstream APIs now want keys; `docs/sources.md` §3 lists the keyless replacements the build uses.
 
 ---
@@ -79,12 +83,16 @@ leeward/
     scores.parquet
     actions.parquet
     outcome_log.parquet
+  regions/
+    nyc.yaml                    # NYC as a region: unit, boroughs, reference tables, map
   scenarios/
     sandy_then_heat.yaml
     ida_flash_flood.yaml
     smoke_2023.yaml
   leeward/
     schema.py                   # pydantic + polars schemas, the contracts
+    geo/
+      region.py                 # a region yaml -> Region; ref() reads its tables as geo_id
     ingest/
       nws.py  airnow.py  floodnet.py  empower.py  hvi.py  stormwater.py
       evac_zones.py  acs.py  facilities.py  snapshot.py
@@ -134,6 +142,28 @@ leeward/
 
 ## 3. Data contracts (schema.py)
 
+**Regions (changed in the region-abstraction PR).** `modzcta` was renamed `geo_id`
+everywhere, and `region_id` (a `regions/<id>.yaml` id, e.g. `nyc`) leads the key of
+cohort, hazards, scores and actions:
+
+| table | key |
+| --- | --- |
+| cohort | `region_id, veteran_id` |
+| hazards | `region_id, geo_id, date` |
+| scores | `region_id, veteran_id, date, need` |
+| actions | `region_id, date, veteran_id, action` |
+
+`schema.read()` still loads a file written before regions: it renames `modzcta` to `geo_id`
+and reads a missing `region_id` as `nyc`, logging one INFO line per table it aliases.
+`schema.write()` refuses a frame that still says `modzcta`. `borough` keeps its name; its
+values are the row's region's `subregions` (NYC: the five boroughs), checked per row.
+Committed `data/reference/` files keep their sources' column names; the region yaml names
+each table's unit column, and `region.ref()` renames it to `geo_id` on read.
+
+`allocate()` serves one region per call, since capacity is one care team's day; a cohort
+that spans two regions is refused. NYC action ids are unchanged; another region's are
+salted with its id.
+
 ### 3.1 cohort.parquet — one row per veteran
 
 | column | type | source | notes |
@@ -142,8 +172,9 @@ leeward/
 | age | int | synthea | |
 | sex | str | synthea | |
 | race, ethnicity | str | augment | **from ACS B03002** (`acs_race_by_zcta.parquet`): one joint draw from the veteran's own ZIP composition, so P(race, ethnicity \| ZIP) is measured and the individual assignment is synthetic. race ∈ White / Black / Asian / Other (AIAN, NHPI, some other race and multiracial folded in); ethnicity ∈ Hispanic / Non-Hispanic (Hispanic is an origin of any race). For fairness audit only |
-| modzcta | str | rehome | NYC Modified ZCTA, one of 178. **The join key everywhere.** |
-| borough | str | rehome | |
+| region_id | str | build | `regions/<id>.yaml`, e.g. `nyc`. Leads the key. |
+| geo_id | str | rehome | The region's unit; in `nyc` a Modified ZCTA, one of 178. **The join key everywhere, with `region_id`.** |
+| borough | str | rehome | The region's subregion (NYC: borough); values from the region yaml |
 | facility_id | str | rehome | nearest of {NY_MANHATTAN, NY_BROOKLYN, NY_BRONX, NY_ST_ALBANS, CBOC_*} |
 | lives_alone | bool | synthea SDoH | |
 | conditions | list[str] | synthea | SNOMED codes |
@@ -181,9 +212,9 @@ leeward/
 | *_synthetic | bool | | one per augmented column |
 | *_observed | | | nullable copies after missingness |
 
-### 3.2 hazards.parquet — one row per modzcta × day
+### 3.2 hazards.parquet — one row per region × geo_id × day
 
-`modzcta, date, heat_index_max_f, hot_day(>=82F), heat_alert, pm25, smoke_alert, flood_watch, flood_warning, flash_flood_emergency, surge_ft, evac_zone_ordered, floodnet_trip, stormwater_flooded_frac, outage_frac, mail_delivery_disrupted`
+`region_id, geo_id, date, heat_index_max_f, hot_day(>=82F), heat_alert, pm25, smoke_alert, flood_watch, flood_warning, flash_flood_emergency, surge_ft, evac_zone_ordered, floodnet_trip, stormwater_flooded_frac, outage_frac, mail_delivery_disrupted`
 
 `mail_delivery_disrupted` is set by the scenario when a ZIP is flooded, evacuated or in a
 sustained outage. Four in five VA prescriptions arrive by mail, so this is not a minor term.
@@ -200,7 +231,7 @@ The 82 °F hot-day threshold is from NYC Health's 2026 mortality report, not a t
 
 ### 3.4 scores.parquet
 
-`veteran_id, date, need, p_mean, p_lo80, p_hi80, p_epistemic_share, p_gap_lo, p_gap_hi, driver_1, driver_2, driver_3, driver_1_contrib, driver_2_contrib, driver_3_contrib`
+`region_id, veteran_id, date, need, p_mean, p_lo80, p_hi80, p_epistemic_share, p_gap_lo, p_gap_hi, driver_1, driver_2, driver_3, driver_1_contrib, driver_2_contrib, driver_3_contrib`
 
 `p_gap_lo` and `p_gap_hi` are nullable, and null means the record has no gap — which is not
 the same as a gap that would not move the number, and §7.5 needs to tell those apart. Where
@@ -211,7 +242,7 @@ compares them against.
 
 ### 3.5 actions.parquet
 
-`action_id, date, veteran_id, action, tier, eha, rank, lead_days, capacity_bucket, rationale, owner, message_id`
+`action_id, region_id, date, veteran_id, action, tier, eha, rank, lead_days, capacity_bucket, rationale, owner, message_id`
 
 **`date` is the do-by day, not the day the risk lands.** An action has a day it must be done
 by — the alternate dialysis site for Wednesday's surge has to be booked Monday — so
@@ -265,7 +296,7 @@ python scripts/fetch_sources.py --heavy     # + stormwater GIS, ACS summary file
 cleanly across the five ZIP-level tables. `make demo` must pass with the network off.
 
 **Still to write, and it is small:** `leeward/ingest/hazards.py`, which assembles
-`hazards.parquet` (modzcta × day) and `site_status.parquet` (facility × day) by combining the
+`hazards.parquet` (region × geo_id × day) and `site_status.parquet` (facility × day) by combining the
 reference tables with a scenario YAML. That is one module, not nine.
 
 
@@ -287,7 +318,7 @@ MODZCTA. **A rate that exists in `data/reference/` must be read, not assumed.**
 
 | field | draw from | column |
 | --- | --- | --- |
-| ZIP sampling weight | `acs_veterans_by_zcta.parquet` | `P(modzcta \| age_band) ∝ vet_<band>` |
+| ZIP sampling weight | `acs_veterans_by_zcta.parquet` | `P(geo_id \| age_band) ∝ vet_<band>` |
 | `mobility_impaired` | PLACES | `mobility_crudeprev` |
 | `caregiver == none` | PLACES | `emotionspt_crudeprev` (lacks social/emotional support), tempered by `loneliness_crudeprev` |
 | `low_assets` | PLACES | `shututility_crudeprev` — the measured "owns an AC, cannot run it" |
@@ -603,7 +634,9 @@ The two thresholds are editable numbers in the YAML, not constants: 7 days is th
 
 | route | returns |
 | --- | --- |
-| `GET /forecast?scenario=&day=` | hazards for the next 7 days by ZIP and facility |
+| `GET /region` | the served region: `region_id`, label, unit, subregions, `geojson_url` (relative), `geojson_property` |
+| `GET /region/geojson` | that region's map base, read from its reference directory |
+| `GET /forecast?scenario=&day=` | hazards for the next 7 days by ZIP (`geo_id`) and facility |
 | `GET /scores?date=&need=` | ZIP and facility aggregates with intervals |
 | `GET /veteran/{id}?date=` | card: p per need, interval, epistemic share, drivers, tier |
 | `POST /actions` body `{date, capacity, group_floor?, prior_scale?, limit?}` | the work list for the **do-by day** `date` (each row carries `lead_days`; its risk day is `date + lead_days`) + total EHA + baselines' EHA + `n_too_late` + `n_not_reached` |

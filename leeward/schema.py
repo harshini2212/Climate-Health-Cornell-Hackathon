@@ -18,10 +18,14 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import NoReturn
 
 import polars as pl
+
+from leeward.geo import region as _region
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = ROOT / "data"
@@ -35,7 +39,13 @@ NEEDS = ["breathing", "heat", "mental", "treatment_gap", "access_loss"]
 
 TIERS = ["act_now", "find_out", "self_serve", "everyday"]
 
-BOROUGHS = ["Bronx", "Brooklyn", "Manhattan", "Queens", "Staten Island"]
+#: The geography key every contract table joins on, beside `region_id`. What a `geo_id` is
+#: depends on the region (NYC: a MODZCTA); see leeward/geo/region.py and regions/*.yaml.
+GEO_ID = _region.GEO_ID
+#: The pre-region name of `geo_id`. `read()` still accepts it; `write()` refuses it.
+LEGACY_GEO_ID = "modzcta"
+
+log = logging.getLogger(__name__)
 
 #: action -> the capacity bucket it consumes. `allocate.py` fills buckets, not actions.
 ACTION_COST_UNIT = {
@@ -98,6 +108,8 @@ class Column:
     bounds: tuple[float, float] | None = None
     #: Augmented (not read from a source): requires a `<name>_synthetic` boolean sibling.
     synthetic: bool = False
+    #: Every value must be one of the row's region's subregions (regions/<id>.yaml).
+    subregion: bool = False
 
 
 @dataclass(frozen=True)
@@ -127,8 +139,8 @@ def _c(name, dtype, doc="", **kw) -> Column:
 
 _COHORT = Table(
     name="cohort",
-    key=("veteran_id",),
-    doc="The synthetic NYC veteran panel. Neighbourhood rates are real; people are not.",
+    key=("region_id", "veteran_id"),
+    doc="The synthetic veteran panel. Neighbourhood rates are real; people are not.",
     columns=(
         _c("veteran_id", pl.Utf8, "Synthea Patient.id"),
         _c("name_display", pl.Utf8, "Synthetic display name for the demo card", synthetic=True),
@@ -139,9 +151,11 @@ _COHORT = Table(
         _c("ethnicity", pl.Utf8, "Fairness audit only; drawn jointly with race, same source",
            nullable=True, values=tuple(ETHNICITIES), synthetic=True),
 
-        # geography -- modzcta is the join key everywhere
-        _c("modzcta", pl.Utf8, "NYC Modified ZCTA, one of 178"),
-        _c("borough", pl.Utf8, values=tuple(BOROUGHS)),
+        # geography -- (region_id, geo_id) is the join key everywhere
+        _c("region_id", pl.Utf8, "Which regions/<id>.yaml this row lives in, e.g. nyc"),
+        _c("geo_id", pl.Utf8, "The region's geography unit; in NYC a MODZCTA, one of 178"),
+        _c("borough", pl.Utf8, "The region's subregion (NYC: borough); fairness floors",
+           subregion=True),
         _c("facility_id", pl.Utf8, "VHA station number, e.g. 630"),
 
         # health, from Synthea
@@ -216,15 +230,16 @@ _COHORT = Table(
 )
 
 # --------------------------------------------------------------------------- #
-# hazards.parquet -- one row per modzcta x day
+# hazards.parquet -- one row per region x geo_id x day
 # --------------------------------------------------------------------------- #
 
 _HAZARDS = Table(
     name="hazards",
-    key=("modzcta", "date"),
-    doc="Daily hazard per ZIP, assembled from a scenario YAML plus data/reference.",
+    key=("region_id", "geo_id", "date"),
+    doc="Daily hazard per geography unit, assembled from a scenario YAML plus data/reference.",
     columns=(
-        _c("modzcta", pl.Utf8),
+        _c("region_id", pl.Utf8),
+        _c("geo_id", pl.Utf8),
         _c("date", pl.Date),
         _c("heat_index_max_f", pl.Float64, bounds=(-20, 140)),
         _c("hot_day", pl.Boolean, "heat_index_max_f >= 82, NYC Health's own threshold"),
@@ -277,9 +292,10 @@ _OUTCOMES = Table(
 
 _SCORES = Table(
     name="scores",
-    key=("veteran_id", "date", "need"),
+    key=("region_id", "veteran_id", "date", "need"),
     doc="Posterior risk per veteran-day-need. Written by score.py at any model rung.",
     columns=(
+        _c("region_id", pl.Utf8),
         _c("veteran_id", pl.Utf8),
         _c("date", pl.Date),
         _c("need", pl.Utf8, values=tuple(NEEDS)),
@@ -312,11 +328,12 @@ _SCORES = Table(
 
 _ACTIONS = Table(
     name="actions",
-    key=("date", "veteran_id", "action"),
+    key=("region_id", "date", "veteran_id", "action"),
     doc="A day's ranked action list, already cut at that day's capacity. `date` is the "
         "do-by day: the day the work happens, which is the risk day minus `lead_days`.",
     columns=(
         _c("action_id", pl.Utf8),
+        _c("region_id", pl.Utf8),
         _c("date", pl.Date, "The day this must be DONE by; risk day = date + lead_days"),
         _c("veteran_id", pl.Utf8),
         _c("action", pl.Utf8, values=tuple(ACTIONS)),
@@ -359,7 +376,7 @@ TABLES: dict[str, Table] = {
 # Validation
 # --------------------------------------------------------------------------- #
 
-def _fail(table: str, msg: str) -> None:
+def _fail(table: str, msg: str) -> NoReturn:
     raise SchemaError(f"[{table}] {msg}")
 
 
@@ -374,6 +391,10 @@ def validate(df: pl.DataFrame, table_name: str, *, check_keys: bool = True) -> p
         _fail(table_name, f"unknown table; known tables are {sorted(TABLES)}")
     t = TABLES[table_name]
     have = set(df.columns)
+
+    if LEGACY_GEO_ID in have:
+        _fail(t.name, f"{LEGACY_GEO_ID!r} was renamed {GEO_ID!r}; a writer must not emit it "
+                      f"(read() aliases old files, nothing writes new ones)")
 
     missing = [c.name for c in t.columns if c.name not in have]
     if missing:
@@ -419,11 +440,50 @@ def validate(df: pl.DataFrame, table_name: str, *, check_keys: bool = True) -> p
             if not df[flag].fill_null(False).all():
                 _fail(t.name, f"{flag} must be True for every row")
 
+    _check_regions(df, t)
+
     if check_keys and t.key:
         dupes = df.height - df.select(list(t.key)).unique().height
         if dupes:
             _fail(t.name, f"{dupes} duplicate rows on key {t.key}")
 
+    return df
+
+
+def _check_regions(df: pl.DataFrame, t: Table) -> None:
+    """Every `region_id` names a region, and every subregion column holds that region's."""
+    if t.column("region_id") is None or df.height == 0:
+        return
+    subs = [c.name for c in t.columns if c.subregion]
+    for rid in df["region_id"].unique().sort().to_list():
+        try:
+            r = _region.get(rid)
+        except _region.RegionError as e:
+            _fail(t.name, f"region_id: {e}")
+        if not subs:
+            continue
+        rows = df.filter(pl.col("region_id") == rid)
+        for name in subs:
+            bad = set(rows[name].drop_nulls().unique().to_list()) - set(r.subregions)
+            if bad:
+                _fail(t.name, f"{name}: values {sorted(bad)[:5]} are not {r.id} "
+                              f"{r.subregion_name}s {list(r.subregions)}")
+
+
+def upgrade(df: pl.DataFrame, table_name: str) -> pl.DataFrame:
+    """A table written before regions existed, read as one written after.
+
+    Old files say `modzcta` and carry no `region_id`. Every one of them is NYC, because NYC
+    was the only place there was. Logged once per table read, so an old file in a
+    deployment is visible rather than silently carried. Writes never go through here.
+    """
+    t = TABLES[table_name]
+    if LEGACY_GEO_ID in df.columns and GEO_ID not in df.columns:
+        log.info("%s: aliasing legacy column %r to %r", t.name, LEGACY_GEO_ID, GEO_ID)
+        df = df.rename({LEGACY_GEO_ID: GEO_ID})
+    if t.column("region_id") is not None and "region_id" not in df.columns:
+        log.info("%s: no region_id column; reading it as region %r", t.name, _region.DEFAULT)
+        df = df.with_columns(region_id=pl.lit(_region.DEFAULT, dtype=pl.Utf8))
     return df
 
 
@@ -448,7 +508,7 @@ def write(df: pl.DataFrame, table_name: str) -> Path:
 
 
 def read(table_name: str, *, validate_on_read: bool = True) -> pl.DataFrame:
-    df = pl.read_parquet(TABLES[table_name].path)
+    df = upgrade(pl.read_parquet(TABLES[table_name].path), table_name)
     if validate_on_read:
         validate(df, table_name)
     return df

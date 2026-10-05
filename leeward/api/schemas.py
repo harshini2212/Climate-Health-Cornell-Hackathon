@@ -27,11 +27,28 @@ from leeward.contracts import (
 from leeward.schema import ACTIONS, DEFAULT_CAPACITY, NEEDS, TIERS
 
 # --------------------------------------------------------------------------- #
+# GET /region
+# --------------------------------------------------------------------------- #
+
+class RegionInfo(Base):
+    """The region the served tables live in: what the map draws and what `geo_id` means."""
+    region_id: str
+    label: str
+    unit: str = Field(description="What a geo_id is here, e.g. MODZCTA")
+    subregion: str = Field(description="What the `borough` field holds here, e.g. borough")
+    subregions: list[str]
+    geojson_url: str = Field(
+        description="The map base, relative to wherever this response came from: the API "
+                    "serves it at region/geojson, a static build beside its fixtures")
+    geojson_property: str = Field(description="The feature property that holds the geo_id")
+
+
+# --------------------------------------------------------------------------- #
 # GET /forecast?scenario=&day=
 # --------------------------------------------------------------------------- #
 
 class ZipHazard(Base):
-    modzcta: str
+    geo_id: str
     date: Date
     heat_index_max_f: float
     hot_day: bool
@@ -75,7 +92,7 @@ class ForecastResponse(Base):
 # --------------------------------------------------------------------------- #
 
 class ZipScore(Base):
-    modzcta: str
+    geo_id: str
     need: str
     expected_count: float = Field(description="Sum of p_mean over the panel in this ZIP")
     lo80: float
@@ -88,7 +105,7 @@ class ScoresResponse(Base):
     need: str
     zips: list[ZipScore]
     facilities: list[ZipScore] = Field(default_factory=list,
-                                       description="Same shape, keyed by facility_id in modzcta")
+                                       description="Same shape, keyed by facility_id in geo_id")
     model_rung: int = Field(ge=0, le=3, description="Which ladder rung produced these")
 
 
@@ -131,7 +148,7 @@ class VeteranCard(Base):
     veteran_id: str
     name_display: str
     age: int
-    modzcta: str
+    geo_id: str
     borough: str
     facility_id: str
     facility_name: str
@@ -174,7 +191,7 @@ class ActionRow(Base):
     rank: int
     veteran_id: str
     name_display: str
-    modzcta: str
+    geo_id: str
     borough: str
     action: str
     tier: str

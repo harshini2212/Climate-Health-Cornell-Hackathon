@@ -17,6 +17,7 @@ import type {
   Capacity,
   ForecastResponse,
   Message,
+  RegionInfo,
   ReportResponse,
   ScoresResponse,
   Tier,
@@ -77,6 +78,31 @@ function fixture<T>(name: string): Promise<T> {
 // ---------------------------------------------------------------------------
 
 const forecastCache = new Map<string, Promise<ForecastResponse>>();
+
+/** The served region, and the absolute URL of its map base. */
+export interface RegionMap {
+  region: RegionInfo;
+  geojsonUrl: string;
+}
+
+let regionCache: Promise<RegionMap> | null = null;
+
+/**
+ * Which region the tables describe, and where its map lives: `GET /region` live, or
+ * region.json beside the fixtures offline. `geojson_url` is relative to whichever answered,
+ * so the map base comes from the API in the demo and from fixtures/ in a static build.
+ */
+export function getRegion(): Promise<RegionMap> {
+  if (!regionCache) {
+    regionCache = (async () => {
+      const live = await tryApi<RegionInfo>("/region");
+      if (live) return { region: live, geojsonUrl: `${API}/${live.geojson_url}` };
+      const fx = await fixture<RegionInfo>("region");
+      return { region: fx, geojsonUrl: `${FIXTURES}/${fx.geojson_url}` };
+    })();
+  }
+  return regionCache;
+}
 
 /**
  * `day` omitted asks the API for the window the demo opens on (leeward/demo.py: two days

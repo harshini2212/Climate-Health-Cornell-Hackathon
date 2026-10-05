@@ -93,7 +93,8 @@ def _neutral(col: schema.Column):
 def _cohort() -> pl.DataFrame:
     cols = schema.TABLES["cohort"].columns
     base = {c.name: _neutral(c) for c in cols} | {
-        "name_display": "Ablation Fixture", "age": 40, "modzcta": ZIP, "borough": "Bronx",
+        "name_display": "Ablation Fixture", "age": 40, "region_id": "nyc", "geo_id": ZIP,
+        "borough": "Bronx",
         "floor": "upper", "caregiver": "informal_coresident", "income_band": "mid",
         "home_ac": True, "hvi": 1, "days_supply_remaining": 90,
     } | {f"{c.name}_synthetic": True for c in cols if c.synthetic}
@@ -115,7 +116,7 @@ def _hazards() -> pl.DataFrame:
     """One ZIP, four identical calm days: the only thing that varies is whether 630 is open."""
     cols = schema.TABLES["hazards"].columns
     base = {c.name: _neutral(c) for c in cols} | {"heat_index_max_f": 70.0, "pm25": 5.0}
-    return pl.DataFrame([base | {"modzcta": ZIP, "date": d} for d in DAYS],
+    return pl.DataFrame([base | {"region_id": "nyc", "geo_id": ZIP, "date": d} for d in DAYS],
                         schema_overrides={c.name: c.dtype for c in cols})
 
 

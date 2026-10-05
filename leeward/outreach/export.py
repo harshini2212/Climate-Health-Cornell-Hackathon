@@ -32,7 +32,7 @@ CONSENT_FOR: dict[str, str | None] = {
 }
 
 CONSENTS = ["consent_partner_check", "consent_ride", "consent_housing"]
-COLUMNS = ["date", "veteran_id", "name_display", "modzcta", "borough", "action", *CONSENTS]
+COLUMNS = ["date", "veteran_id", "name_display", "geo_id", "borough", "action", *CONSENTS]
 
 
 def partner_sheet(actions: pl.DataFrame, cohort: pl.DataFrame) -> pl.DataFrame:
@@ -42,7 +42,7 @@ def partner_sheet(actions: pl.DataFrame, cohort: pl.DataFrame) -> pl.DataFrame:
         allowed = allowed | ((pl.col("action") == action)
                              & (pl.col(consent) if consent else pl.lit(True)))
     return (actions.filter(pl.col("action").is_in(list(CONSENT_FOR)))
-                   .join(cohort.select("veteran_id", "name_display", "modzcta", "borough",
+                   .join(cohort.select("veteran_id", "name_display", "geo_id", "borough",
                                        *CONSENTS), on="veteran_id", how="inner")
                    .filter(pl.col("consent_partner_check") & allowed)
                    .select(COLUMNS)

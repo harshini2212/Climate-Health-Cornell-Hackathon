@@ -26,10 +26,26 @@ export const DEFAULT_CAPACITY: Capacity = {
   free: 10000,
 };
 
+// GET /region --------------------------------------------------------------
+
+export interface RegionInfo {
+  region_id: string;
+  label: string;
+  /** What a geo_id is here, e.g. MODZCTA. */
+  unit: string;
+  /** What the `borough` field holds here, e.g. borough. */
+  subregion: string;
+  subregions: string[];
+  /** The map base, relative to wherever this response came from. */
+  geojson_url: string;
+  /** The feature property that holds the geo_id. */
+  geojson_property: string;
+}
+
 // GET /forecast ------------------------------------------------------------
 
 export interface ZipHazard {
-  modzcta: string;
+  geo_id: string;
   date: string;
   heat_index_max_f: number;
   hot_day: boolean;
@@ -72,7 +88,7 @@ export interface ForecastResponse {
 // GET /scores --------------------------------------------------------------
 
 export interface ZipScore {
-  modzcta: string;
+  geo_id: string;
   need: string;
   expected_count: number;
   lo80: number;
@@ -103,7 +119,7 @@ export interface ActionRow {
   rank: number;
   veteran_id: string;
   name_display: string;
-  modzcta: string;
+  geo_id: string;
   borough: string;
   action: string;
   tier: Tier;
@@ -166,7 +182,7 @@ export interface VeteranCard {
   veteran_id: string;
   name_display: string;
   age: number;
-  modzcta: string;
+  geo_id: string;
   borough: string;
   facility_id: string;
   facility_name: string;

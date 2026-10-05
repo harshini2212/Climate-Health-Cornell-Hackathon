@@ -27,8 +27,9 @@ No behaviour changes:
 
 ## Phase 1: research-grade v1 (November 2026 – January 2027)
 
-- **Region abstraction.** Replace the NYC-only `modzcta` key with `region_id` + `geo_id`,
-  configured per region. First new regions: one hot inland market and one flood-prone market.
+- **Region abstraction.** Done: the key is `region_id` + `geo_id`, configured per region in
+  `regions/<id>.yaml`, and a four-unit test region runs cohort → score → allocate end to
+  end. Next: the first new regions, one hot inland market and one flood-prone market.
 - **Real calibration targets.** NYC heat ED and hospitalisation data, NWS HeatRisk, daily PRISM
   temperature, and EAGLE-I power outages.
 - **Synthetic cohort.** Regenerate it from Synthea's veteran modules (PTSD, depression,

@@ -27,9 +27,14 @@ the build is allowed to depend on the network at demo time.
 
 ## The geography key
 
-Everything joins on **`modzcta`** — NYC's Modified ZIP Code Tabulation Area, 178 of them.
-Not raw ZIP, not ZCTA, not NTA. NYC publishes it, the Health Department reports on it, and
-`nyc_modzcta.geojson` is the map base the UI draws.
+Everything joins on **`(region_id, geo_id)`**. For region `nyc` (`regions/nyc.yaml`), `geo_id`
+is NYC's Modified ZIP Code Tabulation Area, 178 of them. Not raw ZIP, not ZCTA, not NTA. NYC
+publishes it, the Health Department reports on it, and `nyc_modzcta.geojson` is the map base
+the UI draws (served by `GET /region/geojson`).
+
+The files here keep the column names their sources publish, so NYC's unit column is still
+called `modzcta` on disk. `regions/nyc.yaml` names each table's unit column and
+`region.ref()` renames it to `geo_id` on read; no file here changed when the key did.
 
 Where a source is published per ZCTA5 (CDC PLACES, HVI, ACS) the codes coincide for almost
 every NYC ZIP; `nyc_modzcta.parquet` carries a `zcta_members` column listing the ZCTAs each

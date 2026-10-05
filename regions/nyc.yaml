@@ -1,0 +1,56 @@
+# New York City: the region Leeward was built on, and the one the demo runs.
+#
+# A region is everything the pipeline needs to know about a place: its geography unit, the
+# subregions the fairness floors are drawn over, which reference tables hold its per-unit
+# rates, and the map. Code reads a place through leeward/geo/region.py and never names one.
+#
+# Committed reference files keep the column names their sources publish (MODZCTA's own
+# `modzcta`, PLACES' `zcta`). `key:` says which column is the unit id; region.ref() renames
+# it to `geo_id` on read, so no data file changes when the contract key does. A table with no
+# `key:` is not keyed by the unit (ACS and emPOWER are per ZCTA/ZIP, joined through
+# `zcta_members`) and is read as published.
+
+id: nyc
+label: New York City
+
+unit:
+  name: MODZCTA
+  doc: NYC Modified ZCTA, one of 178
+  table: units               # the reference table with one row per unit: lon, lat, members
+
+subregions:
+  name: borough
+  values: [Bronx, Brooklyn, Manhattan, Queens, Staten Island]
+  # MODZCTA carries no borough column. These are the ZIP prefix ranges NYC uses, tried in
+  # order; the first that holds the unit's code wins, and the last row has no range.
+  by_geo_range:
+    - {name: Manhattan, lo: 10001, hi: 10282}
+    - {name: Staten Island, lo: 10301, hi: 10314}
+    - {name: Bronx, lo: 10451, hi: 10475}
+    - {name: Brooklyn, lo: 11201, hi: 11256}
+    - {name: Queens}
+
+# For filtering state-wide sources down to the five boroughs (scripts/fetch_sources.py).
+county_fips: {"36005": Bronx, "36047": Brooklyn, "36061": Manhattan,
+              "36081": Queens, "36085": Staten Island}
+county_names: {BRONX: Bronx, KINGS: Brooklyn, "NEW YORK": Manhattan,
+               QUEENS: Queens, RICHMOND: Staten Island}
+
+# The map base. `property` is the feature property that holds the unit id.
+geojson: {path: nyc_modzcta.geojson, property: modzcta}
+
+# Relative to this file.
+reference_dir: ../data/reference
+
+tables:
+  units:          {path: nyc_modzcta.parquet, key: modzcta}
+  acs_veterans:   {path: acs_veterans_by_zcta.parquet}
+  acs_race:       {path: acs_race_by_zcta.parquet}
+  empower:        {path: empower_ny_zip.parquet}
+  places:         {path: places_zcta_nyc.parquet, key: zcta}
+  hvi:            {path: hvi_by_zcta.parquet, key: zcta}
+  evac_zones:     {path: evac_zone_by_modzcta.parquet, key: modzcta}
+  stormwater:     {path: stormwater_by_modzcta.parquet, key: modzcta}
+  facilities:     {path: va_facilities_nyc_hazard.parquet}
+  smoke_replay:   {path: airnow_pm25_nyc_smoke2023.parquet}
+  ehdp_geo:       {path: ehdp_geo_by_modzcta.parquet, key: modzcta}   # the heat back-test

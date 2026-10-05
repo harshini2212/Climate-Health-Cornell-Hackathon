@@ -47,7 +47,7 @@ MAX_EHA_LOSS = 0.15
 
 #: A veteran with nothing unusual about them: no meds, no equipment, not site-dependent.
 PLAIN = dict(
-    borough="Manhattan", modzcta=ZIP, facility_id=STATION, n_active_meds=0,
+    region_id="nyc", borough="Manhattan", geo_id=ZIP, facility_id=STATION, n_active_meds=0,
     mail_order_pharmacy=False, days_supply_remaining=90, powered_equipment="none",
     ckd_dialysis=False, active_cancer_tx=False, on_methadone_otp=False, evac_zone=0,
     med_thermoreg_score=0.0, acb_score=0, med_combo_raas_diuretic=False,
@@ -56,7 +56,7 @@ PLAIN = dict(
 )
 
 #: A quiet day: no outage, no disrupted mail, and the station open.
-CALM_ZIP = dict(modzcta=ZIP, outage_frac=0.0, mail_delivery_disrupted=False)
+CALM_ZIP = dict(region_id="nyc", geo_id=ZIP, outage_frac=0.0, mail_delivery_disrupted=False)
 CALM_STATION = dict(facility_id=STATION, site_down=False)
 
 
@@ -271,7 +271,7 @@ def test_a_rule_needs_every_cell_of_its_row_to_hold() -> None:
 def test_a_missing_hazard_row_is_not_a_hazard() -> None:
     """A ZIP or station with no row for the day must read as calm, never as null-is-true."""
     cohort = _cohort([{"veteran_id": "v-dialysis", "ckd_dialysis": True,
-                       "modzcta": "11215", "facility_id": "526"}])
+                       "geo_id": "11215", "facility_id": "526"}])
     scores = _scores({"v-dialysis": {k: (0.05, 0.1) for k in NEEDS}})
     assigned = _assign(scores, cohort, _hazards([{}]), _sites([{"site_down": True}]))
     assert _tier(assigned, "v-dialysis") == ("self_serve", None), (

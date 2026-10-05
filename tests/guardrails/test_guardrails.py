@@ -22,6 +22,7 @@ import polars as pl
 import pytest
 
 from leeward import schema
+from leeward.geo import region
 from leeward.schema import DEFAULT_CAPACITY, MANDATORY_MESSAGE_ELEMENTS, NEEDS
 from tables import table
 
@@ -147,17 +148,23 @@ def test_every_veteran_day_has_all_five_needs() -> None:
         "some veteran-days are missing needs; the care-team list would silently under-rank them")
 
 
-def test_geography_key_is_real_nyc() -> None:
-    """A cohort in ZIPs that do not exist renders an empty map and nobody notices until demo."""
-    real = set(pl.read_parquet(schema.REFERENCE / "nyc_modzcta.parquet")["modzcta"].to_list())
+def test_geo_id_is_real_for_its_region() -> None:
+    """A cohort in ZIPs that do not exist renders an empty map and nobody notices until demo.
+
+    Every (region_id, geo_id) must be a unit that region has: in NYC, one of the 178
+    MODZCTAs in its reference table. A real code from the wrong region fails too.
+    """
     for name in ("cohort", "hazards"):
-        got = set(table(name)["modzcta"].unique().to_list())
-        assert got <= real, f"{name} references ZIPs not in nyc_modzcta: {sorted(got - real)[:5]}"
+        df = table(name)
+        for rid in df["region_id"].unique().sort().to_list():
+            r = region.get(rid)
+            got = set(df.filter(pl.col("region_id") == rid)["geo_id"].unique().to_list())
+            assert got <= r.geo_ids, (f"{name} references {rid} units it does not have "
+                                      f"({r.unit}): {sorted(got - r.geo_ids)[:5]}")
 
 
 def test_facilities_are_real_stations() -> None:
-    real = set(pl.read_parquet(
-        schema.REFERENCE / "va_facilities_nyc_hazard.parquet")["station_no"].to_list())
+    real = set(region.get(table("cohort")["region_id"][0]).ref("facilities")["station_no"])
     for name in ("cohort", "site_status"):
         col = "facility_id"
         got = set(table(name)[col].unique().to_list())

@@ -124,7 +124,7 @@ export function VeteranScreen({ focus, onOpenMessage, onBack }: Props) {
           <div>
             <div className="nm">{card.name_display}</div>
             <div className="meta">
-              <span>{card.age} years</span><span>·</span><span>{card.borough} {card.modzcta}</span><span>·</span><span>{card.facility_name} (station {card.facility_id})</span><span>·</span><span>{fmtDate(card.date)}</span>
+              <span>{card.age} years</span><span>·</span><span>{card.borough} {card.geo_id}</span><span>·</span><span>{card.facility_name} (station {card.facility_id})</span><span>·</span><span>{fmtDate(card.date)}</span>
             </div>
           </div>
           <div className="right">

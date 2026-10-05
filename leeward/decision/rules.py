@@ -46,7 +46,7 @@ EXPECTED = (
 FRAMES = {
     "veteran": ("cohort", ("veteran_id",)),
     "station": ("site_status", ("facility_id", "date")),
-    "zip": ("hazards", ("modzcta", "date")),
+    "zip": ("hazards", ("region_id", "geo_id", "date")),
 }
 
 #: The prose keys every row carries beside its conditions.
@@ -127,7 +127,7 @@ def fired(vet_days: pl.DataFrame, cohort: pl.DataFrame, hazards: pl.DataFrame,
     """
     table = rules if rules is not None else load()
     #: The cohort is joined first and carries the two keys the other joins need.
-    sources = {"veteran": (cohort, ("modzcta", "facility_id")),
+    sources = {"veteran": (cohort, ("region_id", "geo_id", "facility_id")),
                "station": (site_status, ()), "zip": (hazards, ())}
     keep = vet_days.columns
 

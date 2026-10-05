@@ -58,6 +58,7 @@ import plotly.graph_objects as go
 import polars as pl
 
 from leeward import schema
+from leeward.geo import region as regions
 from leeward.ingest.hazards import HOT_DAY_F
 from leeward.ingest.sources import ehdp_heat, heat_syndrome
 from leeward.model import design, hazard, priors, score
@@ -67,7 +68,6 @@ REF = schema.DATA / "reference"
 REPORT = schema.ROOT / "report"
 OBSERVED = REF / f"{heat_syndrome.STEM}.parquet"
 EHDP = REF / f"{ehdp_heat.STEM}.parquet"
-GEO = REF / f"{ehdp_heat.XWALK_STEM}.parquet"
 
 YEARS = tuple(range(2017, 2022))
 SUMMER_MONTHS = (6, 7, 8)
@@ -160,7 +160,7 @@ def _sigmoid(x: np.ndarray) -> np.ndarray:
 def citywide_hazards(cohort: pl.DataFrame, temps: pl.DataFrame) -> pl.DataFrame:
     """A hazards frame with the day's citywide heat index in every ZIP and nothing else."""
     days = temps.select("date", heat_index_max_f=pl.col("max_temp_f").cast(pl.Float64))
-    zips = cohort.select("modzcta").unique()
+    zips = cohort.select("region_id", "geo_id").unique()
     return zips.join(days, how="cross").with_columns(
         pm25=pl.lit(0.0),
         hot_day=pl.col("heat_index_max_f") >= HOT_DAY_F,
@@ -200,7 +200,7 @@ def predict(cohort: pl.DataFrame, temps: pl.DataFrame, B: np.ndarray) -> pl.Data
     """One row per day in `temps`: heat_x lags, hot_day, the lag-term log-odds, and the
     cohort-mean heat-need probability (`intensity`). `baseline` is that mean on a calm day."""
     temps = temps.select("date", pl.col("max_temp_f").cast(pl.Float64)).sort("date")
-    one_zip = cohort.head(1).select("modzcta")
+    one_zip = cohort.head(1).select("region_id", "geo_id")
     lagged = design._hazard_frame(citywide_hazards(one_zip, temps)).sort("date")
     heat_x = lagged.select([f"heat_x{i}" for i in range(LAGS)]).to_numpy()
     hot = lagged["hot_day"].cast(pl.Float64).to_numpy()
@@ -280,8 +280,8 @@ def _spatial(cohort: pl.DataFrame, B: np.ndarray, ehdp: pl.DataFrame, geo: pl.Da
     person, inc = person_terms(cohort, B)
     wave = B[design.TERM_SLICE["delta_heat"], HEAT].sum() * min(
         (SPATIAL_WAVE_F - design.HEAT_HINGE_F) / design.HEAT_UNIT_F, design.HEAT_CAP)
-    pred = (cohort.select("modzcta").with_columns(p=pl.Series(_sigmoid(person + inc + wave)))
-            .join(geo.select("modzcta", "cd"), on="modzcta", how="inner")
+    pred = (cohort.select("geo_id").with_columns(p=pl.Series(_sigmoid(person + inc + wave)))
+            .join(geo.select("geo_id", "cd"), on="geo_id", how="inner")
             .group_by("cd").agg(predicted=pl.col("p").mean(), n_veterans=pl.len())
             .filter(pl.col("n_veterans") >= min_veterans))
     obs = (ehdp.filter((pl.col("indicator_id") == SPATIAL_INDICATOR) & (pl.col("geo_type") == "CD")
@@ -463,9 +463,10 @@ def main(argv: list[str] | None = None) -> int:
 
     coef = coefficients(None if args.prior else args.posterior)
     cohort = cohort_build.build(seed=COHORT_SEED)
-    population = float(pl.read_parquet(REF / "nyc_modzcta.parquet")["pop_est"].sum())
+    nyc = regions.get("nyc")       # EHDP and the syndromic series are New York City's own
+    population = float(nyc.ref(nyc.unit_table)["pop_est"].sum())
     ehdp = pl.read_parquet(EHDP) if EHDP.exists() else None
-    geo = pl.read_parquet(GEO) if GEO.exists() else None
+    geo = nyc.ref("ehdp_geo") if nyc.path("ehdp_geo").exists() else None
     report, out = backtest(load_observed(), cohort, coef.B, rung=coef.rung, detail=coef.detail,
                            population=population, ehdp=ehdp, geo=geo)
     js, html = write(report, out, args.out)

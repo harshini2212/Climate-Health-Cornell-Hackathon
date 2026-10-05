@@ -230,14 +230,19 @@ class Design:
     veteran_id: np.ndarray   # (N,) str
     vet_index: np.ndarray    # (N,) row of the veteran in the cohort frame that was passed in
     date: np.ndarray         # (N,) datetime64[D]
-    modzcta: np.ndarray      # (N,) str, for a simulator-side ZIP effect
+    geo_id: np.ndarray       # (N,) str, the unit within the veteran's region
     X: np.ndarray            # (N, P) float64, columns in FEATURES order
+
+
+#: What a veteran-day joins its hazards on. The region is part of the key, so two regions
+#: that share a unit code can never read each other's weather.
+HAZARD_KEY = ["region_id", "geo_id", "date"]
 
 
 def _hazard_frame(hazards: pl.DataFrame) -> pl.DataFrame:
     """Per ZIP-day hazard features plus lags. A lag before the first date reads 0."""
     h = hazards.select(
-        "modzcta", "date",
+        "region_id", "geo_id", "date",
         heat_x=((pl.col("heat_index_max_f") - HEAT_HINGE_F) / HEAT_UNIT_F).clip(0, HEAT_CAP),
         pm_x=((pl.col("pm25") - PM25_STANDARD) / PM25_UNIT).clip(0, PM25_CAP),
         hot_day=pl.col("hot_day"),
@@ -251,9 +256,9 @@ def _hazard_frame(hazards: pl.DataFrame) -> pl.DataFrame:
     # Lag by calendar date, not by row, so a gap in the table cannot shift a curve.
     for col, n in (("heat_x", HEAT_LAGS), ("pm_x", PM25_LAGS)):
         for lag in range(n):
-            shifted = h.select("modzcta", pl.col("date") + pl.duration(days=lag),
+            shifted = h.select("region_id", "geo_id", pl.col("date") + pl.duration(days=lag),
                                pl.col(col).alias(f"{col}{lag}"))
-            h = h.join(shifted, on=["modzcta", "date"], how="left", maintain_order="left")
+            h = h.join(shifted, on=HAZARD_KEY, how="left", maintain_order="left")
     lag_cols = [f"heat_x{i}" for i in range(HEAT_LAGS)] + [f"pm_x{i}" for i in range(PM25_LAGS)]
     return h.drop("heat_x", "pm_x").with_columns(pl.col(lag_cols).fill_null(0.0))
 
@@ -264,7 +269,7 @@ def _feature_exprs() -> list[pl.Expr]:
 
 def _cohort_columns(cohort: pl.DataFrame) -> list[str]:
     used = {c for e in _feature_exprs() for c in e.meta.root_names()}
-    keys = ["veteran_id", "modzcta", "facility_id"]
+    keys = ["veteran_id", "region_id", "geo_id", "facility_id"]
     return keys + sorted((used & set(cohort.columns)) - set(keys))
 
 
@@ -292,19 +297,19 @@ def build(cohort: pl.DataFrame, hazards: pl.DataFrame, site_status: pl.DataFrame
     rows = (cohort.select(_cohort_columns(cohort)).with_row_index("_i")
             .join(pl.DataFrame({"date": pl.Series(dates, dtype=pl.Date)}).with_row_index("_t"),
                   how="cross")
-            .join(hz, on=["modzcta", "date"], how="left")
+            .join(hz, on=HAZARD_KEY, how="left")
             .join(sites, on=["facility_id", "date"], how="left")
             .sort("_i", "_t"))
 
     if rows.height != cohort.height * len(dates):
         raise ValueError("hazards or site_status has duplicate rows on its key")
-    _require_joined(rows, "hot_day", "hazards", ["modzcta", "date"])
+    _require_joined(rows, "hot_day", "hazards", HAZARD_KEY)
     _require_joined(rows, "site_down", "site_status", ["facility_id", "date"])
 
     rows = rows.with_columns(_elapsed=(pl.col("date") - pl.lit(ref, dtype=pl.Date)).dt.total_days())
     X = rows.select(_feature_exprs()).to_numpy().astype(np.float64, copy=False)
     return Design(veteran_id=rows["veteran_id"].to_numpy(), vet_index=rows["_i"].to_numpy(),
-                  date=rows["date"].to_numpy(), modzcta=rows["modzcta"].to_numpy(), X=X)
+                  date=rows["date"].to_numpy(), geo_id=rows["geo_id"].to_numpy(), X=X)
 
 
 # --------------------------------------------------------------------------- #

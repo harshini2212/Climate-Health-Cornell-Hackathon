@@ -213,7 +213,7 @@ def _tiny_world(n: int = 40, at_risk=(4, 11, 23, 31, 38)):
     ids = [f"T{i:02d}" for i in range(n)]
     risky = {ids[i] for i in at_risk}
     base = {c.name: _neutral(c) for c in schema.TABLES["cohort"].columns}
-    base |= {"modzcta": "10463", "borough": "Bronx", "facility_id": "526", "floor": "upper",
+    base |= {"region_id": "nyc", "geo_id": "10463", "borough": "Bronx", "facility_id": "526", "floor": "upper",
              "caregiver": "informal_coresident", "income_band": "mid", "hvi": 1,
              "home_ac": True, "name_display": "Tiny Fixture"}
     flags = {f"{c.name}_synthetic": True for c in schema.TABLES["cohort"].columns if c.synthetic}
@@ -226,7 +226,7 @@ def _tiny_world(n: int = 40, at_risk=(4, 11, 23, 31, 38)):
 
     days = [D1, D2]
     scores = pl.DataFrame([
-        {"veteran_id": v, "date": d, "need": k,
+        {"region_id": "nyc", "veteran_id": v, "date": d, "need": k,
          "p_mean": 0.6 if v in risky else 0.005,
          "p_lo80": 0.5 if v in risky else 0.002,
          "p_hi80": 0.7 if v in risky else 0.010,

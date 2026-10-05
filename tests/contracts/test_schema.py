@@ -52,6 +52,7 @@ def test_validate_actually_rejects_bad_data() -> None:
     bad_need = pl.DataFrame({
         **{c.name: pl.Series(c.name, [None], dtype=c.dtype) for c in schema.TABLES["scores"].columns},
     }).with_columns([
+        pl.lit("nyc").alias("region_id"),
         pl.lit("v1").alias("veteran_id"), pl.lit("not_a_need").alias("need"),
         pl.lit(0.5).alias("p_mean"), pl.lit(0.4).alias("p_lo80"), pl.lit(0.6).alias("p_hi80"),
         pl.lit(0.2).alias("p_epistemic_share"), pl.lit(0).cast(pl.Int32).alias("model_rung"),
