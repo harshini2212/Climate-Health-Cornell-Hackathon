@@ -237,6 +237,41 @@ prefix for each in `data/reference/manifest.json`.
 | `va_drug_classes` | https://rxnav.nlm.nih.gov/REST/rxclass/ | `va_drug_class_members.parquet` |
 | `synthea_sample` | https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip | `data/raw/synthea_sample_fhir.zip` |
 | `synthea_med_profiles` | derived from `synthea_sample` | `synthea_med_profiles.parquet` |
+| `heat_syndrome` | https://github.com/nychealth/heat-syndrome-data/tree/58dc5420c05b90bacd13af8696282495aac9f87e | `nyc_heat_ed_daily.parquet` |
+| `ehdp_heat` | https://github.com/nychealth/EHDP-data/tree/08d6e68f6e1d744f31b54401ec3165520681bb95 (`indicators/data/{2443,2410,2075,2076}.json`) | `ehdp_heat_by_geo.parquet` |
+| `ehdp_geo_modzcta` | same commit (`geography/zcta_to_uhf.csv`, `geography/CD.geojson`) | `ehdp_geo_by_modzcta.parquet` |
+
+### Real heat outcomes (the back-test)
+
+Read **4 October 2026**. Both repositories are NYC Health's own, Apache-2.0, keyless. Each
+fetcher reads a **pinned commit**, so a re-fetch is byte-identical (checked: same sha256):
+
+| Repository | Pinned commit | Committed |
+| --- | --- | --- |
+| nychealth/heat-syndrome-data | `58dc5420c05b90bacd13af8696282495aac9f87e` (head of `master`) | 2021-10-04 |
+| nychealth/EHDP-data | `08d6e68f6e1d744f31b54401ec3165520681bb95` (head of `production` when read) | 2026-10-02 |
+
+To move to a newer upstream, change `COMMIT` in the fetcher module, re-fetch, and expect the
+manifest hashes to change.
+
+- NYC DOHMH, *Heat Syndrome Data* — https://github.com/nychealth/heat-syndrome-data
+  (`edheat1720_supp.csv`, `edheat2021_live.csv`; the interface they feed is
+  http://a816-dohbesp.nyc.gov/IndicatorPublic/HeatHub/syndromic.html). Daily citywide
+  heat-syndrome ED visits, 1 May–30 September 2017–2021, 765 days, 2,930 visits, with the
+  daily maximum of heat index and temperature at the NWS LaGuardia station. Syndromic:
+  suspected heat illness by chief complaint or diagnosis code, not confirmed; 2021 is the
+  publisher's "live" file and may still be revised. Peak: **111 visits on 21 July 2019, heat
+  index 107 °F**. This is the observed series `leeward/eval/backtest.py` scores against.
+- NYC DOHMH, *Environment & Health Data Portal*, weather-related illness —
+  https://a816-dohbesp.nyc.gov/IndicatorPublic/data-explorer/weather-related-illness/ — data
+  from https://github.com/nychealth/EHDP-data. Indicators **2443** (heat ED visits, 5-year,
+  2018-22, by community district and borough), **2410** (heat hospitalizations, 10-year,
+  2013-22), **2075** and **2076** (yearly heat ED visits and hospitalizations; UHF42 detail
+  only to 2014 and 2016). Number, estimated annual rate and age-adjusted rate per 100,000;
+  SPARCS counts under 11 are suppressed and stored as null, never zero. Citywide heat ED
+  visits by year, 2017–2021: 348, 609, 632, 354, 434.
+  The explorer link `?id=2445` is *Cold stress: 5-year hospitalizations*; 2443 and 2410 are its
+  heat counterparts.
 
 ### Synthetic cohort
 

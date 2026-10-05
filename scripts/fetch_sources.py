@@ -679,6 +679,47 @@ def fetch_synthea_med_profiles():
     return write(df, "synthea_med_profiles", "derived: synthea_sample_fhir.zip")
 
 
+# --------------------------------------------------------------------------- #
+# Real heat outcomes, for the back-test. The fetch and parse live in
+# leeward/ingest/sources/; this file only registers them and writes the manifest.
+# --------------------------------------------------------------------------- #
+
+HEAT_SYNDROME = "https://github.com/nychealth/heat-syndrome-data"
+EHDP = "https://github.com/nychealth/EHDP-data"
+
+
+@source("heat_syndrome", HEAT_SYNDROME,
+        "NYC Health daily heat-syndrome ED visits, citywide, May-Sep 2017-2021, with the "
+        "LaGuardia max of heat index and temperature. Apache-2.0. Syndromic: suspected, not "
+        "confirmed, heat illness. 2021 is the publisher's 'live' file and may be revised.")
+def fetch_heat_syndrome():
+    from leeward.ingest.sources import heat_syndrome
+    return write(heat_syndrome.fetch(), heat_syndrome.STEM,
+                 f"{HEAT_SYNDROME}/tree/{heat_syndrome.COMMIT}")
+
+
+@source("ehdp_heat", EHDP,
+        "NYC EHDP heat ED visits and hospitalizations: indicators 2443 (5-year ED, 2018-22) "
+        "and 2410 (10-year hospitalizations, 2013-22) by community district and borough, "
+        "plus yearly 2075/2076 (UHF42 to 2014/2016). Number, annual rate and age-adjusted "
+        "rate per 100,000. SPARCS counts < 11 are null with suppressed=True. Apache-2.0.")
+def fetch_ehdp_heat():
+    from leeward.ingest.sources import ehdp_heat
+    return write(ehdp_heat.fetch(), ehdp_heat.STEM, f"{EHDP}/tree/{ehdp_heat.COMMIT}")
+
+
+@source("ehdp_geo_modzcta", f"{EHDP} geography/zcta_to_uhf.csv + geography/CD.geojson",
+        "MODZCTA -> UHF42 (the UHF most member ZCTAs sit in, from EHDP's zcta_to_uhf.csv) "
+        "and community district (largest area overlap with EHDP's CD.geojson). Brings "
+        "EHDP's neighbourhood rates onto the modzcta key. Needs the geo extra.")
+def fetch_ehdp_geo_modzcta():
+    from leeward.ingest.sources import ehdp_heat
+    modzcta = pl.read_parquet(REF / "nyc_modzcta.parquet")
+    geojson = (REF / "nyc_modzcta.geojson").read_text()
+    return write(ehdp_heat.fetch_crosswalk(modzcta, geojson), ehdp_heat.XWALK_STEM,
+                 f"{EHDP}/tree/{ehdp_heat.COMMIT}/geography (zcta_to_uhf.csv, CD.geojson)")
+
+
 def _nyc_zctas() -> set[str]:
     """Every ZCTA that makes up an NYC MODZCTA, plus the MODZCTA codes themselves."""
     p = REF / "nyc_modzcta.parquet"

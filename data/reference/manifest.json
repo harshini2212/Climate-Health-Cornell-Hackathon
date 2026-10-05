@@ -48,6 +48,26 @@
     "sha256": "7d0e4b1fd0ef8575",
     "url": "https://data.cityofnewyork.us/d/h2bn-gu9k"
   },
+  "ehdp_geo_modzcta": {
+    "bytes": 1975,
+    "cols": 3,
+    "fetched_utc": "2026-10-05T02:03:51Z",
+    "file": "ehdp_geo_by_modzcta.parquet",
+    "note": "MODZCTA -> UHF42 (the UHF most member ZCTAs sit in, from EHDP's zcta_to_uhf.csv) and community district (largest area overlap with EHDP's CD.geojson). Brings EHDP's neighbourhood rates onto the modzcta key. Needs the geo extra.",
+    "rows": 178,
+    "sha256": "f4de3026d0c400e3",
+    "url": "https://github.com/nychealth/EHDP-data/tree/08d6e68f6e1d744f31b54401ec3165520681bb95/geography (zcta_to_uhf.csv, CD.geojson)"
+  },
+  "ehdp_heat": {
+    "bytes": 16343,
+    "cols": 12,
+    "fetched_utc": "2026-10-05T02:03:50Z",
+    "file": "ehdp_heat_by_geo.parquet",
+    "note": "NYC EHDP heat ED visits and hospitalizations: indicators 2443 (5-year ED, 2018-22) and 2410 (10-year hospitalizations, 2013-22) by community district and borough, plus yearly 2075/2076 (UHF42 to 2014/2016). Number, annual rate and age-adjusted rate per 100,000. SPARCS counts < 11 are null with suppressed=True. Apache-2.0.",
+    "rows": 5161,
+    "sha256": "84efd87905f2e8c2",
+    "url": "https://github.com/nychealth/EHDP-data/tree/08d6e68f6e1d744f31b54401ec3165520681bb95"
+  },
   "empower": {
     "bytes": 15589,
     "cols": 10,
@@ -87,6 +107,16 @@
     "rows": 491,
     "sha256": "bbfb66a2dafda97b",
     "url": "https://data.cityofnewyork.us/d/kb2e-tjy3"
+  },
+  "heat_syndrome": {
+    "bytes": 5389,
+    "cols": 5,
+    "fetched_utc": "2026-10-05T02:03:49Z",
+    "file": "nyc_heat_ed_daily.parquet",
+    "note": "NYC Health daily heat-syndrome ED visits, citywide, May-Sep 2017-2021, with the LaGuardia max of heat index and temperature. Apache-2.0. Syndromic: suspected, not confirmed, heat illness. 2021 is the publisher's 'live' file and may be revised.",
+    "rows": 765,
+    "sha256": "24901d7499952c03",
+    "url": "https://github.com/nychealth/heat-syndrome-data/tree/58dc5420c05b90bacd13af8696282495aac9f87e"
   },
   "hvi": {
     "bytes": 1306,
