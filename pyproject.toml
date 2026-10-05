@@ -74,7 +74,7 @@ files = ["leeward"]
 warn_unused_configs = true
 
 [[tool.mypy.overrides]]
-module = ["yaml", "plotly.*", "numpyro.*"]
+module = ["yaml", "plotly.*", "numpyro.*", "geopandas", "geopandas.*", "shapely", "shapely.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]

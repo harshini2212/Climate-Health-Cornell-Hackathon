@@ -237,13 +237,22 @@ prefix for each in `data/reference/manifest.json`.
 | `va_drug_classes` | https://rxnav.nlm.nih.gov/REST/rxclass/ | `va_drug_class_members.parquet` |
 | `synthea_sample` | https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip | `data/raw/synthea_sample_fhir.zip` |
 | `synthea_med_profiles` | derived from `synthea_sample` | `synthea_med_profiles.parquet` |
-| `heat_syndrome` | https://github.com/nychealth/heat-syndrome-data | `nyc_heat_ed_daily.parquet` |
-| `ehdp_heat` | https://github.com/nychealth/EHDP-data (`indicators/data/{2443,2410,2075,2076}.json`) | `ehdp_heat_by_geo.parquet` |
-| `ehdp_geo_modzcta` | https://github.com/nychealth/EHDP-data (`geography/zcta_to_uhf.csv`, `geography/CD.geojson`) | `ehdp_geo_by_modzcta.parquet` |
+| `heat_syndrome` | https://github.com/nychealth/heat-syndrome-data/tree/58dc5420c05b90bacd13af8696282495aac9f87e | `nyc_heat_ed_daily.parquet` |
+| `ehdp_heat` | https://github.com/nychealth/EHDP-data/tree/08d6e68f6e1d744f31b54401ec3165520681bb95 (`indicators/data/{2443,2410,2075,2076}.json`) | `ehdp_heat_by_geo.parquet` |
+| `ehdp_geo_modzcta` | same commit (`geography/zcta_to_uhf.csv`, `geography/CD.geojson`) | `ehdp_geo_by_modzcta.parquet` |
 
 ### Real heat outcomes (the back-test)
 
-Read **4 October 2026**. Both repositories are NYC Health's own, Apache-2.0, keyless.
+Read **4 October 2026**. Both repositories are NYC Health's own, Apache-2.0, keyless. Each
+fetcher reads a **pinned commit**, so a re-fetch is byte-identical (checked: same sha256):
+
+| Repository | Pinned commit | Committed |
+| --- | --- | --- |
+| nychealth/heat-syndrome-data | `58dc5420c05b90bacd13af8696282495aac9f87e` (head of `master`) | 2021-10-04 |
+| nychealth/EHDP-data | `08d6e68f6e1d744f31b54401ec3165520681bb95` (head of `production` when read) | 2026-10-02 |
+
+To move to a newer upstream, change `COMMIT` in the fetcher module, re-fetch, and expect the
+manifest hashes to change.
 
 - NYC DOHMH, *Heat Syndrome Data* — https://github.com/nychealth/heat-syndrome-data
   (`edheat1720_supp.csv`, `edheat2021_live.csv`; the interface they feed is

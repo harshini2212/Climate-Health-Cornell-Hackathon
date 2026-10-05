@@ -1,5 +1,5 @@
 .PHONY: help setup sources sources-heavy fixtures hazards cohort fit score demo demo-dev ui report ablate \
-        test perf check smoke clean-clone backtest
+        test perf check smoke clean-clone backtest backtest-fitted
 PY  ?= .venv/bin/python
 PIP ?= .venv/bin/python -m pip
 
@@ -95,9 +95,14 @@ report:             ## full eval harness incl. the fairness audit -> report/repo
 	$(PY) -m leeward.eval.report
 
 # The one check against real outcomes: NYC's daily heat-syndrome ED visits, summers
-# 2017-2021, from data/reference/. Offline. Scores the posterior if `make fit` has run.
-backtest:           ## heat model vs real NYC heat ED visits -> report/backtest.{json,html}
-	$(PY) -m leeward.eval.backtest
+# 2017-2021, from data/reference/. Offline. The rung is chosen here, never by whether a
+# posterior happens to be lying in data/: `backtest` is the rung-0 priors, `backtest-fitted`
+# the posterior from `make fit` (fitted to the simulator) and fails if there is none.
+backtest:           ## rung-0 priors vs real NYC heat ED visits -> report/backtest.{json,html}
+	$(PY) -m leeward.eval.backtest --prior
+
+backtest-fitted:    ## the `make fit` posterior vs real NYC heat ED visits -> report/backtest.{json,html}
+	$(PY) -m leeward.eval.backtest --fitted
 
 # Separate from `report` on purpose: six models over the real cohort is about 30 seconds,
 # and `make report` is run every few edits. It caches report/ablations.json, which the next

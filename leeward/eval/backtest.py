@@ -1,5 +1,11 @@
 """`make backtest` -- the heat model against NYC's real daily heat ED visits, summers 2017-2021.
 
+    python -m leeward.eval.backtest --prior     # rung 0, the prior means   (make backtest)
+    python -m leeward.eval.backtest --fitted    # the make-fit posterior     (make backtest-fitted)
+
+One of the two is required: which model is scored is never decided by whether a posterior
+happens to exist in data/.
+
 Everything else in `eval/` scores the model against the simulator, which was written by the
 same people who wrote the priors. This is the first check against something nobody here
 made: NYC Health's syndromic count of heat-illness ED visits, one number per day, citywide
@@ -21,10 +27,11 @@ What is reported, to `report/backtest.json` and one offline chart, `report/backt
 * **Rank correlation** (Spearman) of predicted intensity with observed visits, per year, and
   against two baselines: the lag terms alone, and the raw temperature. A model that cannot
   beat the thermometer is not adding anything on this test.
-* **Lag structure.** Predicted-vs-observed cross-correlation with the observed series lagged
-  0-3 days; the observed series' rank correlation with heat_x at each lag; and a Poisson
-  distributed-lag fit of observed visits on heat_x lags 0-3, whose normalised shape is set
-  beside the model's `delta_heat` shape.
+* **Lag structure.** The cross-correlation of predicted(t) with visits(t + k), k = 0-3; the
+  observed series' rank correlation with heat_x at each lag; and -- the real lag evidence --
+  a Poisson distributed-lag fit of observed visits on heat_x lags 0-3, whose normalised shape
+  is set beside the model's `delta_heat` shape. Days below the 82 F hinge with no heat in
+  the three before all score the calm baseline and tie; `n_days_at_baseline` says how many.
 * **Calibration in the large**: predicted heat-need rate per veteran-day over observed heat
   ED visits per resident-day. These are not the same event -- a heat *need* is "this person
   should get a call", an ED visit is the tail of it -- so the ratio is reported as what it
@@ -326,7 +333,8 @@ def backtest(observed: pl.DataFrame, cohort: pl.DataFrame, B: np.ndarray, *, run
     delta = B[design.TERM_SLICE["delta_heat"], HEAT]
 
     def shape(v: np.ndarray) -> list[float] | None:
-        return (v / v.sum()).tolist() if v.sum() > 0 else None
+        """Normalised lag weights; None if any is negative, where a share means nothing."""
+        return (v / v.sum()).tolist() if (v >= 0).all() and v.sum() > 0 else None
 
     baseline = float(out["baseline"][0])
     # Days with no heat today or in the three days before: the observed match for the model's
@@ -350,6 +358,7 @@ def backtest(observed: pl.DataFrame, cohort: pl.DataFrame, B: np.ndarray, *, run
                   "delta_heat": delta.tolist(), "n_veterans": cohort.height},
         "window": {"years": [YEARS[0], YEARS[-1]], "months": list(SUMMER_MONTHS)},
         "n_days": out.height,
+        "n_days_at_baseline": out.filter(calm).height,
         "rank_correlation": {
             "spearman": spearman(pred, y),
             "spearman_lag_terms_only": spearman(out["lag_logit"].to_numpy(), y),
@@ -434,12 +443,21 @@ def write(report: dict, out: pl.DataFrame, out_dir: Path = REPORT) -> tuple[Path
     return js, html
 
 
+def _fmt_shape(shape: list[float] | None) -> str:
+    return " ".join(f"{v:.2f}" for v in shape) if shape else "n/a (a negative lag weight)"
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="the heat model against real NYC heat ED visits")
-    ap.add_argument("--prior", action="store_true", help="score the prior means, ignore any fit")
+    which = ap.add_mutually_exclusive_group(required=True)
+    which.add_argument("--prior", action="store_true", help="rung 0: the prior means")
+    which.add_argument("--fitted", action="store_true", help="the posterior from `make fit`")
     ap.add_argument("--posterior", type=Path, default=hazard.POSTERIOR)
     ap.add_argument("--out", type=Path, default=REPORT)
     args = ap.parse_args(argv)
+    if args.fitted and not args.posterior.exists():
+        ap.error(f"--fitted needs {args.posterior}; run `make fit`, or score the priors "
+                 "with --prior")
 
     from leeward.cohort import build as cohort_build
 
@@ -454,12 +472,13 @@ def main(argv: list[str] | None = None) -> int:
 
     rc, lag = report["rank_correlation"], report["lag_structure"]
     citl = report["calibration_in_the_large"]
-    print(f"{coef.detail}; {report['n_days']} summer days")
+    print(f"rung {coef.rung}: {coef.detail}; {report['n_days']} summer days, "
+          f"{report['n_days_at_baseline']} of them at the calm baseline")
     print(f"  Spearman {rc['spearman']:.3f}  (lag terms only {rc['spearman_lag_terms_only']:.3f}, "
           f"temperature alone {rc['spearman_temperature_baseline']:.3f})")
     print("  xcorr lags 0-3 " + " ".join(f"{v:.3f}" for v in lag["predicted_vs_observed_xcorr"]))
-    print("  observed lag shape " + " ".join(f"{v:.2f}" for v in lag["observed_shape"] or [])
-          + "  vs model " + " ".join(f"{v:.2f}" for v in lag["model_shape"] or []))
+    print(f"  observed lag shape {_fmt_shape(lag['observed_shape'])}  "
+          f"vs model {_fmt_shape(lag['model_shape'])}")
     nan = float("nan")
     print(f"  calibration in the large: predicted need per veteran-day / observed ED visits "
           f"per resident-day = {citl['ratio'] or nan:,.0f}x (excess {citl['excess_ratio'] or nan:,.0f}x)"

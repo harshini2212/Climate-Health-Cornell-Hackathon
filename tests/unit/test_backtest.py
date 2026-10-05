@@ -214,6 +214,25 @@ def test_scores_only_june_to_august_2017_to_2021_but_lags_reach_back_into_may(
     assert first["heat_x3"] == pytest.approx(want)
 
 
+def test_the_rung_is_chosen_explicitly_never_by_whether_a_posterior_exists(tmp_path) -> None:
+    with pytest.raises(SystemExit):
+        bt.main(["--out", str(tmp_path)])                     # neither --prior nor --fitted
+    with pytest.raises(SystemExit):
+        bt.main(["--fitted", "--posterior", str(tmp_path / "none.nc"), "--out", str(tmp_path)])
+
+
+def test_a_negative_lag_weight_gets_no_shape_and_calm_days_are_counted(cohort, temps) -> None:
+    rng = np.random.default_rng(SEED)
+    x = bt.predict(cohort, temps, B)
+    # Visits fall the day after heat: the fitted lag-1 weight is negative.
+    obs = _observed(rng.poisson(np.exp(1.0 + 1.0 * x["heat_x0"] - 1.0 * x["heat_x1"])), temps)
+    report, out = bt.backtest(obs, cohort, B, rung=0, detail="t", population=8e6)
+    assert report["lag_structure"]["observed_poisson_coef"][1] < 0
+    assert report["lag_structure"]["observed_shape"] is None
+    calm = out.filter(pl.all_horizontal([pl.col(f"heat_x{i}") == 0 for i in range(4)]))
+    assert report["n_days_at_baseline"] == calm.height > 0
+
+
 def test_refuses_a_series_with_a_hole_in_summer(cohort, temps) -> None:
     obs = _observed(np.ones(temps.height), temps).filter(pl.col("date") != date(2019, 7, 4))
     with pytest.raises(ValueError, match="2019-07-04"):

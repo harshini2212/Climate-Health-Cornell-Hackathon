@@ -34,7 +34,10 @@ import polars as pl
 import requests
 
 REPO = "https://github.com/nychealth/EHDP-data"
-RAW = "https://raw.githubusercontent.com/nychealth/EHDP-data/production/"
+#: Pinned: `production` moves most days. This is its head as read on 2026-10-04 (committed
+#: 2026-10-02). Bump it deliberately, re-fetch, and re-check the manifest hashes.
+COMMIT = "08d6e68f6e1d744f31b54401ec3165520681bb95"
+RAW = f"https://raw.githubusercontent.com/nychealth/EHDP-data/{COMMIT}/"
 EXPLORER = ("https://a816-dohbesp.nyc.gov/IndicatorPublic/data-explorer/"
             "weather-related-illness/")
 SOURCE = "nychealth/EHDP-data"

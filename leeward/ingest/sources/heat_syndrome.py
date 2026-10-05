@@ -24,7 +24,10 @@ import polars as pl
 import requests
 
 REPO = "https://github.com/nychealth/heat-syndrome-data"
-RAW = "https://raw.githubusercontent.com/nychealth/heat-syndrome-data/master/"
+#: Pinned, so a re-fetch is byte-identical. `master` at this commit (2021-10-04) is the
+#: last change upstream; bump it deliberately and re-check the manifest hash.
+COMMIT = "58dc5420c05b90bacd13af8696282495aac9f87e"
+RAW = f"https://raw.githubusercontent.com/nychealth/heat-syndrome-data/{COMMIT}/"
 FILES = ("edheat1720_supp.csv", "edheat2021_live.csv")
 #: Every row carries this tag, and the back-test refuses a frame without it.
 SOURCE = "nychealth/heat-syndrome-data"

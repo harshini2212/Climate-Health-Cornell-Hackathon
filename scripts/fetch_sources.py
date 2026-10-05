@@ -694,7 +694,8 @@ EHDP = "https://github.com/nychealth/EHDP-data"
         "confirmed, heat illness. 2021 is the publisher's 'live' file and may be revised.")
 def fetch_heat_syndrome():
     from leeward.ingest.sources import heat_syndrome
-    return write(heat_syndrome.fetch(), heat_syndrome.STEM, HEAT_SYNDROME)
+    return write(heat_syndrome.fetch(), heat_syndrome.STEM,
+                 f"{HEAT_SYNDROME}/tree/{heat_syndrome.COMMIT}")
 
 
 @source("ehdp_heat", EHDP,
@@ -704,7 +705,7 @@ def fetch_heat_syndrome():
         "rate per 100,000. SPARCS counts < 11 are null with suppressed=True. Apache-2.0.")
 def fetch_ehdp_heat():
     from leeward.ingest.sources import ehdp_heat
-    return write(ehdp_heat.fetch(), ehdp_heat.STEM, EHDP)
+    return write(ehdp_heat.fetch(), ehdp_heat.STEM, f"{EHDP}/tree/{ehdp_heat.COMMIT}")
 
 
 @source("ehdp_geo_modzcta", f"{EHDP} geography/zcta_to_uhf.csv + geography/CD.geojson",
@@ -716,7 +717,7 @@ def fetch_ehdp_geo_modzcta():
     modzcta = pl.read_parquet(REF / "nyc_modzcta.parquet")
     geojson = (REF / "nyc_modzcta.geojson").read_text()
     return write(ehdp_heat.fetch_crosswalk(modzcta, geojson), ehdp_heat.XWALK_STEM,
-                 f"{EHDP} geography/zcta_to_uhf.csv + geography/CD.geojson")
+                 f"{EHDP}/tree/{ehdp_heat.COMMIT}/geography (zcta_to_uhf.csv, CD.geojson)")
 
 
 def _nyc_zctas() -> set[str]:
