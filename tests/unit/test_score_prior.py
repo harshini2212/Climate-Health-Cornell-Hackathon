@@ -1,6 +1,6 @@
 """Rung 0: prior-only scoring. The demo's floor, so its numbers have to be defensible.
 
-The five acceptance checks from docs/PROMPTS.md come first. The ones after them check that
+The five original acceptance checks come first. The ones after them check that
 the numbers mean the right thing -- a heat wave raises heat risk, a closed site raises the
 treatment gap for the dialysis patient it serves -- because a table can satisfy every
 contract and still tell the care team the wrong story.

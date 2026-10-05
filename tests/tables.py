@@ -7,7 +7,7 @@ last -- green on one machine, red on the next, for reasons that have nothing to 
 code under review. Anyone who ran the real pipeline and then ran the gate chased that ghost.
 
 So the suite builds its own frames. Same generators as `scripts/make_fixtures.py`, so the
-shapes stay in lockstep with what the lanes develop against, but they live in memory, are
+shapes stay in lockstep with what development runs against, but they live in memory, are
 seeded once here, and no make target can reach them. `make fixtures && make check` and
 `make cohort && make score && make check` now run the same tests over the same numbers.
 
@@ -27,7 +27,7 @@ from leeward import schema
 
 ROOT = Path(__file__).resolve().parents[1]
 
-#: Deliberately the defaults of `scripts/make_fixtures.py`: the panel every lane was built
+#: Deliberately the defaults of `scripts/make_fixtures.py`: the panel the codebase was built
 #: against. Changing these changes the numbers several hand-checked tests expect.
 VETERANS = 500
 DAYS = 30
@@ -41,7 +41,7 @@ def _generators():
     """`scripts/make_fixtures.py`, imported by path -- `scripts/` is not a package.
 
     Reusing it rather than copying it is the point: one definition of what a correctly
-    shaped table looks like, so the tests cannot quietly drift from what the lanes get
+    shaped table looks like, so the tests cannot quietly drift from what developers get
     from `make fixtures`. The cost is that renaming a `make_*` function there breaks this.
     """
     spec = importlib.util.spec_from_file_location(

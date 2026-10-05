@@ -563,7 +563,7 @@ def test_the_slider_answers_inside_300ms_at_ten_thousand_veterans(
 # --------------------------------------------------------------------------- #
 
 def _fake_messages(seen: list) -> types.ModuleType:
-    """Stands in for `leeward.outreach.messages`, which another lane is writing."""
+    """Stands in for `leeward.outreach.messages`, so this test does not depend on it."""
     def render(action, veteran):
         seen.append((action, veteran))
         body = ("VEText. Your phrase is: one two three four. The VA will never ask you to pay, "

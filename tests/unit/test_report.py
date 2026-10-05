@@ -86,8 +86,8 @@ def test_recovery_coverage_is_the_fraction_of_covered_rows(payload: dict) -> Non
 
 def test_decision_quality_carries_every_strategy_as_measured(report: rep.Report) -> None:
     """Every strategy appears with the number `decision_quality` computed, including the
-    days a baseline wins. The assembler reports the comparison; it does not curate it --
-    see docs/PROMPTS.md 16 for why that matters on the fixture cohort right now."""
+    days a baseline wins. The assembler reports the comparison; it does not curate it, even
+    where a baseline beats the allocator on the fixture cohort."""
     rows = report.payload["decision_quality"]
     assert {row["strategy"] for row in rows} == set(rep.dq.STRATEGIES)
     want = rep.dq.summarise(report.decision_quality)

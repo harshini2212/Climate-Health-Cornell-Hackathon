@@ -1,6 +1,6 @@
 """The Makefile is documentation that executes, so the gate holds it to both jobs.
 
-`README.md`, `docs/PROMPTS.md` and `docs/BUILD_PLAN.md` tell people to run make targets;
+`README.md`, `CONTRIBUTING.md` and `docs/DEMO.md` tell people to run make targets;
 the Makefile is the one copy of that instruction which can be checked by machine. When a
 target names a module nobody wrote, the person following the docs finds out at 2am from
 `No module named`, which does not say whether the module was renamed, never written, or is
