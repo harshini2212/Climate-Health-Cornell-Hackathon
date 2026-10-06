@@ -81,7 +81,8 @@ is the right answer, which is a useful thing to know before you trust a join.
 | --- | --- | --- |
 | `med_climate_risk.csv` | 52 | **VA drug class → climate mechanism.** Hand-curated from CDC's clinician guidance on heat and medications. Columns: `mechanism`, `hazard`, `weight`, `acb` (anticholinergic burden 0–3), `controlled`, `cold_chain`, `narrow_ti`. Pharmacist-editable, like `severity.py` and `tau.py`. |
 | `va_drug_class_members.parquet` | 4,222 | **RxNorm code → VA drug class**, pulled from RxNav for every class in the crosswalk. Lets the cohort map Synthea prescriptions offline, with no RxNav call at demo time. |
-| `synthea_med_profiles.parquet` | 109 | **One row per Synthea bundle: that patient's active RxNorm codes**, sex, and age at their last recorded event. Distilled from the 30 MB FHIR sample by `profiles_from_fhir()`, so a clean clone gets real medication lists — co-prescribing intact — without `data/raw/`. 77 of the 109 carry at least one active medication. |
+| `synthea_med_profiles.parquet` | 109 | **One row per Synthea bundle: that patient's active RxNorm codes**, sex, and age at their last recorded event. Distilled from the 30 MB FHIR sample by `profiles_from_fhir()`. Since Track A it backs the FHIR reader's tests, not the cohort. |
+| `synthea_veteran_profiles.parquet` | see manifest | **Track A: one row per living adult in a pinned Synthea v4.0.0 veteran run** (seed 0, 2026-01-01, `veteran_population_override=true`): sex, age, `ptsd`, `depression`, `active_cancer_tx`, `suicide_risk`, `substance_use_disorder`, `homeless`, and active RxNorm codes. Distilled by `cohort/synthea.py`; the cohort draws whole profiles from it, so diagnoses and prescriptions belong to one patient. See `docs/sources.md` for the exact run. |
 
 RxNav publishes the **VA's own 576-class drug taxonomy**, keyless — which means Leeward
 speaks the vocabulary a VA clinical pharmacist already uses. `CV702` is LOOP DIURETICS to
@@ -121,13 +122,17 @@ the mechanism and combination rules (CDC). **What is synthetic:** `days_supply_r
 are drawn from VA's published conventions — 30-day window fills, 90-day mail fills, and the
 ~80% of VA outpatient prescriptions that go by mail — and both carry a `_synthetic` flag.
 
-Also synthetic: **which** of those 109 real lists a given synthetic veteran carries. The
-cohort bootstraps whole lists from `synthea_med_profiles.parquet`, stratified by age band
-only (18–54 / 55+), because the sample's medication burden triples at 55+ — 1.9 active meds
-below, 5.4 above — and our panel is 54% over 65. Whole lists, never drug-by-drug, so real
-co-prescribing survives. The draw ignores the veteran's own diagnosis list, so a cold-chain
-medication does not imply the diabetes flag; the sample has six diabetics, too few to
-condition on without inventing the structure. That closes with the Synthea swap.
+Also synthetic: **which** real Synthea veteran a given synthetic veteran is. Since Track A
+the cohort draws one whole profile from `synthea_veteran_profiles.parquet` per veteran,
+within their sex and ACS age band, so a PTSD or depression diagnosis arrives with the
+medications that patient was actually prescribed. Synthea's own rates are off for three of
+the flags (PTSD ~1% of records, substance use ~27%, no ZIP gradient for depression), so the
+pick is tilted toward cited rates — VA NCPTSD by era, NSDUH, and PLACES per ZIP for
+depression and diabetes — without ever splitting a profile (`cohort/synthea.py`,
+"Weighting"). Insulin for prediabetes and short-acting opioids started more than 90 days
+earlier are Synthea artifacts and are dropped when the profiles are distilled; long-acting
+opioids and buprenorphine are kept. `copd`, `asthma` and
+`chf` still come from PLACES.
 
 ### Care sites and hazard to those sites
 

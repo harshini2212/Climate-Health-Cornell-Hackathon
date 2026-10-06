@@ -161,8 +161,18 @@ _COHORT = Table(
         # health, from Synthea
         _c("copd", pl.Boolean), _c("asthma", pl.Boolean), _c("chf", pl.Boolean),
         _c("diabetes", pl.Boolean), _c("ckd_dialysis", pl.Boolean),
-        _c("active_cancer_tx", pl.Boolean), _c("ptsd", pl.Boolean),
+        _c("active_cancer_tx", pl.Boolean,
+           "Open malignancy + chemo/radiation in 365 days; Synthea's own rate, no cited target",
+           synthetic=True),
+        _c("ptsd", pl.Boolean),
         _c("depression", pl.Boolean),
+        _c("suicide_risk", pl.Boolean,
+           "Suicide-risk or suicidal-thoughts finding in the 10-year Synthea record; "
+           "Synthea's own rate, no cited target", synthetic=True),
+        _c("substance_use_disorder", pl.Boolean,
+           "Open alcohol, opioid or drug-use disorder (veteran_substance_abuse_*)"),
+        _c("homeless", pl.Boolean, "Open 'Homeless (finding)' (Synthea homelessness module); "
+           "Synthea's own rate, no cited target", synthetic=True),
         _c("pact_presumptive", pl.Boolean, "Any PACT respiratory/cancer code"),
         _c("n_chronic", pl.Int32, bounds=(0, 30)),
         _c("er_visits_12m", pl.Int32, bounds=(0, 100)),

@@ -14,11 +14,13 @@ and their pharmacy logistics -- is asserted to carry a `_synthetic` flag.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import polars as pl
 import pytest
 
 from leeward import schema
-from leeward.cohort import build, medications
+from leeward.cohort import build, medications, synthea
 
 REF = schema.REFERENCE
 
@@ -282,8 +284,8 @@ def test_every_medication_column_is_filled_not_zeroed(cohort: pl.DataFrame) -> N
 
 def test_every_veterans_medication_list_is_a_real_one(cohort: pl.DataFrame) -> None:
     """Synthetic people, real prescriptions. Every list in the cohort is some Synthea
-    patient's actual active list -- none was assembled drug by drug."""
-    real = {tuple(r) for r in medications.load_profiles()["rxcuis"].to_list()}
+    veteran's actual active list -- none was assembled drug by drug."""
+    real = {tuple(r) for r in synthea.load_profiles()["rxcuis"].to_list()}
     got = {tuple(r) for r in cohort["med_rxcuis"].to_list()}
     assert got <= real, "a medication list in the cohort is not one the sample contains"
 
@@ -305,9 +307,9 @@ def test_older_veterans_carry_the_heavier_medication_burden(cohort: pl.DataFrame
 
 
 def test_no_veteran_is_prescribed_a_childs_medication_list(cohort: pl.DataFrame) -> None:
-    """The cohort is 18+; the published sample is not. Paediatric bundles are excluded
-    from the draw, so no 78-year-old inherits a 6-year-old's prescriptions."""
-    adult = medications.load_profiles().filter(pl.col("age") >= 18)
+    """The cohort is 18+. The veteran profiles are generated 18-100 and distilled adults
+    only, so no 78-year-old inherits a 6-year-old's prescriptions."""
+    adult = synthea.load_profiles().filter(pl.col("age") >= 18)
     assert {tuple(r) for r in cohort["med_rxcuis"].to_list()} <= {
         tuple(r) for r in adult["rxcuis"].to_list()}
 
@@ -341,3 +343,68 @@ def test_same_seed_same_medications_different_seed_different_ones() -> None:
     c = build.build(n=300, seed=1)
     assert a["med_rxcuis"].to_list() == b["med_rxcuis"].to_list()
     assert a["med_rxcuis"].to_list() != c["med_rxcuis"].to_list()
+
+
+# --------------------------------------------------------------------------- #
+# Track A audit: antipsychotics, lithium and anticholinergics, held to CDC's own table.
+# CDC, "Heat and Medications - Guidance for Clinicians" (last reviewed 2025-09-18, read
+# 2026-10-05). The drug names below are CDC's own examples, quoted -- not a list of ours.
+# --------------------------------------------------------------------------- #
+
+#: CDC example -> (the mechanism words CDC gives, what the VA class row must carry).
+CDC_TRACK_A_EXAMPLES = {
+    # "Antipsychotics: Haloperidol, Olanzapine, Quetiapine, Risperidone -- Impaired
+    #  sweating, Impaired temperature"
+    "haloperidol": "impaired_sweating", "olanzapine": "impaired_sweating",
+    "quetiapine": "impaired_sweating", "risperidone": "impaired_sweating",
+    # "Mood stabilizer: Lithium -- ... narrow therapeutic index"
+    "lithium": "narrow_ti",
+    # "TCAs: Amitriptyline, Clomipramine -- Decreased sweating"
+    "amitriptyline": "decreased_sweating", "clomipramine": "decreased_sweating",
+    # "Antihistamines (anticholinergic properties): Promethazine, Doxylamine,
+    #  Diphenhydramine -- Decreased sweating, Impaired thermoregulation"
+    "promethazine": "decreased_sweating", "doxylamine": "decreased_sweating",
+    "diphenhydramine": "decreased_sweating",
+}
+
+
+@pytest.mark.parametrize("drug,mechanism", sorted(CDC_TRACK_A_EXAMPLES.items()))
+def test_every_cdc_named_track_a_drug_carries_its_cdc_heat_mechanism(
+        drug: str, mechanism: str) -> None:
+    """Each CDC example resolves, through RxNav's VA classes, to a heat-hazard row whose
+    mechanism says what CDC says -- so a veteran on it scores, and the pharmacist sees why."""
+    xw = pl.read_parquet(REF / "va_drug_class_members.parquet")
+    hits = xw.filter(pl.col("drug_name").str.to_lowercase().str.contains(drug))
+    assert hits.height > 0, f"CDC names {drug}, but RxNav's VA classes hold no member"
+    single = hits.filter(~pl.col("drug_name").str.contains("/| and "))   # not a combination
+    rxcui = (single if single.height else hits)["rxcui"][0]
+    flags = medications.flags_for([rxcui])
+    risk = medications.risk_table().filter(pl.col("va_class_id").is_in(flags["va_drug_classes"]))
+    assert risk.height > 0, f"{drug} ({rxcui}) maps to no class in med_climate_risk.csv"
+    assert (risk["hazard"] == "heat").all(), f"{drug}: CDC lists it as a heat risk"
+    assert flags["med_thermoreg_score"] > 0, f"{drug} does not raise the heat score"
+    if mechanism == "narrow_ti":
+        assert flags["med_narrow_ti"], f"{drug}: CDC names its narrow therapeutic index"
+    else:
+        assert risk["mechanism"].str.contains(mechanism).any(), (
+            f"{drug}: mechanism {risk['mechanism'].to_list()} does not say '{mechanism}'")
+
+
+def test_anticholinergic_track_a_classes_carry_acb_burden() -> None:
+    """CDC's anticholinergic rows (TCAs, anticholinergic antihistamines) are also the drugs
+    the ACB scale scores highest. A zero here would hide them from the burden flag."""
+    risk = medications.risk_table()
+    for cls in ("CN601", "AH100", "AH102", "CN701"):
+        assert risk.filter(pl.col("va_class_id") == cls)["acb"].item() == 3, cls
+
+
+def test_every_source_tag_in_the_risk_table_is_cited() -> None:
+    """A row is only as good as its citation. CDC's table does not name antiparkinson
+    agents or anticholinergic bronchodilators, so those rows must not claim it does."""
+    risk = medications.risk_table()
+    sources = (Path(__file__).resolve().parents[2] / "docs" / "sources.md").read_text()
+    for tag in risk["source"].unique().to_list():
+        assert f"`{tag}`" in sources, f"source tag {tag} has no entry in docs/sources.md"
+    for cls in ("CN500", "RE105"):
+        tag = risk.filter(pl.col("va_class_id") == cls)["source"].item()
+        assert tag != "CDC_heat_meds", f"{cls} is cited to CDC, whose table does not name it"

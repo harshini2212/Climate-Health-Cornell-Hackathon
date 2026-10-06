@@ -209,6 +209,26 @@
     "sha256": "",
     "url": "https://synthetichealth.github.io/synthea-sample-data/downloads/latest/synthea_sample_data_fhir_latest.zip"
   },
+  "synthea_veteran_profiles": {
+    "bytes": 238990,
+    "cols": 11,
+    "fetched_utc": "2026-10-05T11:28:39Z",
+    "file": "synthea_veteran_profiles.parquet",
+    "note": "One row per living adult in the Synthea veteran run: sex, age, the Track A flags (ptsd, depression, diabetes, active_cancer_tx, suicide_risk, substance_use_disorder, homeless) and active RxNorm codes. The cohort draws whole profiles from it, so a veteran's diagnoses and prescriptions belong to one patient.",
+    "rows": 7999,
+    "sha256": "8229ef030bb44f46",
+    "url": "derived: synthea_veterans/csv (v4.0.0)"
+  },
+  "synthea_veterans": {
+    "bytes": 201164144,
+    "cols": 0,
+    "fetched_utc": "2026-10-05T08:17:46Z",
+    "file": "synthea_veterans/csv/",
+    "note": "15153 patients (living and dead) from Synthea v4.0.0; sha256 is the jar's, in full",
+    "rows": 15153,
+    "sha256": "ed43c20ad40ba5c3bc724503a5af032715fe3c491620b766148e7c2361e6ecc1",
+    "url": "https://github.com/synthetichealth/synthea/releases/download/v4.0.0/synthea-with-dependencies.jar"
+  },
   "va_drug_classes": {
     "bytes": 71285,
     "cols": 6,

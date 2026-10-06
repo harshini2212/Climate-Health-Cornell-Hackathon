@@ -680,6 +680,56 @@ def fetch_synthea_med_profiles():
     return write(df, "synthea_med_profiles", "derived: synthea_sample_fhir.zip")
 
 
+@source("synthea_veterans", "https://github.com/synthetichealth/synthea/releases/download/"
+        "v4.0.0/synthea-with-dependencies.jar",
+        "Synthea v4.0.0 run locally with the veteran modules: 8,000 living New York adults, "
+        "seed 0, reference and end date 2026-01-01, veteran_population_override=true, CSV. "
+        "Needs Java 17+ ($JAVA or java on PATH) and ~45 min. Output (~2 GB) stays in data/raw/.",
+        heavy=True)
+def fetch_synthea_veterans():
+    import os
+    import subprocess
+
+    from leeward.cohort import synthea
+
+    jar = RAW / "synthea" / synthea.JAR
+    jar.parent.mkdir(parents=True, exist_ok=True)
+    if not jar.exists():
+        jar.write_bytes(get(synthea.JAR_URL).content)
+    digest = hashlib.sha256(jar.read_bytes()).hexdigest()
+    if digest != synthea.JAR_SHA256:
+        raise RuntimeError(f"{jar.name} sha256 {digest}, expected {synthea.JAR_SHA256}: "
+                           "not the pinned Synthea release")
+    out = RAW / "synthea_veterans"
+    subprocess.run([os.environ.get("JAVA", "java"), "-Xmx8g", "-jar", str(jar),
+                    *synthea.RUN_ARGS, f"--exporter.baseDirectory={out}/",
+                    # Output selection only: the full export is ~27 GB, mostly claims.
+                    f"--exporter.csv.included_files={','.join(synthea.CSV_FILES)}",
+                    "--exporter.csv.excluded_files="],
+                   cwd=jar.parent, check=True)
+    n = sum(1 for _ in (out / "csv" / "patients.csv").open()) - 1
+    return {"file": "synthea_veterans/csv/", "url": synthea.JAR_URL, "rows": n, "cols": 0,
+            "sha256": digest, "bytes": jar.stat().st_size,   # full: it pins the generator
+            "note": f"{n} patients (living and dead) from Synthea {synthea.SYNTHEA_VERSION}",
+            "fetched_utc": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+@source("synthea_veteran_profiles", "derived: data/raw/synthea_veterans/csv/",
+        "One row per living adult in the Synthea veteran run: sex, age, the Track A flags "
+        "(ptsd, depression, diabetes, active_cancer_tx, suicide_risk, "
+        "substance_use_disorder, homeless) and active RxNorm codes. The cohort draws whole profiles from it, so a "
+        "veteran's diagnoses and prescriptions belong to one patient.", heavy=True)
+def fetch_synthea_veteran_profiles():
+    from leeward.cohort.synthea import profiles_from_csv
+
+    src = RAW / "synthea_veterans" / "csv"
+    if not (src / "patients.csv").exists():
+        raise SystemExit("run the 'synthea_veterans' fetcher first (--heavy): it is the source")
+    df = profiles_from_csv(src)
+    print(f"    {df.height} living adult profiles")
+    return write(df, "synthea_veteran_profiles", "derived: synthea_veterans/csv (v4.0.0)")
+
+
 # --------------------------------------------------------------------------- #
 # Real heat outcomes, for the back-test. The fetch and parse live in
 # leeward/ingest/sources/; this file only registers them and writes the manifest.

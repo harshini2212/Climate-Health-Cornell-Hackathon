@@ -55,7 +55,8 @@ def _write_reference(ref: Path) -> None:
                   "dme_power_dependent": [40] * n, "dme_oxygen": [20] * n,
                   "dme_esrd_dialysis": [10] * n}).write_parquet(ref / "toy_empower.parquet")
 
-    pl.DataFrame({"zcta": codes, **{col: [12.0] * n for col in build.PLACES_RATES.values()}}
+    places_cols = {**build.PLACES_RATES, **build.SYNTHEA_PLACES_TARGETS}.values()
+    pl.DataFrame({"zcta": codes, **{col: [12.0] * n for col in places_cols}}
                  ).write_parquet(ref / "toy_places.parquet")
     pl.DataFrame({"zcta": codes, "hvi": [1, 3, 4, 5]}).write_parquet(ref / "toy_hvi.parquet")
     pl.DataFrame({"toyzip": codes, "evac_zone_min": [0, 1, 0, 2]}

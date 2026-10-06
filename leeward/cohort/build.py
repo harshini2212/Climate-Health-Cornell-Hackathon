@@ -10,15 +10,17 @@ from `data/reference/`, never typed in:
     where, age band, sex         acs_veterans_by_zcta       P(geo_id, sex, band) ∝ veterans
     mobility, low assets,        places_zcta_nyc            CDC PLACES crude prevalence,
       transport, no caregiver,                              per ZIP (see PLACES_RATES)
-      COPD, asthma, cancer,
-      depression, diabetes, CHF,
+      COPD, asthma, CHF,
       low income
     powered equipment, dialysis  empower_ny_zip ÷ ACS 65+   HHS emPOWER, per ZIP; dialysis is
                                                             rescaled to the VA's own ESRD rate
     race, ethnicity             acs_race_by_zcta           ACS B03002, one joint draw per ZIP
     evac zone, stormwater, HVI   evac_zone_by_modzcta, stormwater_by_modzcta, hvi_by_zcta
     facility                     va_facilities_nyc_hazard   nearest care site (see below)
-    PTSD                         VA National Center for PTSD, past-year rate by era
+    PTSD, depression, diabetes,  synthea_veteran_profiles   one whole Synthea veteran per
+      cancer treatment, suicide                             person, from their own sex and
+      risk, substance use,                                  ACS age band (cohort/synthea.py)
+      homeless, active meds
 
 What no public source publishes per person or per ZIP is drawn from the named constants in
 the ASSUMPTIONS block, and every column those feed carries a `_synthetic` flag.
@@ -27,11 +29,13 @@ The table names above are NYC's. Each is read through the region (`regions/nyc.y
 default), which names the file and renames its unit column to `geo_id`, so the same code
 builds a panel for any region that supplies the same tables.
 
-This is the *parametric* cohort. The VA Synthea release is a 4 GB CSV (data/README.md), so
-until a Synthea reader lands, the health columns Synthea would supply are drawn here. The
-medication columns are not drawn at all: `leeward/cohort/medications.py` gives each veteran
-a real active-medication list from Synthea's public sample and derives every flag from the
-VA drug class and CDC mechanism it maps to.
+The behavioral-health, cancer and housing columns, and the active-medication list, come
+from one Synthea veteran (Synthea v4.0.0's veteran modules, cohort/synthea.py) drawn whole
+from the veteran's own sex and age band, so a diagnosis travels with the prescription that
+treats it. `leeward/cohort/medications.py` derives every medication flag from that list's
+VA drug classes and CDC mechanisms. Synthea does not know where anyone lives, so the pick is
+tilted toward cited rates (PTSD by era, depression per ZIP from PLACES, substance use by era;
+see "Track A" below); cancer treatment, suicide risk and homelessness carry no ZIP gradient.
 
 `race` and `ethnicity` are drawn jointly from the composition of the veteran's own ZIP
 (ACS B03002, all residents: no public table gives veterans' race per ZIP). That grounds the
@@ -54,15 +58,12 @@ import numpy as np
 import polars as pl
 
 from leeward import schema, settings
-from leeward.cohort import medications, missingness
+from leeward.cohort import medications, missingness, synthea
+from leeward.cohort.synthea import BANDS  # ACS B21001 bands; 75+ is capped at MAX_AGE
 from leeward.geo import region as regions
 from leeward.geo.region import Region
 
 N_DEFAULT = 10_000
-
-#: ACS B21001 age bands -> inclusive age range. The 75+ upper bound is MAX_AGE.
-BANDS = {"18_34": (18, 34), "35_54": (35, 54), "55_64": (55, 64),
-         "65_74": (65, 74), "75plus": (75, None)}
 
 #: Field -> the CDC PLACES column whose per-ZIP crude prevalence is that field's rate.
 PLACES_RATES = {
@@ -72,9 +73,6 @@ PLACES_RATES = {
     "no_caregiver": "emotionspt_crudeprev",  # lacks social and emotional support
     "copd": "copd_crudeprev",
     "asthma": "casthma_crudeprev",
-    "active_cancer_tx": "cancer_crudeprev",
-    "depression": "depression_crudeprev",
-    "diabetes": "diabetes_crudeprev",
     # PLACES publishes coronary heart disease, not heart failure. CHD is the nearest
     # measured per-ZIP cardiac rate, so CHF is proxied by it. Say so if asked.
     "chf": "chd_crudeprev",
@@ -82,11 +80,28 @@ PLACES_RATES = {
     "low_income": "foodstamp_crudeprev",
 }
 
+# --------------------------------------------------------------------------- #
+# Track A: the cited rates the Synthea draw is tilted to (cohort/synthea.py, "Weighting").
+# Synthea's veteran modules put PTSD in ~1% of records and substance use disorder in ~27%,
+# and know nothing about ZIPs; these are the published numbers the panel is held to instead.
+# --------------------------------------------------------------------------- #
+
+#: Depression and diabetes: CDC PLACES per-ZIP crude prevalence, the same sources and
+#: gradients as before. Diabetes moved here so insulin always arrives with its diagnosis.
+SYNTHEA_PLACES_TARGETS = {"depression": "depression_crudeprev",
+                          "diabetes": "diabetes_crudeprev"}
+
 #: Past-year PTSD by service era. VA National Center for PTSD, "How Common Is PTSD in
 #: Veterans?", https://www.ptsd.va.gov/understand/common/common_veterans.asp :
 #: OEF/OIF 15%, Gulf War 14%, Vietnam 5%. The page gives no peacetime figure, so peacetime
 #: takes its lowest one (WWII/Korea, 2%). That last number is an assumption.
 PTSD_PAST_YEAR = {"post911": 0.15, "gulf": 0.14, "vietnam": 0.05, "peacetime": 0.02}
+
+#: Past-year substance use disorder, NSDUH 2022-2024 annual averages: 17.5% of veterans who
+#: served in a combat zone, 15.4% of those who did not (SAMHSA, "NSDUH Data Spotlight:
+#: Mental Health and Substance Use among Veterans", docs/sources.md). The panel has no
+#: combat-zone flag, so gulf and post-9/11 service stands in for it. That proxy is an assumption.
+SUD_PAST_YEAR = {"post911": 0.175, "gulf": 0.175, "vietnam": 0.154, "peacetime": 0.154}
 
 #: ESRD prevalence among veterans enrolled in the VA: 604 per 100,000 (about 35,000 people),
 #: against 187 per 100,000 in the general US population. Wang et al., "Comparison of outcomes
@@ -241,7 +256,8 @@ def zip_frame(r: Region | None = None) -> pl.DataFrame:
     borough = r.ref("empower").select(pl.col("zip").alias("geo_id"), "borough")
     places = r.ref("places").select(
         "geo_id",
-        *[(pl.col(col) / 100).alias(f"rate_{field}") for field, col in PLACES_RATES.items()])
+        *[(pl.col(col) / 100).alias(f"rate_{field}")
+          for field, col in {**PLACES_RATES, **SYNTHEA_PLACES_TARGETS}.items()])
     hvi = r.ref("hvi").select("geo_id", pl.col("hvi").cast(pl.Int32))
     evac = r.ref("evac_zones").select(
         "geo_id", pl.col("evac_zone_min").cast(pl.Int32).alias("evac_zone"))
@@ -399,7 +415,7 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
     # CDC PLACES: each veteran is one Bernoulli draw at their own ZIP's measured rate.
     places = {field: bern(field, col(f"rate_{field}")) for field in PLACES_RATES}
 
-    # Service era, burn pits, PACT and PTSD.
+    # Service era, burn pits, PACT.
     era = np.empty(n, dtype=object)
     u_era = uniform("era")
     for lo, hi, probs in ERA_BY_AGE:
@@ -410,7 +426,18 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
     mu = np.log(BURN_PIT_MEAN_YEARS) - BURN_PIT_SIGMA ** 2 / 2
     burn = np.where(exposed, _stream(seed, "burn_pit").lognormal(mu, BURN_PIT_SIGMA, n), 0.0)
     pact = bern("pact", np.where(exposed, PACT_TRUE_POSITIVE, PACT_FALSE_POSITIVE))
-    ptsd = bern("ptsd", np.vectorize(PTSD_PAST_YEAR.get)(era))
+
+    # One whole Synthea veteran from the same sex and age band: their behavioral-health,
+    # cancer and housing record and their active medications, together (cohort/synthea.py).
+    # The pick is tilted so PTSD, depression and substance use land on the cited rates above.
+    profile = synthea.draw(sex, age, seed, targets={
+        "ptsd": np.vectorize(PTSD_PAST_YEAR.get)(era),
+        "depression": col("rate_depression"),
+        "diabetes": col("rate_diabetes"),
+        "substance_use_disorder": np.vectorize(SUD_PAST_YEAR.get)(era),
+    })
+    record = {f: profile[f].to_numpy() for f in synthea.FLAGS}
+    ptsd, homeless = record["ptsd"], record["homeless"]
     severity = np.where(ptsd, _categorical(uniform("ptsd_severity"), PTSD_SEVERITY), 0)
 
     # Powered equipment at the ZIP's emPOWER rate; dialysis at the VA's ESRD level, shaped
@@ -426,8 +453,9 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
     otp = bern("otp", OTP_RATE)
 
     # Household, caregiver and money.
-    lives_alone = bern("lives_alone",
-                       np.where(older, LIVES_ALONE["65_plus"], LIVES_ALONE["under_65"]))
+    # A homeless veteran has no household to share and no home to cool (approved 2026-10-05).
+    lives_alone = homeless | bern("lives_alone",
+                                  np.where(older, LIVES_ALONE["65_plus"], LIVES_ALONE["under_65"]))
     kind = _categorical(uniform("caregiver_type"), CAREGIVER_TYPE)
     kind = np.where(lives_alone & (kind == "informal_coresident"), "informal_remote", kind)
     caregiver = np.where(places["no_caregiver"], "none", kind)
@@ -444,19 +472,20 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
 
     # Housing.
     hvi = col("hvi")
-    home_ac = bern("home_ac", HOME_AC_AT_HVI_1 - HOME_AC_PER_HVI_BAND * (hvi - 1)
-                   - HOME_AC_LOW_ASSETS * places["low_assets"])
+    home_ac = ~homeless & bern("home_ac", HOME_AC_AT_HVI_1 - HOME_AC_PER_HVI_BAND * (hvi - 1)
+                               - HOME_AC_LOW_ASSETS * places["low_assets"])
     flood_prone = col("stormwater_flooded_frac") > FLOOD_PRONE_FRAC
     p_base = FLOOR_P["basement"] * np.where(flood_prone, BASEMENT_FLOOD_MULTIPLIER, 1.0)
     total = p_base + FLOOR_P["ground"] + FLOOR_P["upper"]
     u_floor = uniform("floor")
     floor = np.where(u_floor < p_base / total, "basement",
                      np.where(u_floor < (p_base + FLOOR_P["ground"]) / total, "ground", "upper"))
+    floor = np.where(homeless, "ground", floor)
 
     # Chronic load and 12-month utilisation.
     named = sum(x.astype(int) for x in (
-        places["copd"], places["asthma"], places["chf"], places["diabetes"], dialysis,
-        places["active_cancer_tx"], ptsd, places["depression"]))
+        places["copd"], places["asthma"], places["chf"], record["diabetes"], dialysis,
+        record["active_cancer_tx"], ptsd, record["depression"]))
     other = _stream(seed, "other_chronic").poisson(
         np.where(older, OTHER_CHRONIC["65_plus"], OTHER_CHRONIC["under_65"]))
     n_chronic = np.clip(named + other, 0, 30)
@@ -465,7 +494,7 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
         MISSED_REFILLS_BASE + MISSED_REFILLS_PER_CONDITION * n_chronic)
     missed_appts = _stream(seed, "missed_appts").poisson(
         MISSED_APPTS_BASE + MISSED_APPTS_TRANSPORT * places["transport_barrier"]
-        + MISSED_APPTS_DEPRESSION * places["depression"])
+        + MISSED_APPTS_DEPRESSION * record["depression"])
 
     race, ethnicity = draw_race_ethnicity(people, seed)
 
@@ -490,11 +519,14 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
         "copd": places["copd"],
         "asthma": places["asthma"],
         "chf": places["chf"],
-        "diabetes": places["diabetes"],
+        "diabetes": record["diabetes"],
         "ckd_dialysis": dialysis,
-        "active_cancer_tx": places["active_cancer_tx"],
+        "active_cancer_tx": record["active_cancer_tx"],
         "ptsd": ptsd,
-        "depression": places["depression"],
+        "depression": record["depression"],
+        "suicide_risk": record["suicide_risk"],
+        "substance_use_disorder": record["substance_use_disorder"],
+        "homeless": homeless,
         "pact_presumptive": pact,
         "n_chronic": i32(n_chronic),
         "er_visits_12m": i32(np.clip(er, 0, 100)),
@@ -519,8 +551,9 @@ def augment(people: pl.DataFrame, seed: int, region: Region | None = None) -> pl
         "hvi": i32(hvi),
         **{name: bern(name, p) for name, p in CONSENT.items()},
     })
-    # Prescriptions, the mechanisms they carry, and pharmacy logistics (medications.py).
-    df = medications.attach(df, seed)
+    # The same Synthea veteran's prescriptions, the mechanisms they carry, and pharmacy
+    # logistics (medications.py).
+    df = medications.attach(df, seed, rxcuis=profile["rxcuis"].to_list())
 
     # What the VA actually has on file. The truth above stays; these are the nullable copies
     # scoring is allowed to read (missingness.py).
@@ -564,6 +597,8 @@ def main(argv: list[str] | None = None) -> int:
           f"{df['ckd_dialysis'].sum()} · OTP {df['on_methadone_otp'].sum()} "
           f"({df.filter(pl.col('on_methadone_otp') & (pl.col('facility_id') == '630')).height}"
           f" at station 630)")
+    print(f"  Synthea {synthea.SYNTHEA_VERSION}: " + " · ".join(
+        f"{f} {share(pl.col(f))}" for f in synthea.FLAGS))
     print(f"  meds: {df['n_active_meds'].mean():.1f} active each · heat-impairing "
           f"{share(pl.col('med_thermoreg_score') > 0)} · CDC pair "
           f"{share(pl.col('med_combo_raas_diuretic'))} · cold chain "
